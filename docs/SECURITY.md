@@ -86,12 +86,25 @@ una ficha no debería ejecutar el código de nadie.
 
 **Borrador, antes de publicar** (`lib/preview.ts`)
 Los archivos todavía están en el navegador, así que no hay origen aislado donde
-ponerlos. En vez de ceder y usar `allow-same-origin` —lo que daría al archivo
-del alumno acceso a su propio token—, se compone un documento autocontenido con
-CSS e imágenes incrustados como `data:` URI, **se eliminan todos los scripts** y
-se muestra con `sandbox=""`. Se ve el diseño exacto y no se ejecuta una sola
-línea. La interfaz lo dice: *"esta vista previa no ejecuta JavaScript (N scripts
-omitidos)"*.
+ponerlos. Se compone un documento autocontenido —CSS, imágenes y JS locales
+incrustados— y se muestra con `sandbox="allow-scripts"`.
+
+La garantía la da lo que **no** está en ese atributo. Sin `allow-same-origin` el
+documento recibe un **origen opaco**: sin cookies, sin `localStorage`, sin
+acceso al documento padre. El JavaScript se ejecuta y no tiene nada de UINexus
+que leer. Tampoco puede navegar la ventana de arriba ni abrir ventanas, porque
+`allow-top-navigation` y `allow-popups` tampoco están.
+
+Hasta septiembre de 2026 el sandbox era `""`, que además prohíbe los scripts.
+Se cambió porque el coste era desproporcionado: una página que se dibuja con
+JavaScript —casi todas— aparecía como un rectángulo blanco, y una vista previa
+que no enseña la página no cumple su función. La restricción tampoco compraba
+gran cosa frente al riesgo real: **quien mira el borrador es quien acaba de
+subir el archivo**. El caso peligroso, alguien viendo el proyecto de otra
+persona, ocurre en el origen aislado, que ya ejecuta con `allow-scripts`.
+
+Los scripts que apuntan a una CDN se cargan de la red; los locales se incrustan,
+porque los archivos aún no están servidos en ninguna parte.
 
 ## 5. Archivos
 

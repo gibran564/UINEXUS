@@ -21,6 +21,7 @@
     "@aws-sdk/lib-dynamodb": "^3.1126.0",
     "@aws-sdk/s3-presigned-post": "^3.1126.0",
     "@aws-sdk/s3-request-presigner": "^3.1126.0",
+    "@aws-sdk/signature-v4a": "^3.1111.0",
     "fflate": "^0.8.2",
     "firebase": "^11.10.0",
     "firebase-admin": "^13.4.0",

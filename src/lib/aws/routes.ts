@@ -1,5 +1,18 @@
 import 'server-only';
 
+/**
+ * CloudFront KeyValueStore firma con SigV4a (multi-region), no con SigV4. El
+ * SDK no trae esa implementacion: hay que instalarla Y REGISTRARLA, y se
+ * registra por efecto secundario de importarla. Sin esta linea el paquete esta
+ * en node_modules pero el cliente lanza igualmente
+ * "Neither CRT nor JS SigV4a implementation is available".
+ *
+ * El fallo aparecia al final de publicar, despues de subir los archivos: el
+ * proyecto quedaba `published` en DynamoDB y sin ruta en CloudFront, es decir,
+ * publicado y con el enlace roto.
+ */
+import '@aws-sdk/signature-v4a';
+
 import {
   CloudFrontKeyValueStoreClient,
   DeleteKeyCommand,

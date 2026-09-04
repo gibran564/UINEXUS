@@ -576,23 +576,14 @@ export function PublishFlow({
                 <p className="text-muted">Preparando la vista previa…</p>
               </div>
             ) : preview.rendersEmpty ? (
-              /* Un marco en blanco no es una vista previa, es un fallo aparente.
-                 Cuando la página se dibuja con JavaScript no hay nada que
-                 enseñar aquí, y decirlo es más útil que enseñar el vacío. */
+              /* Ni contenido ni scripts: no hay nada que enseñar, y decirlo es
+                 más útil que un rectángulo blanco que parece una avería. */
               <div className="grid h-[26rem] place-items-center bg-sunken p-8 text-center">
                 <div className="max-w-md">
-                  <p className="text-2xl" aria-hidden="true">
-                    ⚙️
-                  </p>
-                  <h2 className="mt-3 font-medium">Tu página se dibuja con JavaScript</h2>
+                  <h2 className="font-medium">Tu página no tiene contenido visible</h2>
                   <p className="mt-2 text-sm text-muted">
-                    Por eso aquí no se ve nada: esta vista previa no ejecuta código, para que
-                    ninguna página pueda tocar tu sesión mientras la revisas. No es un error y
-                    no hace falta arreglar nada.
-                  </p>
-                  <p className="mt-3 text-sm text-muted">
-                    Al publicar, tu proyecto se ejecuta completo —JavaScript incluido— en su
-                    propio dominio. Puedes continuar.
+                    El archivo se leyó bien, pero no hay ni texto, ni imágenes, ni JavaScript
+                    que pueda generarlos. Revisa que subiste el <code>index.html</code> correcto.
                   </p>
                 </div>
               </div>
@@ -600,8 +591,10 @@ export function PublishFlow({
               <iframe
                 title="Vista previa de tu proyecto"
                 srcDoc={preview.html}
-                // sandbox vacío: origen opaco y sin scripts. Ver lib/preview.ts.
-                sandbox=""
+                // SIN allow-same-origin: el marco recibe un origen opaco, así que
+                // tu JavaScript se ejecuta pero no puede tocar la sesión de nadie.
+                // Ver el razonamiento completo en lib/preview.ts.
+                sandbox="allow-scripts"
                 className="h-[26rem] w-full border-0 bg-white"
               />
             )}

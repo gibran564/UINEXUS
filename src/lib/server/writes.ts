@@ -463,7 +463,20 @@ async function putProject(record: ProjectRecord): Promise<void> {
   // La ruta del origen aislado se sincroniza DESPUES de que el dato quede
   // guardado. Si se hiciera antes y la escritura fallara, CloudFront estaria
   // sirviendo un proyecto que la plataforma cree despublicado.
-  await syncProjectRoute(record);
+  //
+  // Si falla ESTA, el proyecto queda guardado pero su enlace no lleva a ningun
+  // sitio. Es el peor estado posible de los dos, porque parece exito: por eso
+  // se traduce a un error con nombre en vez de dejar que salga un 500 generico
+  // que no dice si hay que volver a subir los archivos o no (no hay que).
+  try {
+    await syncProjectRoute(record);
+  } catch (error) {
+    console.error('[uinexus] No se pudo publicar la ruta en CloudFront:', error);
+    throw new HttpError(
+      502,
+      'Guardamos tu proyecto y tus archivos, pero no pudimos activar su direccion publica. No hace falta volver a subir nada: reintenta la publicacion desde tus proyectos.'
+    );
+  }
 }
 
 /** Borra el proyecto y sus archivos. Los archivos primero: un registro sin

@@ -10,13 +10,24 @@ import { extensionOf } from './files';
  * acceso a la sesión de Firebase de esa misma persona: un archivo copiado de
  * cualquier plantilla podría robarle el token.
  *
- * La solución: se compone un documento autocontenido — CSS e imágenes
- * incrustados como data: URI — y se muestra con `sandbox=""`, es decir, origen
- * opaco y SIN scripts. Se ve exactamente cómo quedó el diseño, y no se ejecuta
- * una sola línea de JavaScript no confiable.
+ * La solución: se compone un documento autocontenido — CSS, imágenes y JS
+ * locales incrustados — y se muestra en un marco con `sandbox` SIN
+ * `allow-same-origin`. Esa ausencia es la que protege: el navegador le da al
+ * documento un origen OPACO, así que no hay cookies, ni localStorage, ni acceso
+ * al documento padre. Aunque el JavaScript se ejecute, no tiene nada de UINexus
+ * que leer.
  *
- * Los scripts se activan al publicar, ya en el origen aislado. La interfaz lo
- * dice explícitamente para que nadie crea que su JS está roto.
+ * Antes el sandbox era `""`, que además prohíbe los scripts. Más estricto, sí,
+ * pero convertía la vista previa en un rectángulo blanco para cualquier página
+ * que se dibuje con JavaScript — es decir, para casi todas. Una vista previa
+ * que no enseña la página no es una vista previa. Y la restricción tampoco
+ * compraba gran cosa frente al riesgo real: quien mira este borrador es quien
+ * acaba de subir el archivo, y el caso peligroso —alguien viendo el proyecto
+ * de otra persona— ocurre en el origen aislado, que ya ejecuta con
+ * `allow-scripts`.
+ *
+ * Lo que el marco sigue sin poder hacer: navegar la ventana de arriba, abrir
+ * ventanas, o leer un solo byte de la sesión de quien lo mira.
  */
 
 /** Tope de lo que se incrusta: por encima, la vista previa se vuelve lenta. */
@@ -27,12 +38,12 @@ export interface PreviewResult {
   /** Avisos honestos para mostrar junto a la vista previa. */
   notes: string[];
   /**
-   * El documento, ya sin scripts, no pinta nada visible.
+   * No hay contenido visible NI script alguno que pueda generarlo.
    *
-   * Es lo que le pasa a cualquier página que construye su contenido con
-   * JavaScript. Sin esta señal, la vista previa era un rectángulo blanco de
-   * 26rem y la explicación quedaba debajo, en gris pequeño: quien lo veía
-   * concluía —razonablemente— que la plataforma estaba rota.
+   * Con los scripts ejecutándose ya no se puede saber de antemano lo que va a
+   * pintar una página, así que esto sólo se afirma cuando es seguro: documento
+   * vacío y sin una línea de JavaScript. Ahí el marco en blanco no es una
+   * vista previa, es un archivo que no tiene nada dentro.
    */
   rendersEmpty: boolean;
 }
@@ -114,13 +125,19 @@ export async function buildPreviewDocument(
   const byPath = new Map(files.map((file) => [file.path, file]));
   const dataUrls = new Map<string, string>();
 
-  if (inlineBudget) {
-    for (const file of files) {
-      const extension = extensionOf(file.path);
-      if (extension === 'html' || extension === 'htm' || extension === 'css') continue;
-      if (extension === 'js' || extension === 'mjs') continue; // no se ejecutan
-      dataUrls.set(file.path, await readAsDataUrl(file));
+  /** JS local leído como texto. Va aparte de `dataUrls` porque no se referencia
+   *  como recurso: se incrusta dentro de la propia etiqueta <script>. */
+  const scripts = new Map<string, string>();
+
+  for (const file of files) {
+    const extension = extensionOf(file.path);
+    if (extension === 'js' || extension === 'mjs') {
+      scripts.set(file.path, await readAsText(file));
+      continue;
     }
+    if (!inlineBudget) continue;
+    if (extension === 'html' || extension === 'htm' || extension === 'css') continue;
+    dataUrls.set(file.path, await readAsDataUrl(file));
   }
 
   /** Reescribe las url() de una hoja de estilos a data: URI. */
@@ -137,7 +154,6 @@ export async function buildPreviewDocument(
   }
 
   let html = await readAsText(entry);
-  let removedScripts = 0;
 
   // 1. Hojas de estilo enlazadas -> <style> incrustado.
   const linkPattern = /<link\b[^>]*>/gi;
@@ -172,26 +188,59 @@ export async function buildPreviewDocument(
     }
   );
 
-  // 4. Scripts fuera: en el borrador no se ejecuta código no confiable.
-  html = html.replace(/<script\b[\s\S]*?<\/script>/gi, () => {
-    removedScripts += 1;
-    return '';
-  });
-  html = html.replace(/<script\b[^>]*\/>/gi, () => {
-    removedScripts += 1;
-    return '';
-  });
+  // 4. Scripts. Los de la red se dejan tal cual; los locales se incrustan,
+  //    porque los archivos todavia no estan servidos en ninguna parte desde la
+  //    que el marco pueda pedirlos.
+  let missingScripts = 0;
+  let hasAnyScript = false;
 
-  if (removedScripts > 0) {
+  /** Un `</script>` dentro del propio codigo cerraria la etiqueta antes de
+   *  tiempo y partiria el documento en dos. */
+  const escapeClosingTag = (code: string): string =>
+    code.replace(/<\/(script)/gi, '<\/$1');
+
+  /** Etiqueta ya resuelta, o null si hay que dejarla como estaba. */
+  function inlineScript(attributes: string): string | null {
+    hasAnyScript = true;
+    const src = /src\s*=\s*["']([^"']+)["']/i.exec(attributes)?.[1];
+    if (!src || isExternal(src)) return null;
+
+    const code = scripts.get(resolvePath(entryFile, src));
+    if (code === undefined) {
+      missingScripts += 1;
+      return '';
+    }
+    // Se conserva `type` (module, importmap...) y se quita `src`.
+    const kept = attributes.replace(/\s*src\s*=\s*["'][^"']*["']/i, '');
+    return `<script${kept}>\n${escapeClosingTag(code)}\n</script>`;
+  }
+
+  html = html.replace(
+    /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+    (match, attributes: string) => inlineScript(attributes) ?? match
+  );
+
+  html = html.replace(
+    /<script\b([^>]*)\/>/gi,
+    (match, attributes: string) => inlineScript(attributes) ?? match
+  );
+
+  if (missingScripts > 0) {
     notes.push(
-      `Esta vista previa no ejecuta JavaScript (${removedScripts} ${
-        removedScripts === 1 ? 'script omitido' : 'scripts omitidos'
-      }). Al publicar, tu proyecto se ejecuta completo en su propio dominio.`
+      `${missingScripts} ${
+        missingScripts === 1 ? 'script apunta' : 'scripts apuntan'
+      } a un archivo que no subiste, así que aquí no se ejecutan.`
+    );
+  }
+
+  if (hasAnyScript) {
+    notes.push(
+      'Tu JavaScript se ejecuta, pero en un marco aislado y sin acceso a cookies ni a tu sesión. Si algo depende de estar en su dominio definitivo, sólo se verá tras publicar.'
     );
   }
 
   // 5. Los enlaces internos no llevan a ninguna parte dentro del marco.
   html = html.replace(/<a\b([^>]*)>/gi, '<a$1 target="_blank" rel="noopener noreferrer">');
 
-  return { html, notes, rendersEmpty: looksEmpty(html) };
+  return { html, notes, rendersEmpty: !hasAnyScript && looksEmpty(html) };
 }
