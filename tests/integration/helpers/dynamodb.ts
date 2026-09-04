@@ -85,6 +85,31 @@ const tableDefinitions: CreateTableCommandInput[] = [
       },
     ],
   },
+  /**
+   * La biblioteca de prompts. Hace falta aquí desde que un paso puede citar uno:
+   * guardar la actividad comprueba que ese prompt sea de ESTA materia, y sin la
+   * tabla la comprobación no se puede ejercer.
+   */
+  {
+    TableName: TABLES.prompts,
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'id', AttributeType: 'S' },
+      { AttributeName: 'courseId', AttributeType: 'S' },
+      { AttributeName: 'createdAt', AttributeType: 'S' },
+    ],
+    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: INDEXES.promptsByCourse,
+        KeySchema: [
+          { AttributeName: 'courseId', KeyType: 'HASH' },
+          { AttributeName: 'createdAt', KeyType: 'RANGE' },
+        ],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+  },
   {
     TableName: TABLES.submissions,
     BillingMode: 'PAY_PER_REQUEST',
@@ -120,6 +145,7 @@ const tableKeys = new Map<string, string>([
   [TABLES.users, 'uid'],
   [TABLES.courses, 'id'],
   [TABLES.assignments, 'id'],
+  [TABLES.prompts, 'id'],
   [TABLES.submissions, 'id'],
 ]);
 

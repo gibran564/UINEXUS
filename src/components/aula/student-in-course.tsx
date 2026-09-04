@@ -137,7 +137,7 @@ export function StudentInCourse({ courseId, handle }: { courseId: string; handle
                       </Link>
                       <p className="mt-1 flex flex-wrap items-center gap-3 text-sm text-muted">
                         <TypeChip type={assignment.type} />
-                        <DueDate value={assignment.dueDate} />
+                        <DueDate value={assignment.dueDate} dueAt={assignment.dueAt} />
                       </p>
                     </div>
 

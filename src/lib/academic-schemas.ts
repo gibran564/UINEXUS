@@ -90,6 +90,23 @@ export const dueDateSchema = z
   .union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Usa una fecha válida.')])
   .nullish();
 
+/**
+ * El instante en que se cierran las entregas.
+ *
+ * Lo compone el navegador a partir de la fecha y la hora locales
+ * (`composeDueAt`), así que aquí sólo se comprueba que sea una marca temporal
+ * que `Date` sepa leer. Se normaliza a ISO en UTC al escribir.
+ */
+export const dueAtSchema = z
+  .union([
+    z.literal(''),
+    z
+      .string()
+      .trim()
+      .refine((value) => !Number.isNaN(new Date(value).getTime()), 'Usa una hora válida.'),
+  ])
+  .nullish();
+
 export const collaborationModeSchema = z.enum(['individual', 'shared']);
 
 export const contributionVisibilitySchema = z.enum(['group', 'own', 'after_submit']);
@@ -193,6 +210,40 @@ export const toolChoiceSchema = z.object({
     .default([]),
 });
 
+/**
+ * El prompt de un paso.
+ *
+ * `inline` NO exige `resourceId`, y eso es justo lo que arregla: hasta ahora un
+ * paso que necesitaba un prompt tenía que apuntar a uno de la biblioteca, así
+ * que no se podía crear una actividad con un prompt que sólo tiene sentido para
+ * ella.
+ */
+export const stepPromptSchema = z
+  .object({
+    mode: z.enum(['none', 'inline', 'library']).default('none'),
+    title: z.string().trim().max(120).default(''),
+    // Sin trim: la sangría y los saltos de un prompt son parte del prompt.
+    text: z.string().max(ACADEMIC_LIMITS.promptMax).default(''),
+    resourceId: z
+      .union([z.literal(''), z.string().trim().max(64)])
+      .nullish()
+      .transform((value) => (value ? value : null)),
+  })
+  .transform((prompt) => ({
+    ...prompt,
+    /**
+     * Un `inline` sin texto y un `library` sin recurso no son prompts: son un
+     * modo que alguien seleccionó y no llegó a rellenar. Se guardan como lo que
+     * son para que nada aguas abajo tenga que preguntárselo.
+     */
+    mode:
+      prompt.mode === 'inline' && !prompt.text.trim()
+        ? ('none' as const)
+        : prompt.mode === 'library' && !prompt.resourceId
+          ? ('none' as const)
+          : prompt.mode,
+  }));
+
 export const workflowStepSchema = z.object({
   id: z.string().trim().min(1).max(40),
   order: z.number().int().min(0).max(WORKFLOW_LIMITS.maxSteps).default(0),
@@ -207,6 +258,7 @@ export const workflowStepSchema = z.object({
   actionType: z.string().trim().min(1).max(40).default('instruction'),
   tool: toolChoiceSchema.default({ mode: 'none', toolIds: [], toolNames: [] }),
   resources: z.array(resourceRefSchema).max(ACADEMIC_LIMITS.maxResourceLinks).default([]),
+  prompt: stepPromptSchema.default({ mode: 'none', title: '', text: '', resourceId: null }),
   deliverables: z
     .array(stepDeliverableSchema)
     .max(WORKFLOW_LIMITS.maxDeliverablesPerStep)
@@ -289,6 +341,11 @@ export const assignmentInputSchema = z.object({
     .max(ACADEMIC_LIMITS.maxResearchQuestions)
     .default([]),
   dueDate: dueDateSchema,
+  /**
+   * Fecha límite CON hora. Un cliente antiguo que no la mande sigue creando
+   * exactamente lo que creaba antes: una tarea con `dueDate` y sin instante.
+   */
+  dueAt: dueAtSchema,
   /**
    * `null` = todo el grupo. Es el valor por defecto porque es el caso normal, y
    * porque un olvido debe caer del lado de «lo ve todo el mundo» y no del de

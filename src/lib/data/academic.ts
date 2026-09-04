@@ -195,6 +195,12 @@ function normalizeAssignment(raw: Partial<AssignmentRecord>): AssignmentRecord {
       resources,
     }),
     dueDate: raw.dueDate ?? null,
+    /**
+     * Una tarea anterior a esta iteración no lo tiene. No se migra: se
+     * interpreta al usarla (`lib/due-date.ts`), donde está documentado que el
+     * día sin hora se cierra de la forma más permisiva posible.
+     */
+    dueAt: raw.dueAt ?? null,
     // Una tarea sin `collaborationMode` es de antes de la iteración 3, y lo que
     // era es exactamente `individual`. No hay ambigüedad que resolver.
     collaborationMode: raw.collaborationMode ?? 'individual',

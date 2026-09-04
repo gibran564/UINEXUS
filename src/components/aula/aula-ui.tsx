@@ -10,6 +10,7 @@ import {
   SUBMISSION_STATUS_LABEL,
 } from '@/lib/constants';
 import type { AssignmentStatus, AssignmentType, SubmissionStatus } from '@/lib/types';
+import { formatDueLabel } from '@/lib/due-date';
 
 /**
  * Piezas compartidas del aula.
@@ -216,17 +217,16 @@ export function Notice({
 }
 
 /** Fecha en el formato que se lee en clase, con `<time>` para la máquina. */
-export function DueDate({ value }: { value: string | null }) {
-  if (!value) return <span className="text-subtle">Sin fecha límite</span>;
-  return (
-    <time dateTime={value}>
-      {new Date(`${value}T12:00:00Z`).toLocaleDateString('es-MX', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-      })}
-    </time>
-  );
+export function DueDate({ value, dueAt = null }: { value: string | null; dueAt?: string | null }) {
+  if (!value && !dueAt) return <span className="text-subtle">Sin fecha límite</span>;
+
+  /**
+   * El formato vive en `lib/due-date.ts` y no aquí: es la misma frase que se
+   * enseña en el editor, en la vista previa y en el aviso de cierre, y tenerla
+   * en un solo sitio es lo que impide que una de las cuatro diga UTC crudo.
+   */
+  const label = formatDueLabel({ dueDate: value, dueAt });
+  return <time dateTime={dueAt ?? value ?? ''}>{label}</time>;
 }
 
 /** Ficha compacta de una persona: avatar, nombre y handle. */

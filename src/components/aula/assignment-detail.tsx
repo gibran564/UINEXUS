@@ -14,6 +14,7 @@ import {
   type AssignmentDetail as AssignmentDetailData,
   type SubmissionsPage,
 } from '@/lib/aula-client';
+import { formatDueLabel, isPastDue } from '@/lib/due-date';
 import {
   AssignmentStatusBadge,
   AulaScreen,
@@ -82,7 +83,15 @@ export function AssignmentDetail({
 function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId: string }) {
   const { assignment, submission } = data;
   const typeOption = ASSIGNMENT_TYPES.find((option) => option.value === assignment.type);
-  const closed = assignment.status === 'closed';
+  const closedByStatus = assignment.status === 'closed';
+  /**
+   * Pasada la fecha límite la entrega está cerrada, y se dice ANTES de entrar:
+   * dejar la llamada a la acción viva para que el servidor conteste 409 al
+   * final es hacer trabajar a alguien para nada. La seguridad real sigue
+   * estando en el servidor (`assertOpenForSubmission`); esto es honestidad.
+   */
+  const pastDue = isPastDue(assignment);
+  const closed = closedByStatus || pastDue;
   const isShared = assignment.collaborationMode === 'shared';
   const isWorkflow = assignment.workflow.length > 1;
 
@@ -118,7 +127,7 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
         <p className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted">
           <TypeChip type={assignment.type} />
           <span>
-            Entrega: <DueDate value={assignment.dueDate} />
+            Entrega: <DueDate value={assignment.dueDate} dueAt={assignment.dueAt} />
           </span>
           <SubmissionBadge status={submission?.status ?? null} />
         </p>
@@ -240,7 +249,11 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
 
       <div className="mt-8 border-t border-line pt-6">
         {closed ? (
-          <Notice>Esta tarea ya está cerrada. No se admiten más entregas.</Notice>
+          <Notice>
+            {closedByStatus
+              ? 'Esta tarea ya está cerrada. No se admiten más entregas.'
+              : `Entrega cerrada. La fecha límite fue el ${formatDueLabel(assignment)}.`}
+          </Notice>
         ) : (
           <div className="flex flex-wrap gap-3">
             <Link
@@ -373,7 +386,7 @@ function TeacherView({
             <TypeChip type={assignment.type} />
             <AssignmentStatusBadge status={assignment.status} />
             <span>
-              Entrega: <DueDate value={assignment.dueDate} />
+              Entrega: <DueDate value={assignment.dueDate} dueAt={assignment.dueAt} />
             </span>
             {!assignment.assignedToAll && (
               <span>Asignada a {assignment.assignedTo?.length ?? 0} estudiantes</span>

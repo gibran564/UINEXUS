@@ -1,10 +1,11 @@
 import { assignmentInputSchema } from '@/lib/academic-schemas';
 import { canAnswerGroup, getOwnSubmission } from '@/lib/data/academic';
-import { workableStepIds } from '@/lib/workflow';
+import { stepPromptRefs, workableStepIds } from '@/lib/workflow';
 import {
   assertResourcesBelongTo,
   resolveResources,
   resolveStepTools,
+  scopeStepPrompts,
 } from '@/lib/server/resources';
 import { toAssignment, toSubmission } from '@/lib/data/academic-mappers';
 import { errorResponse, readJson, requireWriter } from '@/lib/server/session';
@@ -74,7 +75,14 @@ export async function GET(
       // Los recursos recomendados se RESUELVEN aquí: la tarea guarda sólo ids
       // (§20 y §27), así que el navegador recibe el contenido vigente y no una
       // copia congelada del día que se creó la tarea.
-      resources: await resolveResources(assignment.resources),
+      resources: await resolveResources([
+        ...assignment.resources,
+        // Los recursos que cita cada PASO se resuelven igual que los de la
+        // tarea. Sin esto, un prompt elegido de la biblioteca dentro de un paso
+        // llegaba al navegador como un id suelto que nadie sabía pintar.
+        ...assignment.workflow.flatMap((step) => step.resources),
+        ...stepPromptRefs(assignment.workflow),
+      ]),
       /**
        * Fichas de las herramientas que mencionan los pasos. Sirven para
        * enriquecer —enlace y descripción—, nunca para decidir qué se muestra:
@@ -124,8 +132,11 @@ export async function PATCH(
      * esta inscrito no resuelve, asi que no se puede repartir un paso a alguien
      * de fuera.
      */
-    const workflow = buildWorkflowSteps(input.workflow, (handles) =>
-      resolveMembers(course, handles).map((member) => member.uid)
+    const workflow = await scopeStepPrompts(
+      assignment.courseId,
+      buildWorkflowSteps(input.workflow, (handles) =>
+        resolveMembers(course, handles).map((member) => member.uid)
+      )
     );
 
     const updated = await updateAssignment(

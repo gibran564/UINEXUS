@@ -31,9 +31,10 @@ procesos estructurados, trazables y reutilizables.
 
 **Iteración 5 — Experiencia de producto.** URLs públicas de proyectos bajo el
 dominio UINexus, Project Shell con iframe aislado, vista previa docente en el
-editor de tareas y resumen compacto antes de publicar.
+editor de tareas, resumen compacto antes de publicar y cierre de la autoría de
+actividades: prompt libre y fecha límite con hora.
 
-Pasan **314 pruebas unitarias + 18 pruebas de integración**. Typecheck, lint y
+Pasan **341 pruebas unitarias + 27 pruebas de integración**. Typecheck, lint y
 build también pasan.
 
 | # | Bloque | Estado |
@@ -60,6 +61,8 @@ build también pasan.
 | 16 | **Project Shell con iframe aislado (P0 it.5)** | ✅ |
 | 17 | **Vista previa docente como estudiante (P1 it.5)** | ✅ |
 | 18 | **Resumen compacto antes de publicar (P2 it.5)** | ✅ |
+| 19 | **Prompt de paso sin depender de la biblioteca (P0 cierre)** | ✅ |
+| 20 | **Fecha límite con hora, aplicada en el servidor (P1 cierre)** | ✅ |
 
 ---
 
@@ -215,6 +218,47 @@ build también pasan.
 - [x] `docs/LIMITATIONS.md` §6: para cada consulta cara, qué hace, su coste, el
       umbral aproximado donde empezaría a doler y qué hacer entonces. **No se
       añadió ningún índice especulativo.**
+
+### Cierre de autoría de actividades
+
+**Prompt de un paso.** `WorkflowStep.prompt` (`mode`, `title`, `text`,
+`resourceId`) representa las tres formas sin exigir un recurso en ninguna:
+
+- [x] **Escribir aquí** es lo predeterminado. El prompt vive en la actividad y
+      publicar no depende de que exista en la biblioteca.
+- [x] **Elegir de biblioteca** sigue guardando la referencia y no una copia. El
+      servidor comprueba que el prompt sea de ESA materia y esté aprobado
+      (`scopeStepPrompts`); si no resuelve, el paso queda sin prompt en vez de
+      volverse inguardable.
+- [x] **Generar prompt** compone uno con lo que la actividad ya dice
+      (`lib/prompt-generator.ts`, puro, sin servicios externos) desde un diálogo
+      montado DENTRO del editor: el borrador es estado de React vivo y no se
+      desmonta, así que no se pierde nada al abrirlo o cerrarlo.
+- [x] **Guardar en biblioteca** desde el editor reutiliza `POST
+      /api/courses/:id/prompts`. Es opcional: no bloquea publicar.
+- [x] Un paso anterior a esta iteración se lee sin prompt. No se migró nada.
+- [x] El paso enseña su prompt al alumnado con botón de copiar; el de biblioteca
+      se resuelve contra el recurso vigente en el `GET` de la tarea.
+
+**Fecha límite con hora.** `Assignment.dueAt` es el instante ISO en UTC, junto al
+`dueDate` de siempre:
+
+- [x] El editor captura fecha y hora LOCALES y compone el instante en el
+      navegador (`composeDueAt`), que es donde se conoce la zona horaria. El
+      servidor guarda el instante, no adivina zonas.
+- [x] La interfaz dice la consecuencia: «Se aceptarán entregas hasta el …».
+- [x] Todo el mundo ve la fecha con `formatDueLabel` («11 sep 2026 · 23:59»),
+      nunca el instante crudo en UTC.
+- [x] El cierre es de SERVIDOR: `assertOpenForSubmission` responde 409 en
+      `PUT /api/assignments/:id/submission` y en la concesión de subida de
+      archivos, con su propio reloj. El frontend deshabilita la acción y explica
+      la fecha, pero no es la barrera.
+- [x] Compatibilidad: sin fecha límite se entrega siempre; una tarea con sólo
+      `dueDate` se interpreta como el final de su día en la zona más tardía del
+      planeta —fallback deliberadamente permisivo, documentado en
+      `lib/due-date.ts`— y se muestra sin inventarle una hora.
+- [x] No se implementó ninguna política de entrega tardía: ni tolerancia, ni
+      prórrogas, ni reapertura. Alcanzada la hora, cerrado.
 
 ---
 

@@ -335,6 +335,33 @@ export interface StepToolChoice {
 }
 
 /** Un paso del proceso. */
+/**
+ * De dónde sale el prompt de un paso.
+ *
+ *  · `none`    el paso no usa prompt.
+ *  · `inline`  la docente lo escribió DENTRO de la actividad. No es un recurso
+ *              de la biblioteca y no tiene por qué serlo: la biblioteca es
+ *              reutilización, no un requisito para poder crear una tarea.
+ *  · `library` el paso apunta a un prompt de la biblioteca de la materia. Se
+ *              guarda la referencia y no una copia, para que corregir el prompt
+ *              lo corrija en todas las tareas que lo usan.
+ */
+export type StepPromptMode = 'none' | 'inline' | 'library';
+
+export interface StepPrompt {
+  mode: StepPromptMode;
+  /** Título del prompt. Opcional en `inline`; en `library` es el del recurso. */
+  title: string;
+  /** El texto, cuando vive en la actividad (`inline`). */
+  text: string;
+  /**
+   * El recurso de la biblioteca. Obligatorio en `library`; en `inline` puede
+   * estar relleno si la docente guardó su prompt en la biblioteca desde el
+   * editor, y entonces sólo dice de dónde salió.
+   */
+  resourceId: string | null;
+}
+
 export interface WorkflowStep {
   id: string;
   order: number;
@@ -345,6 +372,12 @@ export interface WorkflowStep {
   tool: StepToolChoice;
   /** Prompts, Skills y demás recursos recomendados PARA ESTE PASO (§30). */
   resources: ResourceRef[];
+  /**
+   * El prompt del paso, si lo usa. Escrito a mano, elegido de la biblioteca o
+   * generado: los tres casos caben aquí y NINGUNO obliga a que exista un
+   * recurso previo.
+   */
+  prompt: StepPrompt;
   /** Qué hay que entregar. Varios entregables son válidos (§17). */
   deliverables: StepDeliverable[];
   required: boolean;
@@ -409,7 +442,19 @@ export interface Assignment {
   resourceLinks: ResourceLink[];
   /** Sólo se usa cuando `type === 'research'`. */
   researchQuestions: ResearchQuestion[];
+  /**
+   * Fecha límite en local, «YYYY-MM-DD». Se conserva porque hay pantallas y
+   * ordenaciones que sólo necesitan el día, y porque es lo único que tienen las
+   * tareas anteriores a esta iteración.
+   */
   dueDate: string | null;
+  /**
+   * El instante EXACTO en que se cierran las entregas, ISO en UTC.
+   *
+   * `null` en una tarea antigua: `lib/due-date.ts` la interpreta entonces como
+   * el final de su día, y ahí está documentado por qué de forma permisiva.
+   */
+  dueAt: string | null;
   /**
    * `individual`: cada persona responde la actividad entera por su cuenta.
    * `shared`: la actividad se reparte por conceptos y el resultado se compone

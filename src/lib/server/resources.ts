@@ -2,7 +2,7 @@ import 'server-only';
 
 import { getPromptTemplate, getSkill } from '../data/academic';
 import { toPromptTemplate, toSkillResource } from '../data/academic-mappers';
-import type { PromptTemplate, ResourceRef, SkillResource } from '../types';
+import type { PromptTemplate, ResourceRef, SkillResource, WorkflowStepRecord } from '../types';
 
 /**
  * Resuelve referencias a recursos de la biblioteca de IA.
@@ -118,4 +118,42 @@ export async function resolveStepTools(
         },
       ])
   );
+}
+
+/**
+ * Acota a la materia el prompt de biblioteca que cita cada paso.
+ *
+ * Misma regla que `assertResourcesBelongTo`, y por el mismo motivo: conocer un
+ * id no puede bastar para colgar en una actividad el prompt de otro grupo.
+ *
+ * Un prompt ESCRITO en la actividad (`inline`) no pasa por aquí porque no
+ * apunta a nada: vive en la tarea. Eso es justamente lo que se quería —la
+ * biblioteca es reutilización, no un requisito—, y por eso el saneado es sólo
+ * de la referencia. Si la referencia no resuelve se degrada a `none` en vez de
+ * responder error: la tarea no puede volverse inguardable porque alguien
+ * archivara un prompt mientras el formulario estaba abierto.
+ */
+export async function scopeStepPrompts(
+  courseId: string,
+  steps: readonly WorkflowStepRecord[]
+): Promise<WorkflowStepRecord[]> {
+  const checked: WorkflowStepRecord[] = [];
+
+  for (const step of steps) {
+    if (step.prompt.mode !== 'library' || !step.prompt.resourceId) {
+      checked.push(step);
+      continue;
+    }
+
+    const found = await getPromptTemplate(step.prompt.resourceId);
+    const usable = found && found.courseId === courseId && found.status === 'approved';
+
+    checked.push(
+      usable
+        ? { ...step, prompt: { ...step.prompt, title: step.prompt.title || found.title } }
+        : { ...step, prompt: { ...step.prompt, mode: 'none', resourceId: null } }
+    );
+  }
+
+  return checked;
 }

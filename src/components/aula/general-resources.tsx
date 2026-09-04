@@ -353,6 +353,7 @@ export function CourseResourceEditor({
               courseId={courseId}
               steps={workflowSteps}
               students={[]}
+              assignment={{ title, description }}
               onChange={setWorkflowSteps}
             />
           </div>

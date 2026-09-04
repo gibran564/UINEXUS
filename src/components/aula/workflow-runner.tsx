@@ -9,6 +9,7 @@ import {
   availableDependencyResults,
   hasContent,
   normalizeEvidence,
+  normalizeStepPrompt,
   primaryDeliverable,
   stepState,
   workflowProgress,
@@ -54,11 +55,14 @@ export function WorkflowRunner({
   data,
   courseId,
   assignmentId,
+  closed = false,
   onSaved,
 }: {
   data: AssignmentDetail;
   courseId: string;
   assignmentId: string;
+  /** La fecha límite ya pasó: se puede leer, no escribir. */
+  closed?: boolean;
   onSaved: () => void;
 }) {
   const router = useRouter();
@@ -234,15 +238,15 @@ export function WorkflowRunner({
       <div className="mt-6 flex flex-wrap gap-3 border-t border-line pt-6">
         <button
           type="button"
-          disabled={busy || missing.length > 0}
+          disabled={busy || closed || missing.length > 0}
           onClick={() => void save('submit')}
           className="btn btn-primary"
         >
-          {busy ? 'Guardando…' : 'Entregar'}
+          {closed ? 'Entrega cerrada' : busy ? 'Guardando…' : 'Entregar'}
         </button>
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || closed}
           onClick={() => void save('draft')}
           className="btn btn-secondary"
         >
@@ -353,6 +357,8 @@ function StepPanel({
           </ul>
         </section>
       )}
+
+      <StepPromptCard step={step} resources={resources} />
 
       <ToolField
         step={step}
@@ -550,5 +556,54 @@ function ToolCards({
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * El prompt del paso, listo para copiar.
+ *
+ * Da igual de dónde venga: escrito dentro de la actividad o elegido de la
+ * biblioteca, aquí se ve igual. El alumnado no tiene por qué saber cuál de las
+ * dos cosas hizo su docente.
+ *
+ * El de biblioteca se resuelve CONTRA EL RECURSO VIGENTE —el servidor lo manda
+ * ya resuelto en `resources`—, así que corregir el prompt lo corrige aquí. Si
+ * el recurso desapareció queda el título, que es mejor que un hueco mudo.
+ */
+function StepPromptCard({
+  step,
+  resources,
+}: {
+  step: WorkflowStep;
+  resources: AssignmentDetail['resources'];
+}) {
+  const prompt = normalizeStepPrompt(step.prompt);
+  if (prompt.mode === 'none') return null;
+
+  const fromLibrary =
+    prompt.mode === 'library'
+      ? resources.prompts.find((item) => item.id === prompt.resourceId)
+      : undefined;
+
+  const text = fromLibrary?.prompt ?? (prompt.mode === 'inline' ? prompt.text : '');
+  const title = fromLibrary?.title || prompt.title;
+
+  return (
+    <section className="mt-5 rounded-sm border border-line bg-sunken p-4" aria-labelledby="prompt-paso">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="prompt-paso" className="font-display text-h3">
+          Prompt{title ? `: ${title}` : ''}
+        </h3>
+        {text && <CopyButton value={text} label="Copiar prompt" variant="ghost" />}
+      </div>
+
+      {text ? (
+        <pre className="mt-3 whitespace-pre-wrap font-mono text-sm">{text}</pre>
+      ) : (
+        <p className="hint mt-2">
+          El prompt de este paso ya no está disponible. Pregúntale a tu docente.
+        </p>
+      )}
+    </section>
   );
 }
