@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
+import { ComboField } from '@/components/ui/combo-field';
 import { CopyField } from '@/components/ui/copy-field';
 import { UploadDropzone } from './upload-dropzone';
 import { VisibilitySelector } from './visibility-selector';
@@ -27,11 +28,14 @@ type FieldErrors = Partial<Record<'title' | 'description', string>>;
 export function PublishFlow({
   projectType,
   courses,
+  groups = [],
 }: {
   projectType: ProjectType;
   courses: readonly Course[];
+  /** Grupos ya usados en proyectos publicados. Sugerencias, no lista cerrada. */
+  groups?: readonly string[];
 }) {
-  const { status, user } = useAuth();
+  const { status, user, refreshProfile } = useAuth();
   const [step, setStep] = useState(1);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -41,7 +45,7 @@ export function PublishFlow({
   // Paso 2
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [courseId, setCourseId] = useState<string>('');
+  const [courseName, setCourseName] = useState('');
   const [group, setGroup] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [cover, setCover] = useState<File | null>(null);
@@ -54,6 +58,8 @@ export function PublishFlow({
   const [visibility, setVisibility] = useState<Visibility>('published');
   const [progress, setProgress] = useState<PublishProgress | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [retryingProfile, setRetryingProfile] = useState(false);
+  const [profileRetryFailed, setProfileRetryFailed] = useState(false);
   const [result, setResult] = useState<{ handle: string; slug: string } | null>(null);
 
   const typeInfo = PROJECT_TYPES.find((option) => option.value === projectType);
@@ -62,6 +68,16 @@ export function PublishFlow({
   const canContinueFiles = files.length > 0 && Boolean(staging?.entryFile) && blocking.length === 0;
 
   const slug = useMemo(() => slugify(title) || 'proyecto', [title]);
+
+  // Si lo escrito coincide con un curso existente se manda su id; si no, se
+  // manda solo el nombre y el servidor decide si lo crea. Comparar sin
+  // distinguir mayusculas ni espacios evita duplicar un curso por un acento
+  // de mas o una mayuscula de menos.
+  const courseId = useMemo(() => {
+    const typed = courseName.trim().toLowerCase();
+    if (!typed) return null;
+    return courses.find((course) => course.name.trim().toLowerCase() === typed)?.id ?? null;
+  }, [courseName, courses]);
 
   // Al cambiar de paso, el foco va al encabezado: sin esto, quien navega con
   // teclado o lector de pantalla se queda al principio de la página.
@@ -84,7 +100,8 @@ export function PublishFlow({
     const parsed = projectMetadataSchema.safeParse({
       title,
       description,
-      courseId: courseId || null,
+      courseId,
+      courseName: courseName.trim() || null,
       group: group || null,
       tags,
       brief: {},
@@ -114,7 +131,8 @@ export function PublishFlow({
           metadata: {
             title,
             description,
-            courseId: courseId || null,
+            courseId,
+            courseName: courseName.trim() || null,
             group: group || null,
             tags,
             brief: {},
@@ -163,6 +181,55 @@ export function PublishFlow({
         >
           Iniciar sesión
         </Link>
+        <Link href="/explore" className="btn btn-ghost mt-2 w-full">
+          Volver a la galería
+        </Link>
+      </div>
+    );
+  }
+
+  /**
+   * Sesion iniciada pero sin perfil.
+   *
+   * Pasa cuando la peticion que crea el perfil fallo al entrar: la sesion de
+   * Firebase existe, pero no hay handle y por tanto no hay identidad publica a
+   * la que colgar un proyecto. Antes esto no se veia hasta el paso 4, despues
+   * de subir los archivos y elegir la visibilidad, y el mensaje que salia
+   * ("tu perfil todavia no esta creado") aparecia justo donde nadie podia
+   * relacionarlo con el inicio de sesion. Se comprueba aqui, antes de pedir
+   * nada, y con un boton para reintentar.
+   */
+  if (!user?.handle) {
+    return (
+      <div className="panel mx-auto max-w-md p-8 text-center">
+        <h1 className="font-display text-h2">Tu perfil no terminó de crearse</h1>
+        <p className="mt-3 text-muted">
+          Entraste bien, pero no pudimos reservar tu dirección pública
+          (<span className="font-mono">uinexus.mx/@tunombre</span>), y sin ella no hay dónde
+          publicar. Casi siempre se arregla al reintentar.
+        </p>
+
+        {profileRetryFailed && (
+          <p role="alert" className="mt-5 rounded-sm border border-danger/40 bg-danger-soft p-3 text-sm">
+            Sigue sin poder crearse. Cierra sesión y vuelve a entrar; si continúa, avisa al
+            profesorado.
+          </p>
+        )}
+
+        <button
+          type="button"
+          disabled={retryingProfile}
+          onClick={() => {
+            setRetryingProfile(true);
+            setProfileRetryFailed(false);
+            void refreshProfile()
+              .then((ok) => setProfileRetryFailed(!ok))
+              .finally(() => setRetryingProfile(false));
+          }}
+          className="btn btn-primary btn-lg mt-6 w-full"
+        >
+          {retryingProfile ? 'Reintentando…' : 'Reintentar'}
+        </button>
         <Link href="/explore" className="btn btn-ghost mt-2 w-full">
           Volver a la galería
         </Link>
@@ -396,37 +463,31 @@ export function PublishFlow({
             </div>
 
             <div className="grid gap-6 sm:grid-cols-2">
-              <div>
-                <label htmlFor="course" className="label">
-                  Curso <span className="font-normal text-subtle">(opcional)</span>
-                </label>
-                <select
-                  id="course"
-                  value={courseId}
-                  onChange={(event) => setCourseId(event.target.value)}
-                  className="field"
-                >
-                  <option value="">Sin curso</option>
-                  {courses.map((course) => (
-                    <option key={course.id} value={course.id}>
-                      {course.name} · {course.term}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <ComboField
+                label="Curso"
+                optional
+                value={courseName}
+                onChange={setCourseName}
+                options={courses.map((course) => course.name)}
+                placeholder="Ej. Diseño Centrado en el Usuario"
+                maxLength={80}
+                hint={
+                  courseName.trim() && !courseId
+                    ? 'No existe todavía: se creará con ese nombre al publicar.'
+                    : 'Escribe o elige de la lista.'
+                }
+              />
 
-              <div>
-                <label htmlFor="group" className="label">
-                  Grupo <span className="font-normal text-subtle">(opcional)</span>
-                </label>
-                <input
-                  id="group"
-                  value={group}
-                  onChange={(event) => setGroup(event.target.value)}
-                  maxLength={24}
-                  className="field"
-                />
-              </div>
+              <ComboField
+                label="Grupo"
+                optional
+                value={group}
+                onChange={setGroup}
+                options={groups}
+                placeholder="Ej. ISC-7A"
+                maxLength={24}
+                hint="Escribe el tuyo o elige uno de los que ya se usan."
+              />
             </div>
 
             <fieldset>
@@ -510,7 +571,32 @@ export function PublishFlow({
             <div className="border-b border-line bg-surface px-3 py-2">
               <p className="meta">Vista previa del borrador</p>
             </div>
-            {preview ? (
+            {!preview ? (
+              <div className="grid h-[26rem] place-items-center bg-sunken">
+                <p className="text-muted">Preparando la vista previa…</p>
+              </div>
+            ) : preview.rendersEmpty ? (
+              /* Un marco en blanco no es una vista previa, es un fallo aparente.
+                 Cuando la página se dibuja con JavaScript no hay nada que
+                 enseñar aquí, y decirlo es más útil que enseñar el vacío. */
+              <div className="grid h-[26rem] place-items-center bg-sunken p-8 text-center">
+                <div className="max-w-md">
+                  <p className="text-2xl" aria-hidden="true">
+                    ⚙️
+                  </p>
+                  <h2 className="mt-3 font-medium">Tu página se dibuja con JavaScript</h2>
+                  <p className="mt-2 text-sm text-muted">
+                    Por eso aquí no se ve nada: esta vista previa no ejecuta código, para que
+                    ninguna página pueda tocar tu sesión mientras la revisas. No es un error y
+                    no hace falta arreglar nada.
+                  </p>
+                  <p className="mt-3 text-sm text-muted">
+                    Al publicar, tu proyecto se ejecuta completo —JavaScript incluido— en su
+                    propio dominio. Puedes continuar.
+                  </p>
+                </div>
+              </div>
+            ) : (
               <iframe
                 title="Vista previa de tu proyecto"
                 srcDoc={preview.html}
@@ -518,10 +604,6 @@ export function PublishFlow({
                 sandbox=""
                 className="h-[26rem] w-full border-0 bg-white"
               />
-            ) : (
-              <div className="grid h-[26rem] place-items-center bg-sunken">
-                <p className="text-muted">Preparando la vista previa…</p>
-              </div>
             )}
           </div>
 

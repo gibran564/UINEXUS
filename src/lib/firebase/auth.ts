@@ -3,6 +3,7 @@
 import type { ConfirmationResult, User } from 'firebase/auth';
 import { getClientAuth } from './client';
 import { useEmulators } from './config';
+import { DomainNotAllowedError, isInstitutionalEmail } from '../identity';
 
 /**
  * Operaciones de Firebase Authentication.
@@ -79,44 +80,19 @@ export function humanizeAuthError(code: string): string {
   }
 }
 
-export const ALLOWED_EMAIL_DOMAIN = 'itdurango.edu.mx';
-export const ALLOWED_SPECIAL_EMAILS = ['cegibran@gmail.com'];
-
-export function isInstitutionalEmail(email: string | null | undefined): boolean {
-  if (!email) return false;
-  const normalized = email.trim().toLowerCase();
-  return (
-    normalized.endsWith(`@${ALLOWED_EMAIL_DOMAIN}`) ||
-    ALLOWED_SPECIAL_EMAILS.includes(normalized)
-  );
-}
-
 /**
- * Deduce el rol institucional a partir del correo:
- * - Correos docentes especiales autorizados (ej. cegibran@gmail.com) -> 'teacher'.
- * - Estudiantes: contienen dígitos en el usuario (ej. 20041243@itdurango.edu.mx, l21040123@itdurango.edu.mx).
- * - Docentes / Profesores: NO llevan dígitos (ej. nombre.apellido@itdurango.edu.mx, docente@itdurango.edu.mx).
+ * Las reglas del dominio institucional viven en `lib/identity.ts`, que no
+ * declara lado. Se reexportan aquí para no romper a quien ya las importaba
+ * desde este módulo, pero el SERVIDOR debe importarlas de `identity.ts`
+ * directamente: desde aquí sólo recibiría una client reference.
  */
-export function getRoleFromInstitutionalEmail(
-  email: string | null | undefined
-): 'student' | 'teacher' {
-  if (!email) return 'student';
-  const normalized = email.trim().toLowerCase();
-  if (ALLOWED_SPECIAL_EMAILS.includes(normalized)) {
-    return 'teacher';
-  }
-  const localPart = normalized.split('@')[0] ?? '';
-  return /\d/.test(localPart) ? 'student' : 'teacher';
-}
-
-export class DomainNotAllowedError extends Error {
-  constructor(email?: string) {
-    super(
-      `El correo ${email ? `"${email}" ` : ''}no pertenece al dominio institucional (@${ALLOWED_EMAIL_DOMAIN}). Debes usar tu cuenta del Instituto Tecnológico de Durango o un correo docente autorizado.`
-    );
-    this.name = 'DomainNotAllowedError';
-  }
-}
+export {
+  ALLOWED_EMAIL_DOMAIN,
+  ALLOWED_SPECIAL_EMAILS,
+  DomainNotAllowedError,
+  getRoleFromInstitutionalEmail,
+  isInstitutionalEmail,
+} from '../identity';
 
 export function authErrorMessage(caught: unknown): string {
   if (caught instanceof AuthUnavailableError) {

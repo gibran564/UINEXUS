@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { PublishFlow } from '@/components/publish/publish-flow';
-import { listCourses } from '@/lib/data/repository';
+import { listCourses, listKnownGroups } from '@/lib/data/repository';
 import type { ProjectType } from '@/lib/types';
 
 export const metadata: Metadata = {
@@ -19,11 +19,11 @@ export default async function PublishNewPage({
   const { type } = await searchParams;
   if (!type || !TYPES.includes(type as ProjectType)) redirect('/publish');
 
-  const courses = await listCourses();
+  const [courses, groups] = await Promise.all([listCourses(), listKnownGroups()]);
 
   return (
     <div className="container-page py-12">
-      <PublishFlow projectType={type as ProjectType} courses={courses} />
+      <PublishFlow projectType={type as ProjectType} courses={courses} groups={groups} />
     </div>
   );
 }

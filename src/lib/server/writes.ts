@@ -10,7 +10,7 @@ import { listProjectsByOwner } from '../data/repository';
 import { LIMITS } from '../constants';
 import type { ProjectMetadataInput } from '../schemas';
 import { slugify, uniqueSlug } from '../slug';
-import { getRoleFromInstitutionalEmail } from '../firebase/auth';
+import { getRoleFromInstitutionalEmail } from '../identity';
 import type {
   ProjectCover,
   ProjectRecord,
@@ -53,26 +53,39 @@ const nowIso = () => new Date().toISOString();
 // ---------------------------------------------------------------------------
 
 /**
- * Reserva un handle libre. La condición `attribute_not_exists` convierte la
- * reserva en atómica: si dos personas se registran a la vez con el mismo
- * nombre, una de las dos escrituras falla y se prueba el siguiente candidato.
- * Es el mismo truco que se usaba con `/handles/{handle}` en Firestore.
+ * Reserva un handle libre. La condición convierte la reserva en atómica: si dos
+ * personas se registran a la vez con el mismo nombre, una de las dos escrituras
+ * falla y se prueba el siguiente candidato. Es el mismo truco que se usaba con
+ * `/handles/{handle}` en Firestore.
+ *
+ * `OR uid = :uid` es lo que la hace REINTENTABLE, y no es un detalle: la
+ * reserva y la escritura del perfil son dos operaciones, y entre las dos puede
+ * fallar cualquier cosa. Con la condición a secas, cada reintento encontraba
+ * ocupado el handle que él mismo acababa de reservar y se llevaba el siguiente,
+ * dejando un rastro de reservas huérfanas que además bloquean nombres para
+ * otras personas. Reclamando la propia, el reintento converge en vez de
+ * dispersarse.
  */
 async function reserveHandle(uid: string, displayName: string): Promise<string> {
   const client = db();
   const base = slugify(displayName).slice(0, 20) || 'estudiante';
   const seed = base.length >= 3 ? base : `${base}-uinexus`.slice(0, 20);
 
+  const claim = async (candidate: string): Promise<void> => {
+    await client.send(
+      new PutCommand({
+        TableName: TABLES.handles,
+        Item: { handle: candidate, uid, createdAt: nowIso() },
+        ConditionExpression: 'attribute_not_exists(handle) OR uid = :uid',
+        ExpressionAttributeValues: { ':uid': uid },
+      })
+    );
+  };
+
   for (let attempt = 0; attempt < 25; attempt += 1) {
     const candidate = (attempt === 0 ? seed : `${seed}-${attempt + 1}`).slice(0, 24);
     try {
-      await client.send(
-        new PutCommand({
-          TableName: TABLES.handles,
-          Item: { handle: candidate, uid, createdAt: nowIso() },
-          ConditionExpression: 'attribute_not_exists(handle)',
-        })
-      );
+      await claim(candidate);
       return candidate;
     } catch (error) {
       if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
@@ -80,13 +93,7 @@ async function reserveHandle(uid: string, displayName: string): Promise<string> 
   }
 
   const fallback = `${seed}-${randomUUID().slice(0, 4)}`.slice(0, 24);
-  await client.send(
-    new PutCommand({
-      TableName: TABLES.handles,
-      Item: { handle: fallback, uid, createdAt: nowIso() },
-      ConditionExpression: 'attribute_not_exists(handle)',
-    })
-  );
+  await claim(fallback);
   return fallback;
 }
 
@@ -191,6 +198,81 @@ export interface CreateProjectInput {
  * Crea el proyecto en borrador. Existe ANTES que los archivos para que la
  * subida pueda firmarse contra un id real y un dueño conocido.
  */
+/**
+ * Curso del proyecto: lo encuentra o lo crea.
+ *
+ * El desplegable de curso es escribible, asi que puede llegar un nombre que no
+ * esta en la tabla. Buscar por SLUG y no por texto es lo que hace que
+ * "Diseno Centrado en el Usuario", "diseno centrado en el usuario" y
+ * "Diseno  Centrado  en  el  Usuario" sean el mismo curso en vez de tres.
+ *
+ * Se devuelven tambien `courseName` y `term` porque el registro del proyecto
+ * los guarda desnormalizados: la galeria y las facetas los leen sin tener que
+ * ir a buscar el curso, y una entrega conserva el nombre del curso tal y como
+ * era el dia que se entrego.
+ */
+async function resolveCourse(input: {
+  courseId?: string | null;
+  courseName?: string | null;
+}): Promise<{ courseId: string | null; courseName: string | null; term: string | null }> {
+  const vacio = { courseId: null, courseName: null, term: null };
+  const { listCourses } = await import('../data/repository');
+  const courses = await listCourses();
+
+  const typed = input.courseName?.trim() ?? '';
+
+  if (input.courseId) {
+    const chosen = courses.find((course) => course.id === input.courseId);
+    if (chosen) {
+      return { courseId: chosen.id, courseName: chosen.name, term: chosen.term };
+    }
+  }
+
+  if (!typed) return vacio;
+
+  const slug = slugify(typed).slice(0, 60);
+  if (!slug) return vacio;
+
+  const existing = courses.find((course) => course.slug === slug);
+  if (existing) {
+    return { courseId: existing.id, courseName: existing.name, term: existing.term };
+  }
+
+  const created = {
+    id: randomUUID(),
+    slug,
+    name: typed.slice(0, 80),
+    institution: 'Instituto Tecnologico de Durango',
+    term: currentTerm(),
+    description: '',
+    teacherName: '',
+    studentCount: 0,
+    projectCount: 0,
+    activities: [] as never[],
+    // `listCourses` filtra por este atributo; sin el, el curso recien creado no
+    // volveria a aparecer en el desplegable de nadie.
+    visibility: 'public',
+    createdAt: nowIso(),
+  };
+
+  await db().send(
+    new PutCommand({
+      TableName: TABLES.courses,
+      Item: created,
+      ConditionExpression: 'attribute_not_exists(id)',
+    })
+  );
+
+  return { courseId: created.id, courseName: created.name, term: created.term };
+}
+
+/** Periodo academico en curso, con el formato que ya usan los cursos. */
+function currentTerm(): string {
+  const now = new Date();
+  const half = now.getMonth() < 6 ? 'Ene-Jun' : 'Ago-Dic';
+  return `${half} ${now.getFullYear()}`;
+}
+
 export async function createProject(
   actor: Actor,
   input: CreateProjectInput
@@ -207,6 +289,8 @@ export async function createProject(
     mine.map((project) => project.slug)
   );
 
+  const course = await resolveCourse(input.metadata);
+
   const timestamp = nowIso();
   const record: ProjectRecord = {
     id: randomUUID(),
@@ -222,9 +306,9 @@ export async function createProject(
       displayName: actor.profile.displayName,
       avatarUrl: actor.profile.avatarUrl,
     },
-    courseId: input.metadata.courseId ?? null,
-    courseName: null,
-    term: null,
+    courseId: course.courseId,
+    courseName: course.courseName,
+    term: course.term,
     group: input.metadata.group ?? null,
     tags: input.metadata.tags.slice(0, LIMITS.maxTags),
     cover: null,
@@ -305,13 +389,17 @@ export async function updateProjectMetadata(
   project: ProjectRecord,
   input: { metadata?: ProjectMetadataInput; status?: Visibility }
 ): Promise<ProjectRecord> {
+  const course = input.metadata ? await resolveCourse(input.metadata) : null;
+
   const next: ProjectRecord = {
     ...project,
-    ...(input.metadata
+    ...(input.metadata && course
       ? {
           title: input.metadata.title,
           description: input.metadata.description,
-          courseId: input.metadata.courseId ?? null,
+          courseId: course.courseId,
+          courseName: course.courseName,
+          term: course.term,
           group: input.metadata.group ?? null,
           tags: input.metadata.tags.slice(0, LIMITS.maxTags),
           brief: input.metadata.brief ?? {},

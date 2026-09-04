@@ -44,7 +44,12 @@ export async function ensureUserProfile(user: User): Promise<UserProfile> {
       method: 'POST',
       body: { displayName, avatarUrl },
     });
-  } catch {
+  } catch (caught) {
+    // No se relanza a proposito: la sesion tiene que seguir siendo usable para
+    // explorar. Pero el motivo si se deja a la vista, porque un handle vacio
+    // es exactamente lo que despues hace fallar cualquier escritura, y sin
+    // esta linea el fallo real quedaba a cuatro pasos de distancia de su causa.
+    console.error('[uinexus] No se pudo crear o leer el perfil:', caught);
     return { handle: '', displayName, avatarUrl, role: 'student', suspended: false };
   }
 }

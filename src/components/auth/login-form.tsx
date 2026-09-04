@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { getRoleFromInstitutionalEmail, isInstitutionalEmail, type PhoneChallenge } from '@/lib/firebase/auth';
+import { getRoleFromInstitutionalEmail, isInstitutionalEmail } from '@/lib/identity';
+import type { PhoneChallenge } from '@/lib/firebase/auth';
 import { useAuth } from './auth-provider';
 
 type Mode = 'signin' | 'signup' | 'reset' | 'phone';

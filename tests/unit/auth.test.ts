@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getRoleFromInstitutionalEmail, isInstitutionalEmail } from '../../src/lib/firebase/auth';
+import { getRoleFromInstitutionalEmail, isInstitutionalEmail } from '../../src/lib/identity';
 
 describe('validación de correo institucional ITD', () => {
   it('acepta correos válidos de @itdurango.edu.mx', () => {

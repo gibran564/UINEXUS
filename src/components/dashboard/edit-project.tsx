@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { UploadDropzone } from '@/components/publish/upload-dropzone';
 import { VisibilitySelector } from '@/components/publish/visibility-selector';
@@ -10,6 +10,7 @@ import { ALL_CATEGORIES, LIMITS } from '@/lib/constants';
 import { isFirebaseConfigured } from '@/lib/firebase/config';
 import { formatBytes, type StagingResult } from '@/lib/files';
 import { replaceProjectFiles, type PublishProgress } from '@/lib/publish-client';
+import { ComboField } from '@/components/ui/combo-field';
 import { projectMetadataSchema } from '@/lib/schemas';
 import type { Course, ProjectRecord, Visibility } from '@/lib/types';
 import { useMyProjects } from '@/lib/use-my-projects';
@@ -24,7 +25,15 @@ import { projectPath } from '@/lib/urls';
  * se muestra pero no se edita, y por eso reemplazar archivos avisa con todas
  * las letras de que sustituye lo que hay publicado.
  */
-export function EditProject({ projectId, courses }: { projectId: string; courses: readonly Course[] }) {
+export function EditProject({
+  projectId,
+  courses,
+  groups = [],
+}: {
+  projectId: string;
+  courses: readonly Course[];
+  groups?: readonly string[];
+}) {
   const { status, user } = useAuth();
   const { projects, state, reload } = useMyProjects(user);
   const project = projects.find((item) => item.id === projectId);
@@ -56,28 +65,40 @@ export function EditProject({ projectId, courses }: { projectId: string; courses
     );
   }
 
-  return <EditForm project={project} courses={courses} onSaved={reload} />;
+  return <EditForm project={project} courses={courses} groups={groups} onSaved={reload} />;
 }
 
 function EditForm({
   project,
   courses,
+  groups,
   onSaved,
 }: {
   project: ProjectRecord;
   courses: readonly Course[];
+  groups: readonly string[];
   onSaved: () => void;
 }) {
   const { user } = useAuth();
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState(project.description);
-  const [courseId, setCourseId] = useState(project.courseId ?? '');
+  const [courseName, setCourseName] = useState(
+    project.courseName ??
+      courses.find((course) => course.id === project.courseId)?.name ??
+      ''
+  );
   const [group, setGroup] = useState(project.group ?? '');
   const [tags, setTags] = useState<string[]>(project.tags);
   const [visibility, setVisibility] = useState<Visibility>(
     project.status === 'archived' ? 'draft' : (project.status as Visibility)
   );
   const [brief, setBrief] = useState(project.brief);
+
+  const courseId = useMemo(() => {
+    const typed = courseName.trim().toLowerCase();
+    if (!typed) return null;
+    return courses.find((course) => course.name.trim().toLowerCase() === typed)?.id ?? null;
+  }, [courseName, courses]);
 
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -98,7 +119,8 @@ function EditForm({
     const parsed = projectMetadataSchema.safeParse({
       title,
       description,
-      courseId: courseId || null,
+      courseId,
+      courseName: courseName.trim() || null,
       group: group || null,
       tags,
       brief,
@@ -226,36 +248,30 @@ function EditForm({
           </div>
 
           <div className="grid gap-6 sm:grid-cols-2">
-            <div>
-              <label htmlFor="edit-course" className="label">
-                Curso
-              </label>
-              <select
-                id="edit-course"
-                value={courseId}
-                onChange={(event) => setCourseId(event.target.value)}
-                className="field"
-              >
-                <option value="">Sin curso</option>
-                {courses.map((course) => (
-                  <option key={course.id} value={course.id}>
-                    {course.name} · {course.term}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="edit-group" className="label">
-                Grupo
-              </label>
-              <input
-                id="edit-group"
-                value={group}
-                onChange={(event) => setGroup(event.target.value)}
-                maxLength={24}
-                className="field"
-              />
-            </div>
+            <ComboField
+              label="Curso"
+              optional
+              value={courseName}
+              onChange={setCourseName}
+              options={courses.map((course) => course.name)}
+              placeholder="Ej. Diseño Centrado en el Usuario"
+              maxLength={80}
+              hint={
+                courseName.trim() && !courseId
+                  ? 'No existe todavía: se creará con ese nombre al guardar.'
+                  : 'Escribe o elige de la lista.'
+              }
+            />
+            <ComboField
+              label="Grupo"
+              optional
+              value={group}
+              onChange={setGroup}
+              options={groups}
+              placeholder="Ej. ISC-7A"
+              maxLength={24}
+              hint="Escribe el tuyo o elige uno de los que ya se usan."
+            />
           </div>
 
           <fieldset>

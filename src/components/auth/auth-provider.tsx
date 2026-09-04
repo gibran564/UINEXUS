@@ -28,6 +28,8 @@ interface AuthContextValue {
   user: SessionUser | null;
   /** true cuando no hay Firebase configurado y la sesión es simulada. */
   isDemo: boolean;
+  /** Reintenta crear o leer el perfil. Devuelve false si sigue sin poder. */
+  refreshProfile: () => Promise<boolean>;
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (email: string, password: string, name: string) => Promise<void>;
@@ -129,6 +131,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false;
       unsubscribe?.();
     };
+  }, [isDemo]);
+
+  /**
+   * Reintento explicito de `ensureUserProfile`. Existe porque el perfil se crea
+   * en una peticion que puede fallar, y cuando falla la sesion queda con handle
+   * vacio: usable para explorar, incapaz de escribir. Sin una forma de
+   * reintentar, la unica salida era cerrar sesion y volver a entrar.
+   */
+  const refreshProfile = useCallback(async (): Promise<boolean> => {
+    if (isDemo) return true;
+    const [{ getClientAuth }, { ensureUserProfile }] = await Promise.all([
+      import('@/lib/firebase/client'),
+      import('@/lib/firebase/profile'),
+    ]);
+    const firebaseUser = getClientAuth()?.currentUser;
+    if (!firebaseUser) return false;
+
+    const profile = await ensureUserProfile(firebaseUser);
+    if (!profile.handle) return false;
+
+    setUser({
+      uid: firebaseUser.uid,
+      handle: profile.handle,
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl,
+      role: profile.role,
+    });
+    return true;
   }, [isDemo]);
 
   const startDemoSession = useCallback(() => {
@@ -262,6 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user,
       isDemo,
+      refreshProfile,
       signInWithGoogle,
       signInWithEmail,
       registerWithEmail,
@@ -275,6 +306,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user,
       isDemo,
+      refreshProfile,
       signInWithGoogle,
       signInWithEmail,
       registerWithEmail,

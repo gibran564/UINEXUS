@@ -26,6 +26,33 @@ export interface PreviewResult {
   html: string;
   /** Avisos honestos para mostrar junto a la vista previa. */
   notes: string[];
+  /**
+   * El documento, ya sin scripts, no pinta nada visible.
+   *
+   * Es lo que le pasa a cualquier página que construye su contenido con
+   * JavaScript. Sin esta señal, la vista previa era un rectángulo blanco de
+   * 26rem y la explicación quedaba debajo, en gris pequeño: quien lo veía
+   * concluía —razonablemente— que la plataforma estaba rota.
+   */
+  rendersEmpty: boolean;
+}
+
+/**
+ * ¿Queda algo que ver? Se mira el documento ya procesado, no el original: lo
+ * que importa es lo que va a pintar el marco, no lo que traía el archivo.
+ */
+function looksEmpty(html: string): boolean {
+  if (typeof DOMParser === 'undefined') return false;
+  try {
+    const body = new DOMParser().parseFromString(html, 'text/html').body;
+    if (!body) return false;
+    if (body.textContent?.trim()) return false;
+    // Sin texto todavía puede haber algo que mirar: una imagen, un SVG, un
+    // vídeo, o un lienzo con dimensiones propias.
+    return body.querySelector('img, svg, video, canvas, iframe, picture, object') === null;
+  } catch {
+    return false;
+  }
 }
 
 async function readAsText(file: StagedFile): Promise<string> {
@@ -72,6 +99,7 @@ export async function buildPreviewDocument(
     return {
       html: '<!doctype html><p>No encontramos el archivo de entrada.</p>',
       notes: ['Falta el archivo index.html.'],
+      rendersEmpty: false,
     };
   }
 
@@ -165,5 +193,5 @@ export async function buildPreviewDocument(
   // 5. Los enlaces internos no llevan a ninguna parte dentro del marco.
   html = html.replace(/<a\b([^>]*)>/gi, '<a$1 target="_blank" rel="noopener noreferrer">');
 
-  return { html, notes };
+  return { html, notes, rendersEmpty: looksEmpty(html) };
 }

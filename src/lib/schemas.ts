@@ -46,6 +46,14 @@ export const projectMetadataSchema = z.object({
     .min(10, 'Escribe al menos una frase que explique el proyecto.')
     .max(LIMITS.descriptionMax, `Máximo ${LIMITS.descriptionMax} caracteres.`),
   courseId: z.string().trim().max(64).nullable(),
+  /**
+   * Nombre del curso tal y como se escribio en el formulario. Convive con
+   * `courseId` a proposito: el desplegable es escribible, asi que puede llegar
+   * un curso que todavia no existe. El servidor busca por nombre y lo crea si
+   * hace falta; `courseId` sigue siendo la referencia cuando se eligio uno de
+   * la lista.
+   */
+  courseName: z.string().trim().max(80).nullish(),
   group: z.string().trim().max(24).nullable(),
   tags: z
     .array(z.string().trim().min(1).max(24))

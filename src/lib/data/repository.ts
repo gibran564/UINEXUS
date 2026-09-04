@@ -308,6 +308,26 @@ export async function getCourseBySlug(slug: string): Promise<Course | null> {
   return courses.find((course) => course.slug === slug) ?? null;
 }
 
+/**
+ * Grupos que ya se han usado, para sugerirlos en el formulario.
+ *
+ * Se calculan del contenido real y no de un catalogo: un grupo no es una
+ * entidad de la plataforma, es una cadena que escribe quien publica. Sugerir
+ * los que ya existen es lo que evita que "ISC-7A", "isc 7a" y "7A" acaben
+ * siendo tres grupos distintos en los filtros.
+ */
+export async function listKnownGroups(): Promise<string[]> {
+  const records = await readPublishedRecords();
+  const seen = new Map<string, string>();
+  for (const project of records) {
+    const group = project.group?.trim();
+    if (!group) continue;
+    const key = group.toLowerCase();
+    if (!seen.has(key)) seen.set(key, group);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, 'es'));
+}
+
 /** Facetas disponibles para la barra de filtros, calculadas del contenido real
  *  para no ofrecer nunca un filtro que devolvería cero resultados. */
 export async function getExploreFacets(): Promise<{
