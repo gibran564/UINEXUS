@@ -379,7 +379,7 @@ export async function finalizeProjectVersion(
     publishedAt,
   };
 
-  await putProject(next);
+  await putProject(next, project);
   return next;
 }
 
@@ -419,7 +419,7 @@ export async function updateProjectMetadata(
     next.hiddenByAdmin = true;
   }
 
-  await putProject(next);
+  await putProject(next, project);
   return next;
 }
 
@@ -434,7 +434,7 @@ export async function moderateProject(
     ...(input.hiddenByAdmin !== undefined ? { hiddenByAdmin: input.hiddenByAdmin } : {}),
     updatedAt: nowIso(),
   };
-  await putProject(next);
+  await putProject(next, project);
   return next;
 }
 
@@ -446,35 +446,60 @@ export async function moderateProject(
  * ELIMINAN cuando el proyecto deja de ser listable: dejarlos a null lo
  * mantendría dentro del índice de la galería.
  */
-async function putProject(record: ProjectRecord): Promise<void> {
-  const visibility = visibilityAttributes(record);
+async function writeProjectItem(record: ProjectRecord): Promise<void> {
   await db().send(
     new PutCommand({
       TableName: TABLES.projects,
       Item: {
         ...record,
         path: pathKey(record.ownerHandle, record.slug),
-        ...visibility,
+        ...visibilityAttributes(record),
       },
       ConditionExpression: 'attribute_exists(id)',
     })
   );
+}
 
-  // La ruta del origen aislado se sincroniza DESPUES de que el dato quede
-  // guardado. Si se hiciera antes y la escritura fallara, CloudFront estaria
-  // sirviendo un proyecto que la plataforma cree despublicado.
-  //
-  // Si falla ESTA, el proyecto queda guardado pero su enlace no lleva a ningun
-  // sitio. Es el peor estado posible de los dos, porque parece exito: por eso
-  // se traduce a un error con nombre en vez de dejar que salga un 500 generico
-  // que no dice si hay que volver a subir los archivos o no (no hay que).
+/**
+ * Guarda el proyecto y sincroniza su ruta en el origen aislado.
+ *
+ * El orden importa: primero el dato, despues la ruta. Al reves, si fallara la
+ * escritura en DynamoDB, CloudFront estaria sirviendo un proyecto que la
+ * plataforma cree despublicado.
+ *
+ * Pero ese orden abre el estado inverso, que es el que de verdad hace dano:
+ * el proyecto guardado como `published` y sin ruta. No parece un fallo -la
+ * plataforma lo lista, la ficha se abre- y el enlace devuelve 404. Es peor que
+ * un error, porque nadie sabe que hay algo que reintentar.
+ *
+ * Por eso, si la ruta no se puede escribir, se deshace la escritura anterior.
+ * `previous` es el registro tal y como estaba; volver a el deja el proyecto
+ * como si nunca se hubiera intentado publicar, que es la verdad.
+ */
+async function putProject(
+  record: ProjectRecord,
+  previous?: ProjectRecord
+): Promise<void> {
+  await writeProjectItem(record);
+
   try {
     await syncProjectRoute(record);
   } catch (error) {
     console.error('[uinexus] No se pudo publicar la ruta en CloudFront:', error);
+
+    if (previous) {
+      try {
+        await writeProjectItem(previous);
+      } catch (rollbackError) {
+        // Si tambien falla deshacer, se dice: es el unico caso en el que el
+        // proyecto SI queda en un estado que hay que mirar a mano.
+        console.error('[uinexus] Y tampoco se pudo deshacer:', rollbackError);
+      }
+    }
+
     throw new HttpError(
       502,
-      'Guardamos tu proyecto y tus archivos, pero no pudimos activar su direccion publica. No hace falta volver a subir nada: reintenta la publicacion desde tus proyectos.'
+      'Tus archivos estan a salvo, pero no pudimos activar la direccion publica del proyecto, asi que lo dejamos como estaba. No hace falta volver a subir nada: reintenta la publicacion desde tus proyectos.'
     );
   }
 }
