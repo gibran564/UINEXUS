@@ -599,6 +599,16 @@ export const courseResourceTypeSchema = z.enum([
   'document',
   'template',
   'workflow',
+  /**
+   * Un aviso de la materia: «mañana revisamos los prototipos en clase».
+   *
+   * Vive en la tabla de recursos y NO en una entidad nueva. Un anuncio tiene
+   * exactamente la forma que ya tiene un recurso —materia, autor, título,
+   * contenido, fecha, moderación— y estrenar una tabla para repetirla habría
+   * añadido infraestructura por un campo. Reutilizarla trae gratis la
+   * autoría, el filtrado por rol y la moderación que ya estaban probadas.
+   */
+  'announcement',
   'other',
 ]);
 

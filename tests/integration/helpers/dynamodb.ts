@@ -110,6 +110,76 @@ const tableDefinitions: CreateTableCommandInput[] = [
       },
     ],
   },
+  /**
+   * Skills, recursos generales y proyectos. Los tres hacen falta desde que el
+   * Inicio autenticado compone su muro: sin ellos la ruta no se puede ejercer,
+   * y lo que hay que probar de esa ruta es justamente qué deja fuera.
+   */
+  {
+    TableName: TABLES.skills,
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'id', AttributeType: 'S' },
+      { AttributeName: 'courseId', AttributeType: 'S' },
+      { AttributeName: 'createdAt', AttributeType: 'S' },
+    ],
+    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: INDEXES.skillsByCourse,
+        KeySchema: [
+          { AttributeName: 'courseId', KeyType: 'HASH' },
+          { AttributeName: 'createdAt', KeyType: 'RANGE' },
+        ],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+  },
+  {
+    TableName: TABLES.resources,
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'id', AttributeType: 'S' },
+      { AttributeName: 'courseId', AttributeType: 'S' },
+      { AttributeName: 'createdAt', AttributeType: 'S' },
+    ],
+    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: INDEXES.resourcesByCourse,
+        KeySchema: [
+          { AttributeName: 'courseId', KeyType: 'HASH' },
+          { AttributeName: 'createdAt', KeyType: 'RANGE' },
+        ],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+  },
+  /**
+   * El índice `byStatus` es DISPERSO: `statusKey` sólo existe en los proyectos
+   * publicados y listables. Es la misma garantía estructural que en producción,
+   * y por eso la prueba de que un borrador no aparece en el muro vale algo.
+   */
+  {
+    TableName: TABLES.projects,
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'id', AttributeType: 'S' },
+      { AttributeName: 'statusKey', AttributeType: 'S' },
+      { AttributeName: 'listedAt', AttributeType: 'S' },
+    ],
+    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: INDEXES.projectsByStatus,
+        KeySchema: [
+          { AttributeName: 'statusKey', KeyType: 'HASH' },
+          { AttributeName: 'listedAt', KeyType: 'RANGE' },
+        ],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+  },
   {
     TableName: TABLES.submissions,
     BillingMode: 'PAY_PER_REQUEST',
@@ -146,6 +216,9 @@ const tableKeys = new Map<string, string>([
   [TABLES.courses, 'id'],
   [TABLES.assignments, 'id'],
   [TABLES.prompts, 'id'],
+  [TABLES.skills, 'id'],
+  [TABLES.resources, 'id'],
+  [TABLES.projects, 'id'],
   [TABLES.submissions, 'id'],
 ]);
 
@@ -264,3 +337,15 @@ export async function listPersistedSubmissions(assignmentId: string): Promise<Su
   );
   return (result.Items ?? []) as SubmissionRecord[];
 }
+
+/** Escribe filas tal cual en una tabla de integración. Para sembrar un caso. */
+export async function putIntegrationItems(
+  tableName: string,
+  items: readonly Record<string, unknown>[]
+): Promise<void> {
+  assertLocalTestTarget();
+  if (items.length === 0) return;
+  await batchWrite({ [tableName]: items.map((Item) => ({ PutRequest: { Item } })) });
+}
+
+export { TABLES as INTEGRATION_TABLES };

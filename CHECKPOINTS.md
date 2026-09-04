@@ -31,10 +31,11 @@ procesos estructurados, trazables y reutilizables.
 
 **Iteración 5 — Experiencia de producto.** URLs públicas de proyectos bajo el
 dominio UINexus, Project Shell con iframe aislado, vista previa docente en el
-editor de tareas, resumen compacto antes de publicar y cierre de la autoría de
-actividades: prompt libre y fecha límite con hora.
+editor de tareas, resumen compacto antes de publicar, cierre de la autoría de
+actividades —prompt libre y fecha límite con hora— e Inicio autenticado con
+muro académico.
 
-Pasan **341 pruebas unitarias + 27 pruebas de integración**. Typecheck, lint y
+Pasan **363 pruebas unitarias + 38 pruebas de integración**. Typecheck, lint y
 build también pasan.
 
 | # | Bloque | Estado |
@@ -63,6 +64,9 @@ build también pasan.
 | 18 | **Resumen compacto antes de publicar (P2 it.5)** | ✅ |
 | 19 | **Prompt de paso sin depender de la biblioteca (P0 cierre)** | ✅ |
 | 20 | **Fecha límite con hora, aplicada en el servidor (P1 cierre)** | ✅ |
+| 21 | **Inicio autenticado en `/` (P0 muro)** | ✅ |
+| 22 | **Priorización de tareas y muro académico (P1–P3 muro)** | ✅ |
+| 23 | **Inicio docente y navegación autenticada (P4–P5 muro)** | ✅ |
 
 ---
 
@@ -260,6 +264,57 @@ build también pasan.
 - [x] No se implementó ninguna política de entrega tardía: ni tolerancia, ni
       prórrogas, ni reapertura. Alcanzada la hora, cerrado.
 
+### Inicio autenticado y muro académico
+
+**`/` según la sesión.** El visitante sigue viendo la portada pública, servida
+desde el servidor y con su HTML completo. Quien tiene sesión ve su Inicio sin
+pasar por el escaparate:
+
+- [x] `HomeGate` reparte por estado de sesión (`homeViewFor`). NO hay redirect
+      server-side y no puede haberlo: la sesión es un ID token en memoria del
+      navegador, no una cookie, así que el servidor de `/` no sabe quién pide.
+- [x] `SessionScript` evita el destello. Una marca en `localStorage` —«la última
+      vez había sesión»— oculta la portada antes de la primera pintura, con la
+      misma técnica que el tema. No es una credencial y no autoriza nada: se
+      corrige sola en cuanto Firebase responde.
+- [x] El landing no se duplicó: se extrajo a `components/home/landing.tsx` y
+      sigue siendo la misma pantalla. `/about` y `/explore` siguen donde estaban.
+
+**Prioridad y muro** (`lib/home-feed.ts`, puro y probado sin nube):
+
+- [x] Orden determinista y explicable: devuelta → vencida → hoy → pronto → en
+      progreso → nueva → programada → sin fecha → cerrada. Lo entregado NO entra
+      en la lista, así que no puede desplazar a lo pendiente.
+- [x] El vencimiento se decide con `dueAt`, no con el día suelto.
+- [x] La llamada a la acción dice qué va a pasar: Comenzar, Continuar, Entregar,
+      Ver mi entrega, Ver el resultado. Y «Paso 2 de 4 · <siguiente paso>» cuando
+      la actividad tiene workflow.
+- [x] Muro derivado de lo que ya existe —actividades, prompts, Skills, recursos y
+      proyectos publicados—. Sin event sourcing, sin tabla de eventos, sin colas.
+- [x] Los avisos de la docente son un `CourseResource` de tipo `announcement`:
+      una entidad nueva habría repetido materia, autor, contenido, fecha y
+      moderación que esa tabla ya tenía.
+- [x] «Desde tu última visita» se deriva contando eventos contra una marca del
+      propio navegador. Nadie registra qué mira quién.
+- [x] Nada de likes, comentarios, seguidores ni ranking. Sólo eventos con valor
+      académico: lo que alguien publicó, no por dónde pasó.
+
+**Inicio docente.** Cierra hoy → entregas por revisar → aportaciones por
+aprobar, con «21 de 31 entregaron» calculado sobre la audiencia REAL de cada
+actividad. Un compositor de avisos y accesos a las pantallas de creación que ya
+existen; ningún editor duplicado dentro del muro.
+
+**Privacidad, en `/api/home`.** Sólo materias propias; sólo actividades
+publicadas y asignadas; sólo recursos aprobados; los proyectos salen del índice
+disperso de publicados. De las entregas ajenas no sale nada: ni estado, ni nota,
+ni si alguien entregó. Hay pruebas de integración para cada una de esas cinco
+fronteras.
+
+**Navegación.** Con sesión: Inicio · Aula · Explorar. Sin sesión: Explorar ·
+Cursos · Acerca de. No se crearon pantallas globales de «Tareas» ni «Recursos»:
+ambas viven dentro de una materia y duplicarlas sólo habría servido para cumplir
+un nombre.
+
 ---
 
 ## En progreso
@@ -270,6 +325,10 @@ build también pasan.
 
 ## Pendiente
 
+- [ ] **Dar credenciales de AWS al entorno Preview de Vercel.** Es lo único que
+      bloquea el Preview de un PR, y no es un fallo del código. Diagnóstico
+      cerrado: ver «El Preview de Vercel falla por configuración, no por
+      código» más abajo.
 - [ ] **Recorrido real con dos cuentas** (bloque 6). Ver «Infraestructura».
 - [ ] **Verificar el acceso con las credenciales de PRODUCCIÓN.** Una orden.
       Ver «Próximo agente».
@@ -784,6 +843,54 @@ Las 8 vulnerabilidades moderadas que quedan son el mismo aviso transitivo. Ver
 «Auditoría de dependencias»: no es alcanzable y el arreglo que sugiere npm es
 un downgrade. Volver a mirar cuando salga una versión de `firebase-admin` cuya
 cadena traiga `uuid@>=11.1.1`.
+
+### El Preview de Vercel falla por configuración, no por código
+
+Diagnosticado con el log del despliegue `dpl_GzMtwZgtDaGxK1TKpXjtEJsmwghb`
+(PR #3). El build local, los tests y el build de Producción pasan; el de Preview
+no, y siempre por lo mismo:
+
+```
+Error [CredentialsProviderError]: Could not load credentials from any providers
+  at Object.n [as generateStaticParams] (.next/server/app/courses/[slug]/page.js)
+```
+
+La causa exacta, comprobada con `vercel env ls`:
+
+| Variable | Environments |
+|---|---|
+| `UINEXUS_AWS_ACCESS_KEY_ID` | **Production sólo** |
+| `UINEXUS_AWS_SECRET_ACCESS_KEY` | **Production sólo** |
+| `UINEXUS_TABLE_PREFIX` | Production **y Preview** |
+| `UINEXUS_PROJECTS_BUCKET` | Production **y Preview** |
+
+Y la cadena que eso dispara:
+
+1. `isAwsConfigured` (lib/aws/config.ts) mira `UINEXUS_TABLE_PREFIX` o
+   `UINEXUS_PROJECTS_BUCKET`. En Preview los dos existen, así que da `true` y
+   **el modo demo queda desactivado**.
+2. `generateStaticParams` de `/courses/[slug]` llama a `listCourses()`, que va a
+   DynamoDB de verdad.
+3. `awsCredentials` es `undefined` porque faltan las dos claves, así que el SDK
+   cae a su cadena por defecto.
+4. En el contenedor de compilación de Vercel esa cadena no encuentra nada, y el
+   build entero se cae.
+
+**Arreglo (una acción en Vercel, no en el repositorio):** añadir las dos
+credenciales al environment Preview.
+
+```bash
+vercel env add UINEXUS_AWS_ACCESS_KEY_ID preview
+vercel env add UINEXUS_AWS_SECRET_ACCESS_KEY preview
+```
+
+Conviene que sean unas credenciales **de sólo lectura** y con el mismo prefijo
+de tablas: un Preview no debería poder escribir en los datos de producción.
+
+**Mejora no bloqueante, anotada y NO implementada:** `isAwsConfigured` se deduce
+de variables que no son credenciales, así que un entorno a medio configurar
+apaga el modo demo y después se estrella en el build en vez de degradarse. Si se
+quiere que un Preview sin credenciales compile igualmente, ahí está el sitio.
 
 ### Antes de cerrar cualquier sesión
 

@@ -972,6 +972,8 @@ export type CourseResourceType =
   | 'document'
   | 'template'
   | 'workflow'
+  /** Aviso de la materia. Ver `courseResourceTypeSchema` para el porqué. */
+  | 'announcement'
   | 'other';
 
 /**

@@ -589,3 +589,25 @@
     --fg-subtle: #b8bcc6;
   }
 }
+
+/* ==========================================================================
+   El reparto de `/` antes de la primera pintura
+
+   El servidor no sabe quién pide —la sesión es un token en memoria— así que
+   siempre envía la portada pública. Cuando este navegador recuerda una sesión
+   iniciada, `SessionScript` marca <html data-session="in"> antes de pintar y
+   estas dos reglas cambian qué se ve: nada de escaparate, sólo el marcador de
+   carga hasta que el Inicio esté listo. Ver components/home/session-hint.tsx.
+   ========================================================================== */
+
+[data-home-gate='pending'] {
+  display: none;
+}
+
+[data-session='in'] [data-home-gate='landing'] {
+  display: none;
+}
+
+[data-session='in'] [data-home-gate='pending'] {
+  display: block;
+}
