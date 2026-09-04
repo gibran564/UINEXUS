@@ -14,7 +14,7 @@ import { ComboField } from '@/components/ui/combo-field';
 import { projectMetadataSchema } from '@/lib/schemas';
 import type { Course, ProjectRecord, Visibility } from '@/lib/types';
 import { useMyProjects } from '@/lib/use-my-projects';
-import { projectPath } from '@/lib/urls';
+import { publicProjectUrl } from '@/lib/urls';
 
 /**
  * Editar un proyecto ya publicado.
@@ -191,7 +191,7 @@ function EditForm({
         <div className="min-w-0">
           <h1 className="font-display text-h1">{project.title}</h1>
           <p className="mt-2 font-mono text-sm break-all text-muted">
-            uinexus.mx{projectPath(project.ownerHandle, project.slug)}
+            {publicProjectUrl(project)}
           </p>
         </div>
         <StatusBadge status={project.status} />

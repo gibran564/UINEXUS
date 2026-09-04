@@ -5,6 +5,7 @@ import { AuthProvider } from '@/components/auth/auth-provider';
 import { DemoBanner } from '@/components/app-shell/demo-banner';
 import { Footer } from '@/components/app-shell/footer';
 import { Navbar } from '@/components/app-shell/navbar';
+import { AppFrame } from '@/components/app-shell/app-frame';
 import { ThemeScript } from '@/components/theme/theme-script';
 import { SITE } from '@/lib/constants';
 import { SITE_URL } from '@/lib/urls';
@@ -67,12 +68,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Saltar al contenido
         </a>
         <AuthProvider>
-          <DemoBanner />
-          <Navbar />
-          <main id="contenido" tabIndex={-1}>
+          <AppFrame banner={<DemoBanner />} navigation={<Navbar />} footer={<Footer />}>
             {children}
-          </main>
-          <Footer />
+          </AppFrame>
         </AuthProvider>
       </body>
     </html>

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
+import { APP_HOST } from '@/lib/urls';
 import { isFirebaseConfigured } from '@/lib/firebase/config';
 import { profileSchema } from '@/lib/schemas';
 import { profilePath } from '@/lib/urls';
@@ -19,6 +20,18 @@ export function ProfileEditor() {
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
   const [bio, setBio] = useState('');
   const [program, setProgram] = useState('');
+  /**
+   * Ficha academica (§33). Se guarda aparte del perfil publico porque no lo es:
+   * la matricula y el departamento los ve el profesorado de la materia, no la
+   * galeria. Los campos son OPCIONALES y un perfil sin ellos sigue siendo
+   * valido; esto es una ficha escolar minima, no un sistema administrativo.
+   */
+  const [enrollmentNumber, setEnrollmentNumber] = useState('');
+  const [semester, setSemester] = useState('');
+  const [career, setCareer] = useState('');
+  const [department, setDepartment] = useState('');
+  const [academicTitle, setAcademicTitle] = useState('');
+  const [role, setRole] = useState<'student' | 'teacher' | 'admin'>('student');
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -34,11 +47,24 @@ export function ProfileEditor() {
           displayName: string;
           bio: string | null;
           program: string | null;
+          role: 'student' | 'teacher' | 'admin';
+          studentProfile: {
+            enrollmentNumber?: string | null;
+            semester?: string | null;
+            career?: string | null;
+          } | null;
+          teacherProfile: { department?: string | null; title?: string | null } | null;
         }>('/api/profile');
         if (!active) return;
         setDisplayName(profile.displayName || user.displayName);
         setBio(profile.bio ?? '');
         setProgram(profile.program ?? '');
+        setRole(profile.role);
+        setEnrollmentNumber(profile.studentProfile?.enrollmentNumber ?? '');
+        setSemester(profile.studentProfile?.semester ?? '');
+        setCareer(profile.studentProfile?.career ?? '');
+        setDepartment(profile.teacherProfile?.department ?? '');
+        setAcademicTitle(profile.teacherProfile?.title ?? '');
       } catch {
         // El formulario conserva los datos de Authentication si la API falla.
       }
@@ -83,7 +109,14 @@ export function ProfileEditor() {
       // sólo acepta los campos que su dueño puede cambiar, y la proyección
       // pública la deriva él a partir del registro guardado.
       const { updateProfile } = await import('@/lib/projects-client');
-      await updateProfile(parsed.data);
+      await updateProfile({
+        ...parsed.data,
+        // Se manda solo la ficha que corresponde al rol. Mandar las dos
+        // guardaria un `teacherProfile` vacio en cada estudiante.
+        ...(role === 'student'
+          ? { studentProfile: { enrollmentNumber, semester, career } }
+          : { teacherProfile: { department, title: academicTitle } }),
+      });
       setState('saved');
     } catch {
       setState('error');
@@ -105,7 +138,7 @@ export function ProfileEditor() {
           <>
             Tu página es{' '}
             <Link href={profilePath(user.handle)} className="font-mono text-accent underline underline-offset-2">
-              uinexus.mx/@{user.handle}
+              {APP_HOST}/@{user.handle}
             </Link>
             .
           </>
@@ -167,6 +200,86 @@ export function ProfileEditor() {
             className="field"
           />
         </div>
+
+        <fieldset className="border-t border-line pt-6">
+          <legend className="font-display text-h3">Ficha académica</legend>
+          <p className="mt-1 text-sm text-muted">
+            Opcional. No se publica en tu perfil: la ve el profesorado de tus materias.
+          </p>
+
+          {role === 'student' ? (
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <div>
+                <label htmlFor="enrollmentNumber" className="label">
+                  Matrícula
+                </label>
+                <input
+                  id="enrollmentNumber"
+                  value={enrollmentNumber}
+                  onChange={(event) => setEnrollmentNumber(event.target.value)}
+                  maxLength={20}
+                  placeholder="20041243"
+                  className="field"
+                />
+              </div>
+              <div>
+                <label htmlFor="semester" className="label">
+                  Semestre
+                </label>
+                <input
+                  id="semester"
+                  value={semester}
+                  onChange={(event) => setSemester(event.target.value)}
+                  maxLength={20}
+                  placeholder="7.º"
+                  className="field"
+                />
+              </div>
+              <div>
+                <label htmlFor="career" className="label">
+                  Carrera
+                </label>
+                <input
+                  id="career"
+                  value={career}
+                  onChange={(event) => setCareer(event.target.value)}
+                  maxLength={120}
+                  placeholder="Ing. en Sistemas Computacionales"
+                  className="field"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="department" className="label">
+                  Departamento
+                </label>
+                <input
+                  id="department"
+                  value={department}
+                  onChange={(event) => setDepartment(event.target.value)}
+                  maxLength={120}
+                  placeholder="Sistemas y Computación"
+                  className="field"
+                />
+              </div>
+              <div>
+                <label htmlFor="academicTitle" className="label">
+                  Título
+                </label>
+                <input
+                  id="academicTitle"
+                  value={academicTitle}
+                  onChange={(event) => setAcademicTitle(event.target.value)}
+                  maxLength={80}
+                  placeholder="Mtra. en Diseño"
+                  className="field"
+                />
+              </div>
+            </div>
+          )}
+        </fieldset>
 
         <div className="panel bg-sunken p-4 text-sm text-muted">
           <h2 className="font-medium text-fg">Lo que nunca se publica</h2>

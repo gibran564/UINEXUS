@@ -35,6 +35,13 @@ export function updateProfile(input: {
   displayName: string;
   bio?: string;
   program?: string;
+  /**
+   * Ficha academica. Opcional y separada del perfil publico: el servidor la
+   * escribe con `updateAcademicProfile`, que enumera los campos que toca, y por
+   * eso mandar aqui `role` o `suspended` no llevaria a ninguna parte.
+   */
+  studentProfile?: { enrollmentNumber?: string; semester?: string; career?: string };
+  teacherProfile?: { department?: string; title?: string };
 }): Promise<void> {
   return apiFetch<{ ok: true }>('/api/profile', { method: 'PATCH', body: input }).then(() => {});
 }

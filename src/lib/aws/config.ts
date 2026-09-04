@@ -30,6 +30,13 @@ export const TABLES = {
   projects: `${TABLE_PREFIX}-projects`,
   courses: `${TABLE_PREFIX}-courses`,
   reports: `${TABLE_PREFIX}-reports`,
+  // Capa académica (iteración 2). Tablas nuevas, no columnas nuevas: una
+  // entrega y un proyecto no comparten ni ciclo de vida ni patrón de acceso.
+  assignments: `${TABLE_PREFIX}-assignments`,
+  submissions: `${TABLE_PREFIX}-submissions`,
+  prompts: `${TABLE_PREFIX}-prompts`,
+  skills: `${TABLE_PREFIX}-skills`,
+  resources: `${TABLE_PREFIX}-resources`,
 } as const;
 
 export const INDEXES = {
@@ -38,6 +45,12 @@ export const INDEXES = {
   projectsByPath: 'byPath',
   projectsByStatus: 'byStatus',
   coursesBySlug: 'bySlug',
+  assignmentsByCourse: 'byCourse',
+  submissionsByAssignment: 'byAssignment',
+  submissionsByStudent: 'byStudent',
+  promptsByCourse: 'byCourse',
+  skillsByCourse: 'byCourse',
+  resourcesByCourse: 'byCourse',
 } as const;
 
 /**
@@ -112,6 +125,34 @@ export const awsClientConfig = {
   maxAttempts: 3,
   ...(awsCredentials ? { credentials: awsCredentials } : {}),
 };
+
+/**
+ * Endpoint alternativo EXCLUSIVO de DynamoDB.
+ *
+ * Se usa para pruebas de integración contra DynamoDB Local. No forma parte de
+ * `awsClientConfig` porque esa configuración también alimenta S3 y CloudFront:
+ * apuntar esos clientes al emulador de Dynamo sería incorrecto. En producción
+ * la variable no existe y el SDK conserva su resolución normal de endpoints.
+ */
+const configuredDynamoEndpoint = process.env.UINEXUS_DYNAMODB_ENDPOINT?.trim() || undefined;
+const integrationRuntime =
+  process.env.NODE_ENV === 'test' && process.env.UINEXUS_INTEGRATION_TESTS === 'true';
+
+if (configuredDynamoEndpoint && !integrationRuntime) {
+  throw new Error(
+    'UINEXUS_DYNAMODB_ENDPOINT sólo se admite en el runner explícito de integración.'
+  );
+}
+
+if (configuredDynamoEndpoint) {
+  const parsed = new URL(configuredDynamoEndpoint);
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+  if (parsed.protocol !== 'http:' || !loopback) {
+    throw new Error('El endpoint de DynamoDB para integración debe ser HTTP loopback.');
+  }
+}
+
+export const DYNAMODB_ENDPOINT = configuredDynamoEndpoint;
 
 /**
  * Sin credenciales propias y fuera de AWS, la cadena del SDK acaba preguntando

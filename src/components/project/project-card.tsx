@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from 'next/link';
 import type { Project } from '@/lib/types';
-import { projectPath } from '@/lib/urls';
+import { publicProjectPath } from '@/lib/urls';
 import { GeneratedCover } from './generated-cover';
 
 /**
@@ -21,7 +21,7 @@ export function ProjectCard({
   project: Project;
   priority?: boolean;
 }) {
-  const href = projectPath(project.author.handle, project.slug);
+  const href = publicProjectPath(project);
   const context = [project.courseName, project.term].filter(Boolean).join(' · ');
 
   return (

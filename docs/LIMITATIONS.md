@@ -182,3 +182,132 @@ arbitraria de Node.js, microservicios, Kubernetes.
 
 UINexus publica y exhibe proyectos. Cada una de esas funciones tiene un producto
 mejor que la haría, y ninguna hace que un alumno publique su página más rápido.
+
+
+## 4. Limitaciones de la capa académica (iteración 2)
+
+1. **Las rutas de API del aula no tienen pruebas de extremo a extremo.** Se
+   prueban las funciones puras donde vive la decisión (`isAssignedTo`, los
+   mappers, `resolveMembers`, `progressOf`, la exportación). Comprobar que cada
+   `route.ts` llama a la comprobación correcta necesita DynamoDB Local. Es la
+   misma limitación que ya existía tras salir de Firestore.
+2. **`listCoursesForUser` y `findCourseByCode` hacen `Scan`.** Correcto a escala
+   de una institución. Cuando duela, la solución es un índice invertido
+   `userId → courseIds`, no una copia de la inscripción en el perfil: dos copias
+   de la misma verdad se desincronizan.
+3. **El panel de la materia hace una consulta por tarea.** Con 6 tareas son 6
+   consultas; el límite por materia está en 200. Si se acerca, hay que paginar o
+   precalcular.
+4. **Borrar una tarea deja sus entregas huérfanas.** Es deliberado —son trabajo
+   de otras personas y un clic no debería destruirlo— pero falta la tarea de
+   mantenimiento que las recoja.
+5. **La búsqueda de personas para inscribir la puede usar cualquier `teacher`**,
+   no sólo docentes de alguna materia. Devuelve únicamente lo que ya es público
+   en un perfil.
+
+El estado completo, con lo terminado y lo pendiente, está en
+[CHECKPOINTS.md](../CHECKPOINTS.md).
+
+
+## 5. Limitaciones de la iteración 3
+
+1. **La vista conjunta se recalcula en cada lectura.** Es lo correcto —evita una
+   copia desincronizada— pero con muchos conceptos y muchos estudiantes son una
+   consulta de entregas y un recorrido en memoria por apertura. Si pesa, la
+   solución es caché de lectura, no persistir el documento.
+2. **Dos personas que comparten un concepto producen dos aportaciones
+   separadas**, no un texto común. Es deliberado (ver docs/ARCHITECTURE.md §10),
+   pero conviene saberlo antes de repartir un concepto entre varias personas
+   esperando un único párrafo.
+3. **Un prompt editado cambia para las tareas que ya lo recomendaban.** El
+   AI Worklog guarda por separado el prompt realmente usado, así que el dato que
+   se analiza no se pierde; lo que no se conserva es qué recomendaba la docente
+   el día de la entrega. Versionar los recursos queda para más adelante.
+4. **Las referencias a recursos borrados quedan en el registro** aunque dejen de
+   pintarse.
+5. **La pila de CloudFormation y la cuenta divergen**: las tablas no tienen
+   etiquetas de CloudFormation. Ver CHECKPOINTS.md, «Infraestructura validada».
+
+El estado completo está en [CHECKPOINTS.md](../CHECKPOINTS.md).
+
+
+## 6. Rendimiento: dónde está el techo (análisis, no optimización)
+
+Nada de esto se ha optimizado, y es deliberado: a la escala actual —una
+institución, decenas de materias, treinta y pico personas por grupo— ninguna de
+estas rutas duele, y añadir índices especulativos cuesta complejidad hoy a
+cambio de un problema que quizá no llegue. Lo que sigue es dónde empezaría a
+doler, para que quien lo vea venir sepa qué mirar.
+
+### `listCoursesForUser` — Scan sobre `uinexus-courses`
+
+**Qué hace.** Escanea la tabla entera y filtra en memoria quién está en
+`teachers` o `students`.
+
+**Coste.** Lineal en el número de MATERIAS de la institución, no de personas.
+Se ejecuta al abrir `/aula` y al leer el perfil.
+
+**Umbral.** Con 50 materias es imperceptible. Con ~1.000 empieza a notarse
+(varios MB por Scan, y DynamoDB pagina cada 1 MB). Ese número corresponde a
+unos diez años de una facultad mediana.
+
+**Cuando duela.** Un índice invertido `userId → courseIds`, no una copia de la
+inscripción en el perfil: dos copias de la misma verdad se desincronizan, y la
+que se desincroniza es siempre la que nadie mira.
+
+### `findCourseByCode` — Scan con filtro
+
+**Qué hace.** Escanea buscando el código de 6 caracteres al autoinscribirse.
+
+**Coste.** Igual que el anterior, pero se ejecuta **una vez por persona y
+materia**, no en cada pantalla. Treinta y un estudiantes uniéndose a un grupo
+son treinta y un Scan en total, repartidos a lo largo de una clase.
+
+**Cuando duela.** Un GSI sobre `code`. Es un índice de una sola clave y sin
+proyección extra; sería barato. No se ha hecho porque hoy no hay nada que
+arreglar.
+
+### Lectura de un archivo académico — recorre las entregas
+
+**Qué hace.** Antes de firmar la URL de lectura, `GET
+/api/assignments/[id]/files` comprueba que la clave esté **citada en una
+entrega real**. Para el profesorado eso significa leer las entregas de esa
+tarea.
+
+**Coste.** Una consulta al índice `byAssignment` por cada archivo que se abre.
+Con 31 entregas es una consulta de unos pocos KB.
+
+**Umbral.** Si una docente abre veinte archivos seguidos revisando, son veinte
+consultas. Sigue siendo irrelevante; empezaría a molestar con cientos de
+entregas por tarea.
+
+**Cuando duela.** Un índice de claves de archivo, o incluir el `storageKey` en
+un atributo consultable de la entrega. **No** sustituirlo por comprobar el UID
+dentro de la clave: eso es exactamente lo que la comprobación evita, porque una
+clave se puede escribir a mano.
+
+### `buildRoster` y `buildCourseOverview` — una consulta por tarea
+
+**Qué hacen.** Recorren las tareas de la materia y consultan las entregas de
+cada una.
+
+**Coste.** Tantas consultas como tareas publicadas, no como estudiantes. Con 6
+tareas son 6 consultas; el límite por materia está en 200.
+
+**Umbral.** Una materia con más de ~50 tareas publicadas haría lenta la
+apertura del panel.
+
+**Cuando duela.** Precalcular los recuentos al escribir una entrega, o paginar
+las tareas. Precalcular introduce un dato derivado que puede desincronizarse:
+sólo merece la pena si el panel se vuelve realmente lento.
+
+### `buildWorkflowGroupView` — se recalcula en cada lectura
+
+**Qué hace.** Compone el resultado del grupo a partir de la tarea y las
+entregas, sin persistir nada.
+
+**Coste.** Una consulta de entregas más un recorrido en memoria por apertura.
+
+**Cuando duela.** Caché de lectura con invalidación por `updatedAt`. **Nunca**
+persistir el documento compuesto: sería una segunda copia del mismo contenido,
+y la segunda copia siempre acaba diciendo algo distinto de la primera.

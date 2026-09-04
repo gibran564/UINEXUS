@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { listCourses, listIndexablePaths, listPublicHandles } from '@/lib/data/repository';
-import { SITE_URL } from '@/lib/urls';
+import { publicProjectUrl, SITE_URL } from '@/lib/urls';
 
 export const revalidate = 3600;
 
@@ -38,7 +38,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     })),
     ...projects.map((project) => ({
-      url: `${SITE_URL}/@${project.handle}/${project.slug}`,
+      url: publicProjectUrl(project),
       lastModified: new Date(project.updatedAt),
       changeFrequency: 'monthly' as const,
       priority: 0.8,

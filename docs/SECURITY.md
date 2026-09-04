@@ -221,3 +221,189 @@ Honestamente:
    producción. No hay un límite propio por usuario y minuto.
 
 Ver [LIMITATIONS.md](LIMITATIONS.md) para el plan sobre cada punto.
+
+
+## Permisos del aula (iteración 2)
+
+Toda la autorización de materias, tareas y entregas vive en
+`src/lib/server/course-access.ts`. Un único archivo, por la misma razón que
+`session.ts`: una comprobación repartida por veinte rutas es una comprobación
+que alguien olvidará en la veintiuna.
+
+| Quién | Puede | No puede |
+|---|---|---|
+| Estudiante | ver sus materias, las tareas publicadas que se le asignaron, y sus propias entregas; editar su borrador; entregar | ver entregas de otros, crear o modificar tareas, exportar resultados, ver la lista de sus compañeros |
+| Docente de la materia | administrar tareas, ver la lista, leer entregas, revisar, exportar | tocar materias que no imparte |
+| Docente de OTRA materia | nada sobre esta | igual que un desconocido: 404 |
+| Administración | lo que ya tenía; entra como docente para resolver incidencias | — |
+
+Cuatro invariantes que se sostienen en código y no en la interfaz:
+
+1. **404, no 403.** Confirmar que una materia o una tarea existe pero no es tuya
+   ya permite enumerarlas.
+2. **El tipo de entrega lo dicta la TAREA**, nunca el cuerpo de la petición. Es
+   lo que impide mandar un AI Worklog donde se pidió una investigación.
+3. **No hay dónde escribir «de quién».** El id de la entrega se deriva del UID
+   del token verificado, así que «editar la entrega de otro» no es algo
+   prohibido: es algo que no se puede expresar.
+4. **Toda URL guardada se valida** y sólo se acepta `http`/`https`. Un
+   `javascript:` almacenado y luego pintado en un enlace es XSS almacenado, y
+   aquí se guardan enlaces que otra persona va a abrir. `z.string().url()` no
+   basta: lo acepta.
+
+El CSV exportado antepone `'` a las celdas que empiezan por `= + - @`: son
+respuestas escritas por terceros y Excel las evaluaría como fórmulas al abrir
+el archivo.
+
+
+## Actividad colaborativa y Skills (iteración 3)
+
+### Quién puede escribir qué apartado
+
+La regla vive en `canAnswerGroup()` (`src/lib/data/academic.ts`) y la aplica el
+servidor en `guardCollaborativeAnswers()` (`src/lib/server/academic-writes.ts`)
+antes de guardar:
+
+- Modo individual → cualquiera responde todo.
+- Concepto **sin** responsables → abierto a todo el grupo. La ausencia de
+  restricción significa «para todos», nunca «para nadie», igual que
+  `assignedTo: null` en la propia tarea.
+- Concepto **con** responsables → sólo ellos.
+
+Las respuestas a apartados ajenos se **descartan en silencio** en lugar de
+rechazar la petición entera. Es intencionado: un formulario legítimo puede
+arrastrar el `questionId` de un concepto que la docente reasignó mientras el
+alumno tenía la pestaña abierta, y responder 422 lo dejaría sin poder guardar lo
+que sí es suyo. Lo que no le corresponde no se guarda; lo que sí, se guarda
+entero.
+
+Nótese que esto no protege la entrega de otra persona —eso ya es imposible,
+porque el id de una entrega se deriva del UID de quien la manda—, sino algo más
+sutil: contestar apartados ajenos **dentro de la entrega propia**, que
+ensuciaría la vista conjunta con aportaciones que nadie pidió.
+
+### Visibilidad entre estudiantes
+
+`canSeeOthers()` decide, y el filtrado ocurre **antes de serializar**: con
+visibilidad «sólo la propia», las aportaciones ajenas no llegan al navegador, no
+es que lleguen y se oculten.
+
+### Skills: por qué los comandos no se sanean
+
+UINexus no ejecuta nunca el contenido de una Skill. No hay `exec`, ni shell, ni
+PowerShell, ni terminal remota, ni instalación automática, ni descarga de
+ejecutables. Los comandos se guardan tal cual y se pintan como código con un
+botón de copiar.
+
+Sanearlos sería seguridad de mentira: estropearía comandos legítimos y sugeriría
+una defensa sobre algo que no corre. Lo que **sí** se valida, en servidor y con
+el mismo esquema que el resto del proyecto, son los **enlaces** —repositorio,
+sitio oficial y pasos de tipo `link`—, porque ésos sí se pintan como `href` y sí
+puede pulsarlos alguien: sólo `http` y `https`, y siempre con
+`rel="noopener noreferrer"`.
+
+### Recursos acotados a su materia
+
+`assertResourcesBelongTo()` comprueba al guardar que un prompt o una Skill
+referenciados pertenecen a la materia de la tarea. Sin esa comprobación, conocer
+un id bastaría para colgar en una tarea el prompt de otro grupo, y la biblioteca
+de una materia dejaría de ser suya. Se aplica también a los recursos que un
+AI Worklog declara haber usado.
+
+
+## Workflows y recursos colaborativos (iteración 4)
+
+### Evidencia por paso
+
+Al guardar una entrega con pasos, el servidor:
+
+1. Descarta cualquier `stepId` que no exista en la tarea.
+2. Descarta cualquier paso que no le corresponda a quien la manda
+   (`canWorkOnStep`).
+3. Valida el contenido contra el entregable **que pide el paso**
+   (`deliverableSchemaFor`), no contra lo que diga el cuerpo.
+4. Acepta `toolId` sólo si está entre los del paso. El NOMBRE de la herramienta
+   sí es libre: cuando el paso permite elegir, es el único dato que hay.
+
+Lo ajeno se descarta **en silencio** y no con un 422: la docente puede reasignar
+un paso mientras alguien tiene el formulario abierto, y rechazar la petición
+entera lo dejaría sin poder guardar lo que sí es suyo.
+
+### Moderación de recursos
+
+El estado (`draft`/`proposed`/`approved`/`rejected`/`archived`) **no se lee
+nunca del cuerpo de la petición**. Lo fija `initialAuthorship()` a partir del
+rol —el profesorado crea aprobado, el alumnado propone— y lo cambia
+`applyModeration()`, que exige ser docente de ESA materia.
+
+Un recurso no aprobado sólo lo ven el profesorado y quien lo propuso; el
+filtrado ocurre antes de serializar. Quien propuso algo puede editarlo mientras
+siga pendiente, no después: una vez aprobado, cambiarlo por debajo dejaría a la
+docente respaldando algo que ya no leyó.
+
+Rechazar y archivar **no borran**. Quien propuso algo tiene derecho a saber qué
+pasó con lo suyo.
+
+### Enlaces externos
+
+UINexus **no visita** las URL que se pegan. Pedir metadatos a un sitio arbitrario
+convierte al servidor en un cliente de peticiones arbitrarias (SSRF). El dominio
+de una tarjeta se calcula en el navegador a partir del texto.
+
+Tampoco se promete iframe: la mayoría de herramientas lo bloquean con
+`X-Frame-Options` o `frame-ancestors`, y prometer un embed que casi nunca
+funciona convierte el caso normal en un error aparente. El nivel por defecto es
+enlace y tarjeta, siempre con `rel="noopener noreferrer"`.
+
+
+## Plantillas, enlaces y archivos (iteración 4, segunda parte)
+
+### Plantillas de workflow
+
+Instanciar una plantilla exige ser docente de la materia y que la plantilla esté
+**aprobada**: usar una propuesta pendiente la publicaría sin pasar por revisión.
+El clonado ocurre en el servidor, de modo que los identificadores nuevos son una
+propiedad de la respuesta y no algo que el cliente deba aplicar.
+
+Los responsables se limpian al clonar. Una plantilla puede venir de otra materia
+y esos UID no existirían en la actual.
+
+### Recursos referenciados
+
+`assertResourcesBelongTo` exige que el recurso sea de la materia **y** esté
+aprobado. Es lo que impide que una tarea recomiende una propuesta pendiente y la
+publique por la puerta de atrás.
+
+### Enlaces externos: por qué el servidor no los visita
+
+`describeLink()` reconoce el proveedor mirando el TEXTO de la URL. No hay
+`fetch`, ni DNS, ni timeouts. Pedir metadatos a una dirección que elige un
+tercero convierte al servidor en un cliente de peticiones arbitrarias (SSRF), con
+alcance a servicios internos y al endpoint de metadatos de la nube.
+
+El embed sólo se ofrece para proveedores con URL de incrustación documentada y
+cuando la URL concreta tiene la forma correcta: construir el `src` de un iframe a
+partir de texto sin comprobar sería inyectar en la página lo que escriba un
+tercero. El `sandbox` no concede `allow-top-navigation` ni `allow-modals`, así
+que el contenido ajeno no puede sacar a nadie de UINexus ni abrir diálogos que
+parezcan de la plataforma.
+
+### Archivos académicos
+
+Van al bucket **privado**, bajo `academic/{courseId}/{uid}/{assignmentId}/{stepId}/`.
+
+- **La clave la construye el servidor** con datos que ya verificó. El nombre que
+  propone el navegador sólo se guarda como etiqueta: si entrara en la ruta, se
+  podría escribir en la carpeta de otra persona.
+- Sólo se sube a un paso propio (`canWorkOnStep`).
+- El límite y los tipos admitidos los dicta el **entregable del paso**, no el
+  cuerpo de la petición. Pedir subir un video a un paso que pide una imagen no
+  concede el límite de video.
+- El tamaño se aplica con `content-length-range` en el POST firmado. Es lo único
+  que lo convierte en un límite y no en una promesa del cliente.
+- Leer exige una URL firmada de 5 minutos y que el archivo esté **citado en una
+  entrega real** de esa tarea. No basta con conocer la clave.
+- Sólo se firman claves del prefijo `academic/`: el mismo endpoint no puede
+  usarse para leer el código de los proyectos.
+
+Nada se borra en cascada. Ver la tabla de retención en CHECKPOINTS.md.

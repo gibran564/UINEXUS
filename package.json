@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "node scripts/run-integration-tests.mjs",
     "aws:deploy:infra": "aws cloudformation deploy --template-file infra/uinexus.cfn.yaml --stack-name uinexus --capabilities CAPABILITY_IAM",
     "aws:outputs": "aws cloudformation describe-stacks --stack-name uinexus --query \"Stacks[0].Outputs\" --output table",
     "aws:deploy:origin": "node scripts/deploy-origin.mjs"
@@ -29,6 +30,8 @@
     "qrcode": "^1.5.4",
     "react": "19.1.1",
     "react-dom": "19.1.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -41,9 +44,14 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.4",
     "firebase-tools": "^14.27.0",
-    "postcss": "^8.5.6",
+    "postcss": "^8.5.28",
     "tailwindcss": "^4.1.11",
+    "tar": "^6.2.1",
     "typescript": "^5.8.3",
     "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "postcss": "$postcss",
+    "sharp": "^0.35.0"
   }
 }

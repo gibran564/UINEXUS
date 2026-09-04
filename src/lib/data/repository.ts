@@ -13,6 +13,7 @@ import type {
 } from '../types';
 import { DEMO_COURSES, DEMO_PROJECTS, DEMO_USERS } from './demo';
 import { toPublicProject, toPublicProjects } from './mappers';
+import { isPublicProjectAtPath } from '../project-access';
 
 /**
  * Capa de lectura del servidor.
@@ -160,9 +161,7 @@ export async function listFeaturedProjects(limit = 3): Promise<Project[]> {
  *  "sólo con enlace" significa exactamente eso. */
 export async function getProjectByPath(handle: string, slug: string): Promise<Project | null> {
   const record = await getProjectRecordByPath(handle, slug);
-  if (!record) return null;
-  if (record.hiddenByAdmin) return null;
-  if (!['published', 'unlisted'].includes(record.status)) return null;
+  if (!record || !isPublicProjectAtPath(record, handle, slug)) return null;
   return toPublicProject(record);
 }
 

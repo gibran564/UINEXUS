@@ -5,7 +5,7 @@ import { ProjectPreview } from '@/components/project/project-preview';
 import { LogoMark } from '@/components/ui/logo';
 import { getProjectByPath } from '@/lib/data/repository';
 import { parseHandleParam } from '@/lib/slug';
-import { liveProjectUrl, projectPath } from '@/lib/urls';
+import { liveProjectUrl, publicProjectPath } from '@/lib/urls';
 
 export const revalidate = 300;
 
@@ -39,7 +39,7 @@ export default async function PreviewPage({
     <div className="container-page py-6">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
         <Link
-          href={projectPath(handle, slug)}
+          href={publicProjectPath({ handle, slug })}
           className="inline-flex items-center gap-2 text-sm no-underline hover:underline"
         >
           <LogoMark size={17} />

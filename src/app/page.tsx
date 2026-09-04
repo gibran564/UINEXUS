@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { APP_HOST } from '@/lib/urls';
 import { ProjectCard } from '@/components/project/project-card';
 import { ProjectGrid } from '@/components/project/project-grid';
 import { SearchField } from '@/components/explore/search-field';
@@ -60,7 +61,7 @@ export default async function HomePage() {
             {[
               { n: '01', title: 'Sube tu archivo', text: 'Un index.html o un .zip. Se arrastra y ya.' },
               { n: '02', title: 'Cuenta de qué va', text: 'Título, una descripción y tu curso.' },
-              { n: '03', title: 'Comparte el enlace', text: 'uinexus.mx/@tunombre/tu-proyecto' },
+              { n: '03', title: 'Comparte el enlace', text: `${APP_HOST}/@tunombre/tu-proyecto/` },
             ].map((step, index) => (
               <li
                 key={step.n}
