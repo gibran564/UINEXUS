@@ -229,7 +229,7 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
                 d="M9 3.58c1.32 0 2.5.46 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 00.96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"
               />
             </svg>
-            {mode === 'signup' ? 'Registrarse con Google (@itdurango.edu.mx)' : 'Continuar con Google (@itdurango.edu.mx)'}
+            {mode === 'signup' ? 'Registrarse con Google' : 'Continuar con Google'}
           </button>
 
           <p className="my-6 flex items-center gap-3 text-sm text-subtle">

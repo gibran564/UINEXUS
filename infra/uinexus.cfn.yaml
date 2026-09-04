@@ -18,12 +18,15 @@ Parameters:
     Type: String
     Default: uinexus
     Description: Prefijo de tablas y buckets. Permite dev y prod en la misma cuenta.
-  PlatformOrigin:
-    Type: String
-    Default: https://uinexus.mx
+  PlatformOrigins:
+    Type: CommaDelimitedList
+    Default: 'https://uinexus.mx,https://uinex.vercel.app,http://localhost:3000'
     Description: >
-      Origen de la aplicacion de confianza. Solo se usa para frame-ancestors:
-      es quien puede embeber un proyecto en un iframe.
+      Origenes de confianza de la plataforma, separados por comas. Son DOS cosas
+      a la vez y por eso es una sola lista: quien puede embeber un proyecto en un
+      iframe (frame-ancestors) y quien puede subir archivos al bucket desde el
+      navegador (CORS). Mientras no haya dominio propio, el de Vercel tiene que
+      estar aqui o ni la vista previa ni la publicacion funcionan.
 
 Resources:
 
@@ -146,7 +149,7 @@ Resources:
           # Solo POST: es lo unico que hace el navegador contra este bucket, con
           # un permiso que el servidor firmo archivo a archivo.
           - AllowedMethods: [POST]
-            AllowedOrigins: [!Ref PlatformOrigin, 'http://localhost:3000']
+            AllowedOrigins: !Ref PlatformOrigins
             AllowedHeaders: ['*']
             MaxAge: 3000
       LifecycleConfiguration:
@@ -169,7 +172,7 @@ Resources:
       CorsConfiguration:
         CorsRules:
           - AllowedMethods: [POST, GET]
-            AllowedOrigins: [!Ref PlatformOrigin, 'http://localhost:3000']
+            AllowedOrigins: !Ref PlatformOrigins
             AllowedHeaders: ['*']
             MaxAge: 3000
 
@@ -256,13 +259,15 @@ Resources:
           # sigue siendo el aislamiento por origen, no la CSP.
           ContentSecurityPolicy:
             Override: true
-            ContentSecurityPolicy: >-
-              default-src 'self' https: data: blob:; script-src 'self'
-              'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'self'
-              'unsafe-inline' https: data:; img-src 'self' https: data: blob:;
-              font-src 'self' https: data:; media-src 'self' https: data: blob:;
-              connect-src 'self' https:; object-src 'none'; base-uri 'none';
-              form-action 'self'; frame-ancestors 'self' https://uinexus.mx
+            ContentSecurityPolicy: !Sub
+              - >-
+                default-src 'self' https: data: blob:; script-src 'self'
+                'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'self'
+                'unsafe-inline' https: data:; img-src 'self' https: data: blob:;
+                font-src 'self' https: data:; media-src 'self' https: data: blob:;
+                connect-src 'self' https:; object-src 'none'; base-uri 'none';
+                form-action 'self'; frame-ancestors 'self' ${Ancestors}
+              - Ancestors: !Join [' ', !Ref PlatformOrigins]
         CustomHeadersConfig:
           Items:
             - Header: Permissions-Policy

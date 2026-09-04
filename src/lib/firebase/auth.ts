@@ -50,7 +50,9 @@ export function humanizeAuthError(code: string): string {
     case 'auth/account-exists-with-different-credential':
       return 'Ese correo ya tiene cuenta con otro método. Entra con el que usaste la primera vez.';
     case 'auth/unauthorized-domain':
-      return 'Este dominio todavía no está autorizado para iniciar sesión. Avisa al profesorado.';
+      return `Firebase no reconoce todavía el dominio ${
+        typeof window === 'undefined' ? 'de esta página' : window.location.hostname
+      }. Hay que añadirlo en Firebase → Authentication → Settings → Authorized domains. Mientras tanto, entra con tu correo y contraseña.`;
     case 'auth/network-request-failed':
       return 'No hay conexión. Inténtalo otra vez cuando vuelva.';
     case 'auth/too-many-requests':
@@ -198,11 +200,12 @@ export async function signInWithGoogle(): Promise<User> {
   const auth = requireAuth();
   const { GoogleAuthProvider, signInWithPopup, signOut: firebaseSignOut } = await import('firebase/auth');
   const provider = new GoogleAuthProvider();
-  // Fuerza el selector de cuenta y sugiere el dominio institucional
-  provider.setCustomParameters({
-    prompt: 'select_account',
-    hd: ALLOWED_EMAIL_DOMAIN,
-  });
+  // Solo el selector de cuenta. NO se manda `hd`: ese parametro no es una
+  // sugerencia, es un filtro duro de Google que oculta cualquier cuenta fuera
+  // del dominio, incluidos los correos docentes autorizados de
+  // ALLOWED_SPECIAL_EMAILS, que entonces no podrian entrar nunca. El dominio
+  // se comprueba aqui abajo, con la misma regla que el resto de la aplicacion.
+  provider.setCustomParameters({ prompt: 'select_account' });
   const credential = await signInWithPopup(auth, provider);
   const userEmail = credential.user.email;
   if (!isInstitutionalEmail(userEmail)) {

@@ -130,10 +130,16 @@ export function PublishFlow({
       );
       setResult({ handle: published.handle, slug: published.slug });
       setStep(5);
-    } catch {
+    } catch (caught) {
       setProgress(null);
+      // El motivo real importa: «revisa tu conexión» manda a buscar donde no
+      // está cuando lo que falla es un permiso, una sesión caducada o el CORS
+      // del bucket. Los mensajes de la API ya vienen redactados para leerse.
+      const reason = caught instanceof Error ? caught.message : '';
       setPublishError(
-        'No se pudo publicar. Revisa tu conexión e inténtalo otra vez; tus archivos siguen aquí.'
+        reason
+          ? `${reason} Tus archivos siguen aquí: puedes intentarlo otra vez.`
+          : 'No se pudo publicar. Revisa tu conexión e inténtalo otra vez; tus archivos siguen aquí.'
       );
     }
   }

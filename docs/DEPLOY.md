@@ -94,7 +94,12 @@ En [console.firebase.google.com](https://console.firebase.google.com), proyecto
    **Correo/contraseña**.
    *Teléfono requiere plan Blaze; en Spark no está disponible.*
 2. **Authentication → Settings → Authorized domains**: añadir el dominio de la
-   plataforma. **No** añadir el dominio de proyectos: el origen aislado no debe
+   plataforma, **incluido el de Vercel** (`uinex.vercel.app`) mientras no haya
+   dominio propio. Sin esto, entrar con Google falla con
+   `auth/unauthorized-domain` y sólo funciona el correo con contraseña: el
+   dominio autorizado es una lista blanca de Firebase, no algo que la
+   aplicación pueda arreglar por su cuenta.
+   **No** añadir el dominio de proyectos: el origen aislado no debe
    poder autenticar a nadie. Si apareciera ahí, el HTML de un alumno podría
    montar un inicio de sesión creíble bajo un dominio de UINexus.
 3. **Project settings → Service accounts → Generate new private key**. Ese JSON
@@ -160,6 +165,19 @@ identidad es la única diferencia real entre las dos opciones.
 4. Las variables tienen que estar disponibles también en **Build**, no sólo en
    runtime: la portada, `/courses` y el `sitemap.xml` se prerenderizan y leen
    DynamoDB durante `next build`.
+
+5. **El dominio tiene que estar en `PlatformOrigins`** (parámetro de
+   `infra/uinexus.cfn.yaml`) y desplegado con `npm run aws:deploy:infra`. Ese
+   parámetro alimenta dos cosas que se notan enseguida si faltan:
+
+   | Falta en | Síntoma |
+   |---|---|
+   | CORS de los buckets | La publicación falla al subir los archivos: S3 responde `CORSResponse: This CORS request is not allowed` |
+   | `frame-ancestors` de CloudFront | La vista previa del proyecto sale en blanco: el navegador se niega a embeber el iframe |
+
+   Y en Firebase, el mismo dominio en *Authorized domains* (§3). Son tres
+   listas blancas distintas en tres sitios distintos, y cada dominio nuevo hay
+   que darlo de alta en las tres.
 
 > **Si el build se queda parado en `Collecting page data`**, casi siempre es
 > esto: faltan las credenciales y la cadena por defecto del SDK acaba

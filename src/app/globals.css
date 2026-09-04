@@ -316,6 +316,12 @@
       color var(--duration) var(--ease);
   }
 
+  /* Los iconos son elementos flexibles: sin esto, una etiqueta larga los
+     comprime a cero y el boton se queda sin su icono. */
+  .btn > svg {
+    flex-shrink: 0;
+  }
+
   .btn:disabled,
   .btn[aria-disabled='true'] {
     cursor: not-allowed;
