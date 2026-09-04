@@ -261,6 +261,18 @@ export function PublishFlow({
           <CopyField value={url} label="Enlace público de tu proyecto" />
         </div>
 
+        {visibility !== 'draft' && (
+          /* El mapa de rutas del origen aislado tarda en llegar a todos los
+             bordes de CloudFront. Durante ese minuto el enlace puede devolver
+             "proyecto no encontrado", que es exactamente lo que lee alguien
+             que acaba de pulsar "publicar": parece que no se guardo. Decirlo
+             antes cuesta una linea; averiguarlo por tu cuenta, media tarde. */
+          <p className="mt-3 text-sm text-muted">
+            Si lo abres ahora mismo y dice que no lo encuentra, espera un minuto y recarga: la
+            dirección tarda un poco en llegar a todos los servidores.
+          </p>
+        )}
+
         <div className="mt-5 flex flex-wrap gap-3">
           <Link href={projectPath(result.handle, result.slug)} className="btn btn-primary">
             Ver la ficha del proyecto
