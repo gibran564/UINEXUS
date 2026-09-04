@@ -325,6 +325,10 @@ un nombre.
 
 ## Pendiente
 
+- [ ] **Dar credenciales de AWS al entorno Preview de Vercel.** Es lo único que
+      bloquea el Preview de un PR, y no es un fallo del código. Diagnóstico
+      cerrado: ver «El Preview de Vercel falla por configuración, no por
+      código» más abajo.
 - [ ] **Recorrido real con dos cuentas** (bloque 6). Ver «Infraestructura».
 - [ ] **Verificar el acceso con las credenciales de PRODUCCIÓN.** Una orden.
       Ver «Próximo agente».
@@ -839,6 +843,54 @@ Las 8 vulnerabilidades moderadas que quedan son el mismo aviso transitivo. Ver
 «Auditoría de dependencias»: no es alcanzable y el arreglo que sugiere npm es
 un downgrade. Volver a mirar cuando salga una versión de `firebase-admin` cuya
 cadena traiga `uuid@>=11.1.1`.
+
+### El Preview de Vercel falla por configuración, no por código
+
+Diagnosticado con el log del despliegue `dpl_GzMtwZgtDaGxK1TKpXjtEJsmwghb`
+(PR #3). El build local, los tests y el build de Producción pasan; el de Preview
+no, y siempre por lo mismo:
+
+```
+Error [CredentialsProviderError]: Could not load credentials from any providers
+  at Object.n [as generateStaticParams] (.next/server/app/courses/[slug]/page.js)
+```
+
+La causa exacta, comprobada con `vercel env ls`:
+
+| Variable | Environments |
+|---|---|
+| `UINEXUS_AWS_ACCESS_KEY_ID` | **Production sólo** |
+| `UINEXUS_AWS_SECRET_ACCESS_KEY` | **Production sólo** |
+| `UINEXUS_TABLE_PREFIX` | Production **y Preview** |
+| `UINEXUS_PROJECTS_BUCKET` | Production **y Preview** |
+
+Y la cadena que eso dispara:
+
+1. `isAwsConfigured` (lib/aws/config.ts) mira `UINEXUS_TABLE_PREFIX` o
+   `UINEXUS_PROJECTS_BUCKET`. En Preview los dos existen, así que da `true` y
+   **el modo demo queda desactivado**.
+2. `generateStaticParams` de `/courses/[slug]` llama a `listCourses()`, que va a
+   DynamoDB de verdad.
+3. `awsCredentials` es `undefined` porque faltan las dos claves, así que el SDK
+   cae a su cadena por defecto.
+4. En el contenedor de compilación de Vercel esa cadena no encuentra nada, y el
+   build entero se cae.
+
+**Arreglo (una acción en Vercel, no en el repositorio):** añadir las dos
+credenciales al environment Preview.
+
+```bash
+vercel env add UINEXUS_AWS_ACCESS_KEY_ID preview
+vercel env add UINEXUS_AWS_SECRET_ACCESS_KEY preview
+```
+
+Conviene que sean unas credenciales **de sólo lectura** y con el mismo prefijo
+de tablas: un Preview no debería poder escribir en los datos de producción.
+
+**Mejora no bloqueante, anotada y NO implementada:** `isAwsConfigured` se deduce
+de variables que no son credenciales, así que un entorno a medio configurar
+apaga el modo demo y después se estrella en el build en vez de degradarse. Si se
+quiere que un Preview sin credenciales compile igualmente, ahí está el sitio.
 
 ### Antes de cerrar cualquier sesión
 
