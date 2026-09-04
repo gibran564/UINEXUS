@@ -14,7 +14,7 @@ import { publishProject, type PublishProgress } from '@/lib/publish-client';
 import { projectMetadataSchema } from '@/lib/schemas';
 import { slugify } from '@/lib/slug';
 import type { Course, ProjectType, Visibility } from '@/lib/types';
-import { liveProjectUrl, projectPath, projectUrl } from '@/lib/urls';
+import { APP_HOST, publicProjectPath, publicProjectUrl } from '@/lib/urls';
 
 const STEPS = [
   { id: 1, label: 'Archivos' },
@@ -205,7 +205,7 @@ export function PublishFlow({
         <h1 className="font-display text-h2">Tu perfil no terminó de crearse</h1>
         <p className="mt-3 text-muted">
           Entraste bien, pero no pudimos reservar tu dirección pública
-          (<span className="font-mono">uinexus.mx/@tunombre</span>), y sin ella no hay dónde
+          (<span className="font-mono">{APP_HOST}/@tunombre</span>), y sin ella no hay dónde
           publicar. Casi siempre se arregla al reintentar.
         </p>
 
@@ -239,7 +239,7 @@ export function PublishFlow({
 
   // ---------------------------------------------------------------- éxito
   if (step === 5 && result) {
-    const url = projectUrl(result.handle, result.slug);
+    const url = publicProjectUrl(result);
     return (
       <div className="mx-auto max-w-xl">
         <p className="text-3xl" aria-hidden="true">
@@ -274,17 +274,9 @@ export function PublishFlow({
         )}
 
         <div className="mt-5 flex flex-wrap gap-3">
-          <Link href={projectPath(result.handle, result.slug)} className="btn btn-primary">
-            Ver la ficha del proyecto
+          <Link href={publicProjectPath(result)} className="btn btn-primary">
+            Abrir proyecto
           </Link>
-          <a
-            href={liveProjectUrl(result.handle, result.slug)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-secondary"
-          >
-            Abrir el proyecto ↗
-          </a>
         </div>
 
         <p className="mt-8 border-t border-line pt-5 text-sm text-muted">
@@ -440,7 +432,7 @@ export function PublishFlow({
                 <p id="title-hint" className="hint">
                   Tu dirección será{' '}
                   <span className="font-mono text-fg">
-                    uinexus.mx/@{user?.handle || 'tunombre'}/{slug}
+                    {APP_HOST}/@{user?.handle || 'tunombre'}/{slug}/
                   </span>
                 </p>
               )}

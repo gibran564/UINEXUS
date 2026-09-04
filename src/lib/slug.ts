@@ -30,10 +30,25 @@ export function isValidHandle(handle: string): boolean {
 
 /** Quita el "@" inicial de un parámetro de ruta y lo normaliza. */
 export function parseHandleParam(param: string): string | null {
-  const decoded = decodeURIComponent(param);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(param);
+  } catch {
+    return null;
+  }
   if (!decoded.startsWith('@')) return null;
   const handle = decoded.slice(1).toLowerCase();
   return HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+/** El chrome de UINexus se oculta sólo en la ruta exacta del Project Shell. */
+export function isProjectShellPath(pathname: string): boolean {
+  const parts = pathname.split('/').filter(Boolean);
+  return (
+    parts.length === 2 &&
+    parseHandleParam(parts[0] ?? '') !== null &&
+    SLUG_PATTERN.test(parts[1] ?? '')
+  );
 }
 
 /** Sugiere un slug libre añadiendo sufijo numérico. */

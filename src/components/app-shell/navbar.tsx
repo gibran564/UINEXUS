@@ -171,6 +171,7 @@ export function Navbar() {
                         <span className="font-mono text-label text-muted">@{user.handle}</span>
                       )}
                     </p>
+                    <MenuLink href="/aula">Tu aula</MenuLink>
                     <MenuLink href="/dashboard">Tus proyectos</MenuLink>
                     {user.handle && (
                       <MenuLink href={profilePath(user.handle)}>Ver tu perfil público</MenuLink>

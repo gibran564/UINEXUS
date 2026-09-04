@@ -21,6 +21,7 @@ import {
 } from '@aws-sdk/client-cloudfront-keyvaluestore';
 import { awsClientConfig } from './config';
 import type { ProjectRecord } from '../types';
+import { isPubliclyRoutable } from '../project-access';
 
 /**
  * Mapa de rutas publicas del origen aislado.
@@ -52,15 +53,6 @@ function getClient(): CloudFrontKeyValueStoreClient | null {
 
 export function routeKey(handle: string, slug: string): string {
   return `${handle}/${slug}`;
-}
-
-/** Alcanzable por enlace directo: publicado o no listado, y no moderado. */
-export function isPubliclyRoutable(project: ProjectRecord): boolean {
-  return (
-    !project.hiddenByAdmin &&
-    project.version >= 1 &&
-    (project.status === 'published' || project.status === 'unlisted')
-  );
 }
 
 /**

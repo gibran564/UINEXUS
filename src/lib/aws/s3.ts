@@ -1,6 +1,13 @@
 import 'server-only';
 
-import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { randomUUID } from 'node:crypto';
 import { createPresignedPost, type PresignedPost } from '@aws-sdk/s3-presigned-post';
 import {
   AWS_REGION,
@@ -9,7 +16,7 @@ import {
   awsClientConfig,
   isAwsConfigured,
 } from './config';
-import { LIMITS } from '../constants';
+import { ACADEMIC_FILE_LIMITS, ACADEMIC_FILE_TYPES, LIMITS } from '../constants';
 import { contentTypeFor, isAllowedExtension, sanitizeRelativePath } from '../files';
 
 /**
@@ -188,4 +195,146 @@ export async function deletePrefix(bucket: string, prefix: string): Promise<numb
 
 export function deleteProjectFiles(ownerId: string, projectId: string): Promise<number> {
   return deletePrefix(PROJECTS_BUCKET, `projects/${ownerId}/${projectId}/`);
+}
+
+// ---------------------------------------------------------------------------
+// Archivos académicos (iteración 4)
+// ---------------------------------------------------------------------------
+
+export type AcademicFileClass = 'image' | 'document' | 'video';
+
+/**
+ * Prefijo de los archivos académicos.
+ *
+ * Estructura propia y NO el espacio de portadas ni el de proyectos: son datos
+ * de otra naturaleza —trabajo entregado, no material publicado— y mezclarlos
+ * haría imposible razonar sobre retención o sobre a quién pertenece cada byte.
+ *
+ * La clave la construye SIEMPRE el servidor a partir de datos que ya verificó:
+ * la materia, la persona del token, la tarea y el paso. El nombre que el
+ * navegador propone no entra en la ruta, sólo se guarda como etiqueta para
+ * mostrarlo. Confiar en él permitiría escribir en `../` de otro.
+ */
+interface AcademicFileOwner {
+  courseId: string;
+  uid: string;
+  assignmentId: string;
+  stepId: string;
+}
+
+function safeAcademicSegment(value: string): string {
+  return (
+    value
+      .replace(/[^a-zA-Z0-9._-]/g, '')
+      .replace(/\.{2,}/g, '.')
+      .replace(/^\.+|\.+$/g, '') || 'x'
+  );
+}
+
+/** Prefijo canónico que vincula una clave con tarea, persona y paso. */
+export function academicFilePrefix(params: AcademicFileOwner): string {
+  return [
+    'academic',
+    safeAcademicSegment(params.courseId),
+    safeAcademicSegment(params.uid),
+    safeAcademicSegment(params.assignmentId),
+    safeAcademicSegment(params.stepId),
+    '',
+  ].join('/');
+}
+
+/** Comprueba propiedad antes de aceptar una clave dentro de una entrega. */
+export function isAcademicFileKeyFor(params: AcademicFileOwner, key: string): boolean {
+  return key.startsWith(academicFilePrefix(params));
+}
+
+export function academicFileKey(params: AcademicFileOwner & {
+  extension: string;
+}): string {
+  /**
+   * Un segmento de la ruta, saneado.
+   *
+   * Quitar la barra ya impide la travesía —S3 no resuelve rutas, una clave es
+   * una cadena opaca—, pero un segmento como `....otro` es un nombre que
+   * confunde a cualquiera que mire el bucket y a cualquier herramienta que sí
+   * interprete puntos. Se colapsan las secuencias de puntos y se recortan los
+   * de los extremos, de modo que ningún segmento pueda parecerse a `..`.
+   */
+  return `${academicFilePrefix(params)}${randomUUID()}.${params.extension}`;
+}
+
+/**
+ * Permiso de subida de un archivo académico.
+ *
+ * Va al bucket PRIVADO. Un trabajo entregado no es contenido público: se lee
+ * con una URL firmada de corta duración (`presignAcademicDownload`), no por
+ * tener la dirección.
+ */
+export async function presignAcademicUpload(params: {
+  courseId: string;
+  uid: string;
+  assignmentId: string;
+  stepId: string;
+  fileClass: AcademicFileClass;
+  contentType: string;
+  sizeBytes: number;
+}): Promise<{ post: PresignedPost; key: string }> {
+  const s3 = getS3();
+  if (!s3) throw new UploadRejected('El almacenamiento no está disponible.');
+
+  const extension = ACADEMIC_FILE_TYPES[params.fileClass][params.contentType];
+  if (!extension) {
+    throw new UploadRejected(
+      `Ese tipo de archivo no se admite aquí. Se admiten: ${Object.keys(
+        ACADEMIC_FILE_TYPES[params.fileClass]
+      ).join(', ')}.`
+    );
+  }
+
+  const maxBytes = ACADEMIC_FILE_LIMITS[params.fileClass];
+  if (params.sizeBytes > maxBytes) {
+    throw new UploadRejected(
+      `El archivo supera el límite de ${Math.round(maxBytes / (1024 * 1024))} MB.`
+    );
+  }
+
+  const key = academicFileKey({ ...params, extension });
+
+  const post = await createPresignedPost(s3, {
+    Bucket: PROJECTS_BUCKET,
+    Key: key,
+    Conditions: [
+      // El tamaño se aplica AQUÍ. Es la única forma de que sea un límite y no
+      // una promesa del cliente: sólo el POST firmado admite esta condición.
+      ['content-length-range', 0, maxBytes],
+      ['eq', '$Content-Type', params.contentType],
+    ],
+    Fields: { 'Content-Type': params.contentType },
+    Expires: 600,
+  });
+
+  return { post, key };
+}
+
+/**
+ * URL de lectura temporal de un archivo académico.
+ *
+ * Corta de duración a propósito: se pide cuando alguien va a mirar el archivo,
+ * no se guarda en la entrega. Así el enlace que quede en un historial deja de
+ * servir enseguida, y quién puede leer se decide en cada petición contra la
+ * materia y no una vez para siempre.
+ */
+export async function presignAcademicDownload(key: string): Promise<string> {
+  const s3 = getS3();
+  if (!s3) throw new UploadRejected('El almacenamiento no está disponible.');
+
+  // Sólo claves del espacio académico. Sin esto, el mismo endpoint firmaría la
+  // lectura de cualquier objeto del bucket, incluido el código de proyectos.
+  if (!key.startsWith('academic/')) {
+    throw new UploadRejected('Esa ruta no es un archivo académico.');
+  }
+
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: PROJECTS_BUCKET, Key: key }), {
+    expiresIn: 300,
+  });
 }

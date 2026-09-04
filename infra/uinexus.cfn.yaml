@@ -129,6 +129,135 @@ Resources:
         - { AttributeName: id, KeyType: HASH }
 
   # ---------------------------------------------------------------------------
+  # Capa academica (iteracion 2). Tablas separadas y no columnas nuevas sobre
+  # proyectos: una entrega y un proyecto no comparten ni ciclo de vida ni patron
+  # de acceso, y mezclarlos obligaria a filtrar por tipo en cada consulta.
+  # ---------------------------------------------------------------------------
+
+  # Tareas de una materia. El indice byCourse responde a la unica pregunta que
+  # se hace de verdad: "que tareas tiene esta materia, de la mas nueva a la mas
+  # vieja".
+  AssignmentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-assignments'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: courseId, AttributeType: S }
+        - { AttributeName: createdAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byCourse
+          KeySchema:
+            - { AttributeName: courseId, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+
+  # Entregas. La clave primaria es un hash determinista de (tarea, uid): es lo
+  # que hace que exista UNA entrega por persona y tarea sin consulta previa ni
+  # escritura condicional, y evita que el uid viaje dentro del identificador.
+  #
+  # byAssignment sirve al panel docente ("quien entrego esta tarea") y
+  # byStudent al panel del alumnado ("que he entregado yo"). Recuperacion a un
+  # punto en el tiempo activada: aqui vive trabajo de estudiantes que no tiene
+  # otra copia en ningun sitio.
+  SubmissionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-submissions'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: assignmentId, AttributeType: S }
+        - { AttributeName: studentId, AttributeType: S }
+        - { AttributeName: updatedAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byAssignment
+          KeySchema:
+            - { AttributeName: assignmentId, KeyType: HASH }
+            - { AttributeName: updatedAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+        - IndexName: byStudent
+          KeySchema:
+            - { AttributeName: studentId, KeyType: HASH }
+            - { AttributeName: updatedAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+
+  # Biblioteca de prompts del profesorado.
+  PromptsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-prompts'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: courseId, AttributeType: S }
+        - { AttributeName: createdAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byCourse
+          KeySchema:
+            - { AttributeName: courseId, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  # Biblioteca de Skills (iteracion 3). Tabla aparte de la de prompts y no un
+  # unico `-resources` con discriminador: `-prompts` ya existe y esta ACTIVE en
+  # la cuenta, asi que unificar exigia migrar una tabla en produccion para
+  # ahorrar una consulta. Ademas las dos formas no se parecen (una Skill lleva
+  # metodos de instalacion con pasos anidados; un prompt es texto), y un
+  # elemento unico acabaria con la mitad de los campos vacios segun el tipo.
+  #
+  # Lo que se guarda aqui son FICHAS: texto, enlaces y comandos que UINexus
+  # muestra y deja copiar. La plataforma no ejecuta nada de este contenido.
+  # Recursos generales de la materia: herramientas, enlaces, guias, plantillas.
+  # Aparte de prompts y skills porque su forma es otra (un enlace y una
+  # explicacion) y porque aquellas dos tablas ya existen. Es la tabla que
+  # sostiene las aportaciones del alumnado con su estado de moderacion.
+  ResourcesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-resources'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: courseId, AttributeType: S }
+        - { AttributeName: createdAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byCourse
+          KeySchema:
+            - { AttributeName: courseId, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  SkillsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-skills'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: courseId, AttributeType: S }
+        - { AttributeName: createdAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byCourse
+          KeySchema:
+            - { AttributeName: courseId, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  # ---------------------------------------------------------------------------
   # S3
   # ---------------------------------------------------------------------------
 
@@ -361,6 +490,14 @@ Outputs:
       esta distribucion un dominio propio y REGISTRABLE (uinexus-projects.app),
       nunca un subdominio de uinexus.mx.
     Value: !Sub 'https://${ServeProjectDistribution.DomainName}'
+  AssignmentsTableName:
+    Value: !Ref AssignmentsTable
+  SubmissionsTableName:
+    Value: !Ref SubmissionsTable
+  SkillsTableName:
+    Value: !Ref SkillsTable
+  ResourcesTableName:
+    Value: !Ref ResourcesTable
   TablePrefix:
     Description: Valor para UINEXUS_TABLE_PREFIX
     Value: !Ref Prefix

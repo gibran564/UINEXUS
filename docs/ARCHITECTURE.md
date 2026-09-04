@@ -258,3 +258,140 @@ Sirve para revisar UX y accesibilidad sin depender de servicios remotos, y para
 que cualquiera clone el repositorio y vea algo. En local, `.env.example` apunta
 al proyecto reservado `demo-uinexus`; el código rechaza cualquier ID distinto de
 ese o de `uinexus-f379f`.
+
+
+## 9. El aula (iteración 2)
+
+Sobre el hosting de proyectos se monta una capa académica:
+`Materia → Grupo → Tareas → Entregas`. No sustituye a nada de lo anterior: una
+entrega puede **referenciar** un proyecto ya publicado, y la galería pública
+sigue funcionando igual.
+
+```
+uinexus-assignments   PK id   GSI byCourse
+uinexus-submissions   PK id   GSI byAssignment · byStudent
+uinexus-prompts       PK id   GSI byCourse
+```
+
+`uinexus-courses` y `uinexus-users` ganan campos, todos opcionales. Las lecturas
+los normalizan (`normalizeCourse`), así que un documento escrito antes de esta
+iteración se comporta como uno nuevo y **no hay script de migración**.
+
+### Tres decisiones que conviene entender antes de tocar nada
+
+**El `handle` es la moneda de la API del aula.** Igual que en proyectos, el UID
+de Firebase no cruza al navegador. El servidor traduce handle → UID contra la
+lista de la materia, así que una petición sólo puede referirse a alguien
+realmente inscrito. `lib/data/academic-mappers.ts` es la única frontera.
+
+**El id de una entrega es `sha256(assignmentId:uid)` truncado.** Da unicidad
+«una entrega por persona y tarea» sin consulta previa ni escritura condicional.
+Es un hash y no una concatenación porque el id viaja al navegador.
+
+**Ser `teacher` en el perfil sólo habilita a CREAR materias.** Sobre una materia
+concreta manda estar en su lista de docentes. La diferencia entre un rol global
+y un permiso por recurso está en `lib/server/course-access.ts`, que es el
+`firestore.rules` de esta capa.
+
+### Por qué el aula se pinta en el cliente
+
+El servidor autentica con el ID token de Firebase en la cabecera
+`Authorization`, no con una cookie. Un Server Component no tiene ese token, así
+que no puede saber quién pide la página. Mientras la sesión sea un token en
+memoria del navegador, las pantallas privadas del aula se pintan desde el
+cliente contra `/api/*`. La contrapartida: no se indexan ni se prerrenderan,
+cosa que a una pantalla privada le da igual.
+
+El aula **no tiene modo demo**: sin identidad no hay materia que enseñar, y las
+pantallas lo dicen con todas las letras en vez de fingir datos.
+
+
+## 10. Aula colaborativa y Recursos IA (iteración 3)
+
+```
+uinexus-skills   PK id   GSI byCourse
+```
+
+Una tabla nueva. `uinexus-assignments` gana campos, todos opcionales y
+normalizados al leer: `collaborationMode`, `contributionVisibility`,
+`groupAssignments`, `resources` y un `groupId` estable en cada
+`ResearchQuestion`.
+
+### La vista conjunta es DERIVADA
+
+`lib/collaborative.ts` compone el documento a partir de la tarea y de las
+entregas, cada vez que se pide. **No hay ningún documento final persistido.**
+Guardarlo sería una segunda copia del mismo contenido, y la segunda copia
+siempre acaba diciendo algo distinto de la primera.
+
+Es el mismo criterio por el que las proyecciones `publicProjects` de Firestore
+desaparecieron al migrar a AWS: si el servidor ya puede componer la vista, la
+copia sólo añade formas de desincronizarse.
+
+### No hay edición simultánea, y es deliberado
+
+Cada persona escribe su aportación en su propia `Submission`. Nadie escribe
+sobre el registro de nadie, así que no hay conflictos que resolver y no hacen
+falta CRDT, transformación operacional ni websockets. Dos personas que
+comparten un concepto producen dos aportaciones separadas **con atribución**,
+que es justamente lo que un documento compartido de Drive vuelve imposible.
+
+### Los recursos se referencian por id
+
+Una tarea guarda `{kind, id}` y no una copia del prompt o de la Skill. Un
+recurso corregido se corrige en todas partes; un recurso borrado deja una
+referencia que `lib/server/resources.ts` omite en silencio al resolver, para que
+borrar una Skill no vuelva inabrible la tarea que la recomendaba.
+
+### UINexus no ejecuta Skills
+
+Una Skill es una FICHA. Sus comandos son texto que se muestra y se copia. No
+existe en el proyecto ninguna ruta, función ni cola capaz de ejecutar un
+comando, y por eso el botón dice «Ver instalación» y nunca «Instalar»: la
+etiqueta describe lo que la plataforma hace de verdad.
+
+
+## 11. Workflows modulares y biblioteca colectiva (iteración 4)
+
+```
+uinexus-resources   PK id   GSI byCourse
+```
+
+Una tabla nueva. `uinexus-assignments` gana `workflow[]`,
+`uinexus-submissions` gana `stepEvidence`, y prompts y skills ganan estado de
+moderación y autoría. Todo opcional y normalizado al leer.
+
+### Toda tarea es un workflow al leerla
+
+Es la decisión que sostiene la compatibilidad. `normalizeAssignment` sintetiza
+un paso único para cualquier tarea sin `workflow` guardado, derivándolo de su
+`type`. El resto del código recorre `workflow` sin preguntarse nunca si la tarea
+es «antigua», y por eso **no hay script de migración**.
+
+`LEGACY_STEP_ID` es una constante y no un uuid: la evidencia de las entregas
+anteriores se indexa por ese valor, así que cambiarlo dejaría huérfano todo lo
+entregado.
+
+Una tarea sencilla se sigue guardando sin `workflow`: sólo se persisten pasos
+cuando de verdad hay más de uno. Una tarea creada hoy con el formulario simple
+es indistinguible de una creada antes.
+
+### El modelo no conoce las herramientas
+
+`actionType` es una cadena abierta y las herramientas se guardan por NOMBRE
+junto al id. No hay `NapkinStep` ni `PerplexityStep`, y una herramienta nueva no
+necesita despliegue. Si el catálogo cambia, el paso sigue diciendo «usa
+Perplexity», que es lo que necesita entender quien lo lee.
+
+### El cuerpo decide el camino, no el tipo de la tarea
+
+`PUT /api/assignments/[id]/submission` acepta `{ data }` o `{ steps }` y
+distingue por la forma. Un formulario antiguo sigue funcionando contra una tarea
+que hoy se lee como workflow, sin desplegar cliente y servidor a la vez.
+
+### Biblioteca colectiva
+
+Prompts, Skills y recursos generales viven en tres tablas —sus formas son
+distintas y dos ya existían— y se presentan juntos en una sola pestaña. El
+alumnado propone, el profesorado aprueba, y la autoría se conserva siempre: una
+Skill aprobada sigue diciendo quién la aportó.

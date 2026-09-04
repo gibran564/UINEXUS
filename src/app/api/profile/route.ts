@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { profileSchema } from '@/lib/schemas';
+import { academicProfileSchema } from '@/lib/academic-schemas';
+import { listCoursesForUser } from '@/lib/data/academic';
 import {
   errorResponse,
   readJson,
@@ -28,6 +30,16 @@ const createSchema = z.object({
 export async function GET(request: Request): Promise<Response> {
   try {
     const actor = await requireActor(request);
+
+    /**
+     * Las materias no se guardan en el perfil: se derivan de la lista de cada
+     * materia, que es la unica fuente. Guardar tambien aqui un
+     * `enrolledCourseIds` obligaria a mantener sincronizadas dos copias de la
+     * misma verdad, y la copia que se desincroniza siempre es la que nadie
+     * mira. Ver el comentario de `listCoursesForUser` en lib/data/academic.ts.
+     */
+    const memberships = await listCoursesForUser(actor.uid);
+
     return Response.json({
       handle: actor.profile.handle,
       displayName: actor.profile.displayName,
@@ -36,6 +48,14 @@ export async function GET(request: Request): Promise<Response> {
       program: actor.profile.program,
       role: actor.profile.role,
       suspended: actor.profile.suspended,
+      studentProfile: actor.profile.studentProfile ?? null,
+      teacherProfile: actor.profile.teacherProfile ?? null,
+      enrolledCourseIds: memberships
+        .filter((entry) => entry.role === 'student')
+        .map((entry) => entry.course.id),
+      teachingCourseIds: memberships
+        .filter((entry) => entry.role === 'teacher')
+        .map((entry) => entry.course.id),
     });
   } catch (caught) {
     return errorResponse(caught);
@@ -70,8 +90,17 @@ export async function POST(request: Request): Promise<Response> {
 export async function PATCH(request: Request): Promise<Response> {
   try {
     const actor = await requireWriter(request);
-    const input = await readJson(request, profileSchema);
+    const input = await readJson(request, profileSchema.merge(academicProfileSchema));
+
     await updateProfile(actor, input);
+
+    // La ficha academica se escribe aparte para no meterla en `updateProfile`,
+    // que es la funcion que ya sostiene la invariante "nadie se cambia el rol".
+    if (input.studentProfile || input.teacherProfile) {
+      const { updateAcademicProfile } = await import('@/lib/server/academic-writes');
+      await updateAcademicProfile(actor, input);
+    }
+
     return Response.json({ ok: true });
   } catch (caught) {
     return errorResponse(caught);

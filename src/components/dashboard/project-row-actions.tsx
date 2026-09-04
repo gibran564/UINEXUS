@@ -6,7 +6,7 @@ import { useAuth } from '@/components/auth/auth-provider';
 import { isFirebaseConfigured } from '@/lib/firebase/config';
 import type { ProjectRecord, Visibility } from '@/lib/types';
 import { STATUS_LABEL } from '@/lib/constants';
-import { liveProjectUrl, projectPath, projectUrl } from '@/lib/urls';
+import { publicProjectPath, publicProjectUrl } from '@/lib/urls';
 
 /**
  * Acciones de un proyecto.
@@ -32,8 +32,7 @@ export function ProjectRowActions({
   const [notice, setNotice] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handle = project.ownerHandle;
-  const url = projectUrl(handle, project.slug);
+  const url = publicProjectUrl(project);
 
   useEffect(() => {
     if (!open) return;
@@ -108,7 +107,7 @@ export function ProjectRowActions({
           Eliminar “{project.title}”
         </h3>
         <p className="mt-1 text-sm text-muted">
-          El enlace <span className="font-mono">{projectPath(handle, project.slug)}</span> dejará
+          El enlace <span className="font-mono">{publicProjectPath(project)}</span> dejará
           de funcionar para siempre, también para quien ya lo tenga. Los archivos se borran.
         </p>
         <label htmlFor={confirmId} className="label mt-4">
@@ -180,20 +179,11 @@ export function ProjectRowActions({
             <>
               <a
                 role="menuitem"
-                href={liveProjectUrl(handle, project.slug)}
-                target="_blank"
-                rel="noopener noreferrer"
+                href={publicProjectPath(project)}
                 className="block px-3 py-2 text-sm no-underline hover:bg-sunken"
               >
-                Abrir proyecto ↗
+                Abrir proyecto
               </a>
-              <Link
-                role="menuitem"
-                href={projectPath(handle, project.slug)}
-                className="block px-3 py-2 text-sm no-underline hover:bg-sunken"
-              >
-                Ver la ficha pública
-              </Link>
               <button
                 type="button"
                 role="menuitem"

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { APP_HOST } from '@/lib/urls';
 import { useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { ProjectRowActions } from './project-row-actions';
@@ -83,7 +84,7 @@ export function DashboardClient() {
             <p className="mt-1 text-sm text-muted">
               Tu perfil público:{' '}
               <Link href={profilePath(user.handle)} className="font-mono text-accent underline underline-offset-2">
-                uinexus.mx/@{user.handle}
+                {APP_HOST}/@{user.handle}
               </Link>
             </p>
           )}

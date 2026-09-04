@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { APP_HOST } from '@/lib/urls';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
@@ -63,7 +64,7 @@ export default function AboutPage() {
 
           <p className="mt-4 text-muted">
             Las páginas que suben los alumnos contienen HTML y JavaScript que la plataforma no
-            controla. Si se ejecutaran dentro de <span className="font-mono">uinexus.mx</span>,
+            controla. Si se ejecutaran dentro de <span className="font-mono">{APP_HOST}</span>,
             un script podría leer la sesión de quien está mirando y suplantar la interfaz. Por eso:
           </p>
 

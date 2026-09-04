@@ -2,7 +2,7 @@ import 'server-only';
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { PUBLISHED_KEY, awsClientConfig, isAwsConfigured } from './config';
+import { DYNAMODB_ENDPOINT, PUBLISHED_KEY, awsClientConfig, isAwsConfigured } from './config';
 import type { ProjectRecord } from '../types';
 
 /**
@@ -24,15 +24,21 @@ export function getDynamo(): DynamoDBDocumentClient | null {
     return cached;
   }
 
-  cached = DynamoDBDocumentClient.from(new DynamoDBClient(awsClientConfig), {
-    marshallOptions: {
-      // Firestore guardaba `null` en varios campos opcionales (cover, courseId,
-      // publishedAt). Mantenerlos evita tener que distinguir "ausente" de
-      // "vacío" en toda la capa de vistas.
-      removeUndefinedValues: true,
-      convertClassInstanceToMap: false,
-    },
-  });
+  cached = DynamoDBDocumentClient.from(
+    new DynamoDBClient({
+      ...awsClientConfig,
+      ...(DYNAMODB_ENDPOINT ? { endpoint: DYNAMODB_ENDPOINT } : {}),
+    }),
+    {
+      marshallOptions: {
+        // Firestore guardaba `null` en varios campos opcionales (cover, courseId,
+        // publishedAt). Mantenerlos evita tener que distinguir "ausente" de
+        // "vacío" en toda la capa de vistas.
+        removeUndefinedValues: true,
+        convertClassInstanceToMap: false,
+      },
+    }
+  );
   return cached;
 }
 
