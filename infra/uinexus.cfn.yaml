@@ -1,0 +1,361 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# -----------------------------------------------------------------------------
+# UINexus - datos, archivos y origen aislado.
+# Firebase conserva unicamente la autenticacion; todo lo demas vive aqui.
+#
+# ASCII ONLY. El AWS CLI lee esta plantilla con el codec local del sistema
+# (cp1252 en Windows en espanol), no con UTF-8, y cualquier acento la rompe con
+# "'charmap' codec can't decode byte ...". El razonamiento completo, con
+# ortografia correcta, esta en infra/README.md.
+# -----------------------------------------------------------------------------
+
+Description: >
+  UINexus - DynamoDB, S3 y el origen aislado que ejecuta el codigo de alumnos.
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: uinexus
+    Description: Prefijo de tablas y buckets. Permite dev y prod en la misma cuenta.
+  PlatformOrigin:
+    Type: String
+    Default: https://uinexus.mx
+    Description: >
+      Origen de la aplicacion de confianza. Solo se usa para frame-ancestors:
+      es quien puede embeber un proyecto en un iframe.
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # DynamoDB. Todo en PAY_PER_REQUEST: a escala de un curso el coste es casi
+  # cero y no hay capacidad que dimensionar ni vigilar. Se usan tablas separadas
+  # en vez de tabla unica porque el coste es identico (se paga por peticion, no
+  # por tabla) y separadas son mas faciles de leer y de acotar con IAM.
+  # ---------------------------------------------------------------------------
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-users'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: uid, AttributeType: S }
+        - { AttributeName: handle, AttributeType: S }
+      KeySchema:
+        - { AttributeName: uid, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byHandle
+          KeySchema:
+            - { AttributeName: handle, KeyType: HASH }
+          Projection: { ProjectionType: ALL }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+
+  # Indice de unicidad de handles. La reserva es atomica gracias a la condicion
+  # attribute_not_exists(handle) en la escritura.
+  HandlesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-handles'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: handle, AttributeType: S }
+      KeySchema:
+        - { AttributeName: handle, KeyType: HASH }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+
+  ProjectsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-projects'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: ownerId, AttributeType: S }
+        - { AttributeName: updatedAt, AttributeType: S }
+        - { AttributeName: path, AttributeType: S }
+        - { AttributeName: statusKey, AttributeType: S }
+        - { AttributeName: listedAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        # El panel: los proyectos de una persona, borradores incluidos.
+        - IndexName: byOwner
+          KeySchema:
+            - { AttributeName: ownerId, KeyType: HASH }
+            - { AttributeName: updatedAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+        # La URL publica /@handle/slug. Es la razon de que handle y slug sean
+        # inmutables: cambiarlos moveria de sitio una entrega academica.
+        - IndexName: byPath
+          KeySchema:
+            - { AttributeName: path, KeyType: HASH }
+          Projection: { ProjectionType: ALL }
+
+        # La galeria. Indice DISPERSO a proposito: statusKey y listedAt solo
+        # existen en los proyectos publicados y no ocultados. Los borradores y
+        # los unlisted NO estan dentro del indice, asi que ninguna consulta
+        # puede devolverlos. Antes esta garantia dependia de acordarse de
+        # escribir el filtro en la regla; ahora es estructural.
+        - IndexName: byStatus
+          KeySchema:
+            - { AttributeName: statusKey, KeyType: HASH }
+            - { AttributeName: listedAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+
+  CoursesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-courses'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+
+  ReportsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-reports'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+
+  # ---------------------------------------------------------------------------
+  # S3
+  # ---------------------------------------------------------------------------
+
+  # Codigo de los alumnos. PRIVADO. No se lee nunca directamente desde el
+  # navegador: solo lo lee la Lambda del origen aislado, que le pone el
+  # Content-Type y las cabeceras de seguridad.
+  ProjectsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Prefix}-projects-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          # Solo POST: es lo unico que hace el navegador contra este bucket, con
+          # un permiso que el servidor firmo archivo a archivo.
+          - AllowedMethods: [POST]
+            AllowedOrigins: [!Ref PlatformOrigin, 'http://localhost:3000']
+            AllowedHeaders: ['*']
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: abortar-subidas-incompletas
+            Status: Enabled
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+
+  # Portadas y avatares. Publicas por definicion, pero SOLO bajo los dos
+  # prefijos previstos: cualquier otra cosa en el bucket sigue privada.
+  PublicBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Prefix}-public-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: false
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [POST, GET]
+            AllowedOrigins: [!Ref PlatformOrigin, 'http://localhost:3000']
+            AllowedHeaders: ['*']
+            MaxAge: 3000
+
+  PublicBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PublicBucket
+      PolicyDocument:
+        Statement:
+          - Sid: LecturaPublicaSoloDePortadasYAvatares
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource:
+              - !Sub '${PublicBucket.Arn}/covers/*'
+              - !Sub '${PublicBucket.Arn}/avatars/*'
+
+  # ---------------------------------------------------------------------------
+  # Origen aislado
+  #
+  # CloudFront lee S3 directamente. Una CloudFront Function traduce la URL
+  # publica /@handle/slug a la clave real consultando un KeyValueStore que el
+  # servidor actualiza al publicar.
+  #
+  # No hay Lambda en el camino: sin arranques en frio, sin limite de tamano de
+  # respuesta y mas barato. Ademas, esta cuenta bloquea lambda:InvokeFunctionUrl.
+  #
+  # El Content-Type lo sigue decidiendo el SERVIDOR: se fija como metadato del
+  # objeto al firmar la subida, derivado de la extension.
+  # ---------------------------------------------------------------------------
+
+  ProjectRoutes:
+    Type: AWS::CloudFront::KeyValueStore
+    Properties:
+      Name: !Sub '${Prefix}-project-routes'
+      Comment: Mapa handle/slug -> ownerId, projectId, version, entryFile
+
+  # Solo estan aqui los proyectos publicamente alcanzables. Un borrador no
+  # tiene entrada, asi que es inalcanzable por construccion, no por un filtro.
+  ResolveProjectFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${Prefix}-resolve-project'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Traduce /@handle/slug a la clave de S3
+        Runtime: cloudfront-js-2.0
+        KeyValueStoreAssociations:
+          - KeyValueStoreARN: !GetAtt ProjectRoutes.Arn
+      # Marcador de posicion: el codigo real vive en infra/origin/viewer-request.js
+      # y lo publica `npm run aws:deploy:origin`.
+      FunctionCode: |
+        async function handler(event) {
+          return {
+            statusCode: 503,
+            statusDescription: 'Service Unavailable',
+            body: 'Pendiente de desplegar: npm run aws:deploy:origin',
+          };
+        }
+
+  ProjectsOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${Prefix}-projects-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Cabeceras aplicadas a TODO el contenido de alumnos.
+  ProjectsHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${Prefix}-project-security-headers'
+        SecurityHeadersConfig:
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+          # Permisiva con CDNs externos (los alumnos usan tipografias y
+          # librerias) pero cierra lo que dana a terceros. La defensa principal
+          # sigue siendo el aislamiento por origen, no la CSP.
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: >-
+              default-src 'self' https: data: blob:; script-src 'self'
+              'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'self'
+              'unsafe-inline' https: data:; img-src 'self' https: data: blob:;
+              font-src 'self' https: data:; media-src 'self' https: data: blob:;
+              connect-src 'self' https:; object-src 'none'; base-uri 'none';
+              form-action 'self'; frame-ancestors 'self' https://uinexus.mx
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Override: true
+              Value: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+            - Header: Cross-Origin-Resource-Policy
+              Override: true
+              Value: cross-origin
+            # Todo el origen aislado va noindex a proposito. La pagina
+            # indexable de un proyecto es su ficha en la plataforma, que lleva
+            # titulo, descripcion y autoria; el HTML crudo del alumno seria
+            # contenido duplicado y sin contexto.
+            - Header: X-Robots-Tag
+              Override: true
+              Value: noindex, nofollow
+
+  ServeProjectDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${Prefix} - origen aislado de proyectos de alumnos'
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: projects-bucket
+            DomainName: !GetAtt ProjectsBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt ProjectsOac.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: projects-bucket
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # CachingOptimized: respeta el Cache-Control del objeto.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref ProjectsHeaders
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt ResolveProjectFunction.FunctionMetadata.FunctionARN
+        CustomErrorResponses:
+          # Con OAC y sin permiso de ListBucket, S3 responde 403 a un objeto que
+          # no existe. Se traduce a 404 y a una pagina legible.
+          - ErrorCode: 403
+            ResponseCode: 404
+            ResponsePagePath: /projects/_errors/404.html
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: /projects/_errors/404.html
+            ErrorCachingMinTTL: 10
+
+  # Solo ESTA distribucion puede leer el bucket, y solo bajo projects/.
+  ProjectsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ProjectsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: LecturaSoloDesdeCloudFront
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: 's3:GetObject'
+            Resource: !Sub '${ProjectsBucket.Arn}/projects/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${ServeProjectDistribution}'
+
+Outputs:
+  ProjectsTableName:
+    Value: !Ref ProjectsTable
+  ProjectRoutesStoreArn:
+    Description: Valor para UINEXUS_ROUTES_KVS_ARN
+    Value: !GetAtt ProjectRoutes.Arn
+  ResolveFunctionName:
+    Value: !Sub '${Prefix}-resolve-project'
+  ProjectsBucketName:
+    Description: Valor para UINEXUS_PROJECTS_BUCKET
+    Value: !Ref ProjectsBucket
+  PublicBucketName:
+    Description: Valor para UINEXUS_PUBLIC_BUCKET
+    Value: !Ref PublicBucket
+  PublicBaseUrl:
+    Description: Valor para UINEXUS_PUBLIC_BASE_URL
+    Value: !Sub 'https://${PublicBucket}.s3.${AWS::Region}.amazonaws.com'
+  ProjectsOrigin:
+    Description: >
+      Valor para NEXT_PUBLIC_PROJECTS_ORIGIN. En produccion hay que apuntar a
+      esta distribucion un dominio propio y REGISTRABLE (uinexus-projects.app),
+      nunca un subdominio de uinexus.mx.
+    Value: !Sub 'https://${ServeProjectDistribution.DomainName}'
+  TablePrefix:
+    Description: Valor para UINEXUS_TABLE_PREFIX
+    Value: !Ref Prefix

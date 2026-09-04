@@ -1,0 +1,48 @@
+{
+  "name": "uinexus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "aws:deploy:infra": "aws cloudformation deploy --template-file infra/uinexus.cfn.yaml --stack-name uinexus --capabilities CAPABILITY_IAM",
+    "aws:outputs": "aws cloudformation describe-stacks --stack-name uinexus --query \"Stacks[0].Outputs\" --output table",
+    "aws:deploy:origin": "node scripts/deploy-origin.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudfront-keyvaluestore": "^3.1126.0",
+    "@aws-sdk/client-dynamodb": "^3.1126.0",
+    "@aws-sdk/client-s3": "^3.1126.0",
+    "@aws-sdk/lib-dynamodb": "^3.1126.0",
+    "@aws-sdk/s3-presigned-post": "^3.1126.0",
+    "@aws-sdk/s3-request-presigner": "^3.1126.0",
+    "fflate": "^0.8.2",
+    "firebase": "^11.10.0",
+    "firebase-admin": "^13.4.0",
+    "next": "15.5.4",
+    "qrcode": "^1.5.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@tailwindcss/postcss": "^4.1.11",
+    "@types/node": "^22.15.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.4",
+    "firebase-tools": "^14.27.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.7"
+  }
+}

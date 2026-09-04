@@ -1,0 +1,58 @@
+# Firebase App Hosting — configuración de la app Next.js (uinexus.mx)
+# El contenido de los alumnos NO se sirve desde aquí. Ver functions/src/index.ts.
+runConfig:
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512
+
+env:
+  - variable: NEXT_PUBLIC_SITE_URL
+    value: https://uinexus.mx
+    availability:
+      - BUILD
+      - RUNTIME
+
+  # ORIGEN AISLADO. Tiene que ser un dominio REGISTRABLE distinto de uinexus.mx,
+  # no un subdominio: un subdominio todavía puede escribir cookies con
+  # Domain=.uinexus.mx. `web.app` está en la Public Suffix List, así que
+  # uinexus-projects.web.app ya es un dominio registrable distinto y funciona
+  # sin comprar nada. Al registrar uinexus-projects.app, cambiar este valor.
+  - variable: NEXT_PUBLIC_PROJECTS_ORIGIN
+    value: https://uinexus-projects.web.app
+    availability:
+      - BUILD
+      - RUNTIME
+
+  # Producción nunca debe conectarse a los emuladores locales.
+  - variable: NEXT_PUBLIC_FIREBASE_USE_EMULATORS
+    value: "false"
+    availability: [BUILD, RUNTIME]
+
+  # Registra una clave basada en puntuación de reCAPTCHA Enterprise para la
+  # Web App existente y carga el valor mediante Secret Manager.
+  - variable: NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY
+    secret: firebase-app-check-site-key
+    availability: [BUILD, RUNTIME]
+
+  # La configuración web de Firebase es pública por diseño; aun así se gestiona
+  # desde Secret Manager para no versionarla.
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    secret: firebase-api-key
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    secret: firebase-auth-domain
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    secret: firebase-project-id
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    secret: firebase-storage-bucket
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    secret: firebase-sender-id
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    secret: firebase-app-id
+    availability: [BUILD, RUNTIME]

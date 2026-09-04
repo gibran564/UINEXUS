@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "uinexus-f379f"
+  },
+  "targets": {
+    "uinexus-f379f": {
+      "hosting": {
+        "projects": ["uinexus-projects"]
+      }
+    }
+  }
+}

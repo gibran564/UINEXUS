@@ -1,0 +1,87 @@
+rules_version = '2';
+
+// =============================================================================
+// UINexus — reglas de Cloud Storage
+// =============================================================================
+// El código de estudiantes nunca es público en Storage. Sólo el propietario,
+// staff y la Function serveProject pueden leerlo. Los límites acumulados
+// (300 archivos / 50 MiB) se verifican al finalizar cada versión en servidor.
+// =============================================================================
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function userExists(uid) {
+      return firestore.exists(/databases/(default)/documents/users/$(uid));
+    }
+    function user(uid) {
+      return firestore.get(/databases/(default)/documents/users/$(uid)).data;
+    }
+    function isStaff() {
+      return signedIn() && userExists(request.auth.uid)
+        && user(request.auth.uid).role in ['teacher', 'admin'];
+    }
+    function activeOwner(uid) {
+      return isOwner(uid) && userExists(uid) && user(uid).suspended == false;
+    }
+    function projectExists(projectId) {
+      return firestore.exists(/databases/(default)/documents/projects/$(projectId));
+    }
+    function ownsProject(uid, projectId) {
+      return activeOwner(uid) && projectExists(projectId)
+        && firestore.get(/databases/(default)/documents/projects/$(projectId)).data.ownerId == uid;
+    }
+    function allowedExtension(name) {
+      return name.matches('(?i).*[.](html|htm|css|js|mjs|json|txt|md|csv|xml|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|mp4|webm|ogg|mp3|wav|pdf|map)');
+    }
+    function allowedContentType() {
+      return request.resource.contentType is string
+        && request.resource.contentType.matches(
+          '^(text/(html|css|javascript|plain|csv)|application/(javascript|json|xml|pdf)|image/(svg[+]xml|png|jpeg|gif|webp|avif|x-icon|bmp)|font/(woff|woff2|ttf|otf)|video/(mp4|webm)|audio/(ogg|mpeg|wav))$'
+        );
+    }
+    function safePath(objectName) {
+      return !objectName.matches('.*[.][.].*')
+        && !objectName.matches('.*//.*')
+        && !objectName.matches('(^|.*/)[.].*')
+        && objectName.size() <= 400;
+    }
+
+    match /projects/{userId}/{projectId}/{version}/{allPaths=**} {
+      allow read: if isOwner(userId) || isStaff();
+      allow create: if ownsProject(userId, projectId)
+        && resource == null
+        && version.matches('^v[0-9]{1,6}$')
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && safePath(request.resource.name)
+        && allowedExtension(request.resource.name)
+        && allowedContentType();
+      // Una versión publicada es inmutable. Reemplazar crea v{n+1}.
+      allow update: if false;
+      allow delete: if (signedIn() && request.auth.uid == userId) || isStaff();
+    }
+
+    match /covers/{userId}/{projectId}/{fileName} {
+      allow read: if true;
+      allow create, update: if ownsProject(userId, projectId)
+        && request.resource.size > 0
+        && request.resource.size <= 3 * 1024 * 1024
+        && request.resource.contentType.matches('^image/(png|jpeg|webp|avif)$')
+        && safePath(request.resource.name);
+      allow delete: if (signedIn() && request.auth.uid == userId) || isStaff();
+    }
+
+    match /avatars/{userId}/{fileName} {
+      allow read: if true;
+      allow create, update: if activeOwner(userId)
+        && request.resource.size > 0
+        && request.resource.size <= 1 * 1024 * 1024
+        && request.resource.contentType.matches('^image/(png|jpeg|webp)$')
+        && safePath(request.resource.name);
+      allow delete: if (signedIn() && request.auth.uid == userId) || isStaff();
+    }
+
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

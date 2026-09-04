@@ -1,0 +1,300 @@
+rules_version = '2';
+
+// =============================================================================
+// UINexus — modelo asumido y reglas de Cloud Firestore
+// =============================================================================
+// users/{uid}: perfil interno y autoridad de rol; sólo dueño/staff.
+// publicProfiles/{handle}: perfil público sin UID, correo ni teléfono.
+// handles/{handle}: reserva interna handle -> UID; nunca pública.
+// projects/{projectId}: registro interno con UID, rutas y moderación.
+// publicProjects/{projectId}: proyección pública sin UID ni rutas internas.
+// projectPaths/{handle}/slugs/{slug}: reserva inmutable de URL.
+// projects/{projectId}/versions/{vN}: manifiesto inmutable de una publicación.
+// courses/{courseId}/activities/{activityId}: catálogo académico.
+// reports/{reportId}: reporte autenticado, privado para staff.
+// Todo lo que no se permite expresamente queda denegado.
+// =============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function currentUser() { return get(userPath(request.auth.uid)).data; }
+    function currentUserExists() { return signedIn() && exists(userPath(request.auth.uid)); }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function isStaff() {
+      return currentUserExists() && currentUser().role in ['teacher', 'admin'];
+    }
+    function isAdmin() { return currentUserExists() && currentUser().role == 'admin'; }
+    function notSuspended() { return currentUserExists() && currentUser().suspended == false; }
+    function changedOnly(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
+    }
+    function unchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+    function validHandle(value) {
+      return value is string && value.matches('^[a-z0-9][a-z0-9-]{2,23}$');
+    }
+    function validSlug(value) {
+      return value is string && value.matches('^[a-z0-9][a-z0-9-]{1,59}$');
+    }
+    function validIsoDate(value) {
+      return value is string && value.size() <= 32
+        && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{3})?Z$');
+    }
+    function optionalString(value, maxSize) {
+      return value == null || (value is string && value.size() <= maxSize);
+    }
+    function validAuthor(author) {
+      return author is map
+        && author.keys().hasOnly(['handle', 'displayName', 'avatarUrl'])
+        && validHandle(author.handle)
+        && author.displayName is string && author.displayName.size() >= 2
+        && author.displayName.size() <= 60
+        && optionalString(author.avatarUrl, 2048);
+    }
+    function validCover(cover) {
+      return cover == null || (
+        cover is map && cover.keys().hasOnly(['url', 'alt', 'width', 'height'])
+        && cover.url is string && cover.url.size() <= 2048
+        && cover.alt is string && cover.alt.size() <= 140
+        && (!('width' in cover) || (cover.width is int && cover.width > 0 && cover.width <= 10000))
+        && (!('height' in cover) || (cover.height is int && cover.height > 0 && cover.height <= 10000))
+      );
+    }
+    function validBrief(brief) {
+      return brief is map
+        && brief.keys().hasOnly(['problem', 'goal', 'process', 'tools', 'reflection'])
+        && brief.get('problem', '') is string && brief.get('problem', '').size() <= 1200
+        && brief.get('goal', '') is string && brief.get('goal', '').size() <= 1200
+        && brief.get('process', '') is string && brief.get('process', '').size() <= 2000
+        && brief.get('tools', '') is string && brief.get('tools', '').size() <= 400
+        && brief.get('reflection', '') is string && brief.get('reflection', '').size() <= 1200;
+    }
+    function validUser(data) {
+      return data.keys().hasOnly([
+          'handle', 'displayName', 'avatarUrl', 'bio', 'program', 'role',
+          'createdAt', 'updatedAt', 'projectCount', 'suspended', 'links'
+        ])
+        && validHandle(data.handle)
+        && data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 60
+        && optionalString(data.avatarUrl, 2048)
+        && data.bio is string && data.bio.size() <= 280
+        && data.program is string && data.program.size() <= 80
+        && data.role in ['student', 'teacher', 'admin']
+        && data.projectCount is int && data.projectCount >= 0 && data.projectCount <= 100000
+        && data.suspended is bool && data.links is list && data.links.size() <= 5
+        && validIsoDate(data.createdAt) && validIsoDate(data.updatedAt);
+    }
+    function validPublicProfile(data) {
+      return data.keys().hasOnly([
+          'handle', 'displayName', 'avatarUrl', 'bio', 'program', 'role',
+          'projectCount', 'createdAt'
+        ])
+        && validHandle(data.handle)
+        && data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 60
+        && optionalString(data.avatarUrl, 2048)
+        && data.bio is string && data.bio.size() <= 280
+        && data.program is string && data.program.size() <= 80
+        && data.role in ['student', 'teacher', 'admin']
+        && data.projectCount is int && data.projectCount >= 0 && data.projectCount <= 100000
+        && validIsoDate(data.createdAt);
+    }
+    function publicProfileMatchesUser(handle, data, uid) {
+      let source = getAfter(userPath(uid)).data;
+      return data.handle == handle && data.handle == source.handle
+        && data.displayName == source.displayName && data.avatarUrl == source.avatarUrl
+        && data.bio == source.bio && data.program == source.program
+        && data.role == source.role && data.projectCount == source.projectCount
+        && data.createdAt == source.createdAt;
+    }
+    function validProject(data) {
+      return data.keys().hasOnly([
+          'slug', 'title', 'description', 'ownerId', 'ownerHandle', 'author',
+          'courseId', 'courseName', 'term', 'group', 'tags', 'cover',
+          'projectType', 'status', 'brief', 'version', 'entryFile', 'fileCount',
+          'totalBytes', 'hiddenByAdmin', 'reportCount', 'featured', 'views',
+          'createdAt', 'updatedAt', 'publishedAt'
+        ])
+        && validSlug(data.slug)
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 90
+        && data.description is string && data.description.size() >= 10 && data.description.size() <= 600
+        && data.ownerId is string && data.ownerId.size() <= 128
+        && validHandle(data.ownerHandle) && validAuthor(data.author)
+        && data.author.handle == data.ownerHandle
+        && optionalString(data.courseId, 64) && optionalString(data.courseName, 120)
+        && optionalString(data.term, 80) && optionalString(data.group, 24)
+        && data.tags is list && data.tags.size() <= 6 && validCover(data.cover)
+        && data.projectType in ['html', 'site', 'build']
+        && data.status in ['draft', 'published', 'unlisted', 'archived']
+        && validBrief(data.brief)
+        && data.version is int && data.version >= 0 && data.version <= 1000000
+        && data.entryFile is string && data.entryFile.size() <= 300
+        && data.fileCount is int && data.fileCount >= 0 && data.fileCount <= 300
+        && data.totalBytes is int && data.totalBytes >= 0 && data.totalBytes <= 50 * 1024 * 1024
+        && data.hiddenByAdmin is bool
+        && data.reportCount is int && data.reportCount >= 0 && data.reportCount <= 1000000
+        && data.featured is bool && data.views is int && data.views >= 0 && data.views <= 1000000000
+        && validIsoDate(data.createdAt) && validIsoDate(data.updatedAt)
+        && (data.publishedAt == null || validIsoDate(data.publishedAt));
+    }
+    function visible(data) { return data.status in ['published', 'unlisted']; }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isStaff();
+      allow list: if isStaff();
+      allow create: if isOwner(userId) && validUser(request.resource.data)
+        && request.resource.data.role == 'student' && request.resource.data.suspended == false
+        && request.resource.data.projectCount == 0
+        && existsAfter(/databases/$(database)/documents/handles/$(request.resource.data.handle))
+        && existsAfter(/databases/$(database)/documents/publicProfiles/$(request.resource.data.handle));
+      allow update: if validUser(request.resource.data) && (
+        (isOwner(userId)
+          && unchanged(['handle', 'role', 'suspended', 'createdAt', 'projectCount'])
+          && changedOnly(['displayName', 'avatarUrl', 'bio', 'program', 'links', 'updatedAt']))
+        || (isAdmin() && unchanged(['handle', 'createdAt']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /publicProfiles/{handle} {
+      allow read: if true;
+      allow create, update: if signedIn() && validPublicProfile(request.resource.data)
+        && publicProfileMatchesUser(handle, request.resource.data, request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    match /handles/{handle} {
+      allow get: if signedIn() && resource.data.uid == request.auth.uid;
+      allow list: if false;
+      allow create: if signedIn() && validHandle(handle)
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid
+        && getAfter(userPath(request.auth.uid)).data.handle == handle;
+      allow update, delete: if isAdmin();
+    }
+
+    match /projectPaths/{handle}/slugs/{slug} {
+      allow get: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow list: if false;
+      allow create: if notSuspended() && validHandle(handle) && validSlug(slug)
+        && request.resource.data.keys().hasOnly(['projectId', 'ownerId', 'createdAt'])
+        && request.resource.data.projectId is string && request.resource.data.projectId.size() <= 128
+        && request.resource.data.ownerId == request.auth.uid
+        && validIsoDate(request.resource.data.createdAt)
+        && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerHandle == handle
+        && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.slug == slug;
+      allow update, delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow get: if isOwner(resource.data.ownerId) || isStaff();
+      allow list: if (signedIn() && request.auth.uid == resource.data.ownerId) || isStaff();
+      allow create: if notSuspended() && isOwner(request.resource.data.ownerId)
+        && validProject(request.resource.data)
+        && request.resource.data.ownerHandle == currentUser().handle
+        && request.resource.data.author.handle == currentUser().handle
+        && request.resource.data.status == 'draft' && request.resource.data.version == 0
+        && request.resource.data.entryFile == '' && request.resource.data.fileCount == 0
+        && request.resource.data.totalBytes == 0 && request.resource.data.publishedAt == null
+        && request.resource.data.featured == false && request.resource.data.hiddenByAdmin == false
+        && request.resource.data.views == 0 && request.resource.data.reportCount == 0
+        && getAfter(/databases/$(database)/documents/projectPaths/$(request.resource.data.ownerHandle)/slugs/$(request.resource.data.slug)).data.projectId == projectId;
+      allow update: if validProject(request.resource.data) && (
+        (isOwner(resource.data.ownerId) && notSuspended()
+          && request.resource.data.ownerHandle == currentUser().handle
+          && request.resource.data.author.handle == currentUser().handle
+          && unchanged([
+            'ownerId', 'ownerHandle', 'slug', 'author', 'createdAt', 'featured',
+            'hiddenByAdmin', 'views', 'reportCount', 'version', 'entryFile',
+            'fileCount', 'totalBytes'
+          ])
+          && changedOnly([
+            'title', 'description', 'courseId', 'courseName', 'term', 'group',
+            'tags', 'cover', 'status', 'brief', 'updatedAt', 'publishedAt'
+          ]))
+        || (isStaff() && unchanged(['ownerId', 'ownerHandle', 'slug', 'author', 'createdAt'])
+          && changedOnly(['featured', 'hiddenByAdmin', 'reportCount', 'views', 'status', 'updatedAt']))
+      );
+      allow delete: if isAdmin();
+
+      match /versions/{versionId} {
+        function parent() {
+          return get(/databases/$(database)/documents/projects/$(projectId)).data;
+        }
+        allow get, list: if isOwner(parent().ownerId) || isStaff();
+        // Sólo la Function de finalización (Admin SDK) escribe manifiestos.
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /publicProjects/{projectId} {
+      allow get: if visible(resource.data);
+      allow list: if resource.data.status == 'published';
+      allow create, update, delete: if false;
+    }
+
+    match /courses/{courseId} {
+      function validCourse(data) {
+        return data.keys().hasOnly([
+            'slug', 'name', 'institution', 'term', 'description', 'teacherName',
+            'studentCount', 'projectCount', 'visibility', 'activities'
+          ])
+          && validSlug(data.slug)
+          && data.name is string && data.name.size() >= 2 && data.name.size() <= 120
+          && data.institution is string && data.institution.size() <= 160
+          && data.term is string && data.term.size() <= 80
+          && data.description is string && data.description.size() <= 1000
+          && data.teacherName is string && data.teacherName.size() <= 120
+          && data.studentCount is int && data.studentCount >= 0
+          && data.projectCount is int && data.projectCount >= 0
+          && data.visibility in ['public', 'private']
+          && data.get('activities', []) is list && data.get('activities', []).size() <= 100;
+      }
+      allow get, list: if resource.data.visibility == 'public' || isStaff();
+      allow create, update: if isStaff() && validCourse(request.resource.data);
+      allow delete: if isAdmin();
+      match /activities/{activityId} {
+        function courseIsVisible() {
+          return get(/databases/$(database)/documents/courses/$(courseId)).data.visibility == 'public';
+        }
+        function validActivity(data) {
+          return data.keys().hasOnly(['title', 'description', 'dueDate'])
+            && data.title is string && data.title.size() >= 2 && data.title.size() <= 120
+            && data.description is string && data.description.size() <= 1000
+            && optionalString(data.dueDate, 32);
+        }
+        allow get, list: if courseIsVisible() || isStaff();
+        allow create, update: if isStaff() && validActivity(request.resource.data);
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /reports/{reportId} {
+      function validReport(data) {
+        return data.keys().hasOnly(['projectId', 'reason', 'details', 'reporterId', 'status', 'createdAt'])
+          && data.projectId is string && data.projectId.size() <= 128
+          && data.reason in ['inappropriate', 'plagiarism', 'malware', 'privacy', 'other']
+          && data.details is string && data.details.size() <= 500
+          && data.reporterId is string && data.reporterId.size() <= 128
+          && data.status in ['open', 'reviewing', 'closed'] && data.createdAt is timestamp;
+      }
+      allow get, list: if isStaff();
+      allow create: if signedIn() && validReport(request.resource.data)
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.status == 'open'
+        && exists(/databases/$(database)/documents/publicProjects/$(request.resource.data.projectId));
+      allow update: if isStaff() && validReport(request.resource.data)
+        && unchanged(['projectId', 'reason', 'details', 'reporterId', 'createdAt'])
+        && changedOnly(['status']);
+      allow delete: if isAdmin();
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}
