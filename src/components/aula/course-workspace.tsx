@@ -291,7 +291,7 @@ function AssignmentRow({
           <p className="font-medium text-fg">{assignment.title}</p>
           <p className="mt-1.5 flex flex-wrap items-center gap-3 text-sm text-muted">
             <TypeChip type={assignment.type} />
-            <DueDate value={assignment.dueDate} />
+            <DueDate value={assignment.dueDate} dueAt={assignment.dueAt} />
             {isTeacher && !assignment.assignedToAll && (
               <span className="text-subtle">
                 Asignada a {assignment.assignedTo?.length ?? 0} estudiantes

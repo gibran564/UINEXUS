@@ -20,6 +20,7 @@ import type {
   ResourceRef,
   WorkflowStep,
 } from '@/lib/types';
+import { composeDueAt, formatDueLabel, splitDueAt } from '@/lib/due-date';
 import { AulaScreen, Crumbs, Field, Notice } from './aula-ui';
 import { CollaborationPlanner } from './collaboration-planner';
 import { WorkflowBuilder } from './workflow-builder';
@@ -71,7 +72,10 @@ interface DraftState {
   description: string;
   instructions: string;
   type: AssignmentType;
+  /** Fecha límite en local, «YYYY-MM-DD». Vacío = sin fecha límite. */
   dueDate: string;
+  /** Hora límite en local, «HH:MM». Vacío = final del día. */
+  dueTime: string;
   resourceLinks: ResourceLink[];
   researchQuestions: ResearchQuestion[];
   assignToAll: boolean;
@@ -91,6 +95,7 @@ const EMPTY: DraftState = {
   instructions: '',
   type: 'research',
   dueDate: '',
+  dueTime: '',
   resourceLinks: [],
   researchQuestions: [],
   assignToAll: true,
@@ -102,6 +107,20 @@ const EMPTY: DraftState = {
   shape: 'single',
   workflow: [],
 };
+
+/** La fecha límite del borrador, en la forma que leen los ayudantes de fecha. */
+function draftDue(draft: DraftState): { dueDate: string | null; dueAt: string | null } {
+  return {
+    dueDate: draft.dueDate || null,
+    dueAt: composeDueAt(draft.dueDate, draft.dueTime),
+  };
+}
+
+/** Hasta cuándo se reciben entregas, dicho en una frase. */
+function dueSummary(draft: DraftState): string {
+  if (!draft.dueDate) return 'Sin fecha límite: se aceptarán entregas siempre.';
+  return `Se aceptarán entregas hasta el ${formatDueLabel(draftDue(draft))}.`;
+}
 
 export function AssignmentEditor({
   courseId,
@@ -183,7 +202,10 @@ export function AssignmentEditor({
       description: loaded.description,
       instructions: loaded.instructions,
       type: loaded.type,
-      dueDate: loaded.dueDate ?? '',
+      // La hora se recupera del instante, en la zona de quien edita. Una tarea
+      // antigua sin instante vuelve con la fecha y sin hora, que es lo que es.
+      dueDate: splitDueAt(loaded).date,
+      dueTime: splitDueAt(loaded).time,
       resourceLinks: loaded.resourceLinks,
       researchQuestions: loaded.researchQuestions,
       assignToAll: loaded.assignedToAll,
@@ -217,6 +239,13 @@ export function AssignmentEditor({
         // paso conserva su tipo de siempre para no cambiar cómo se lee.
         type: multi ? 'workflow' : draft.type,
         dueDate: draft.dueDate || null,
+        /**
+         * El instante se compone AQUÍ, en el navegador, porque es aquí donde se
+         * conoce la zona horaria de quien pone la fecha. El servidor guarda el
+         * instante que recibe y no intenta adivinar ninguna zona: eso es lo que
+         * evita el fallo de «pongo 23:59 y cierra seis horas antes».
+         */
+        dueAt: composeDueAt(draft.dueDate, draft.dueTime),
         resourceLinks: draft.resourceLinks.filter((link) => link.url.trim()),
         researchQuestions: draft.researchQuestions.filter((question) => question.prompt.trim()),
         assignedHandles: draft.assignToAll ? null : draft.assignedHandles,
@@ -325,14 +354,33 @@ export function AssignmentEditor({
             />
           </Field>
 
-          <Field label="Fecha límite" hint="Opcional.">
-            <input
-              type="date"
-              value={draft.dueDate}
-              onChange={(event) => patch({ dueDate: event.target.value })}
-              className="field w-48"
-            />
-          </Field>
+          <div className="flex flex-wrap gap-4">
+            <Field label="Fecha límite" hint="Opcional.">
+              <input
+                type="date"
+                value={draft.dueDate}
+                onChange={(event) => patch({ dueDate: event.target.value })}
+                className="field w-48"
+              />
+            </Field>
+
+            <Field label="Hora límite" hint="Si la dejas vacía, se cierra al final del día.">
+              <input
+                type="time"
+                value={draft.dueTime}
+                disabled={!draft.dueDate}
+                onChange={(event) => patch({ dueTime: event.target.value })}
+                className="field w-36"
+              />
+            </Field>
+          </div>
+
+          {/*
+            La consecuencia, escrita. Una fecha sin hora es ambigua, y lo que
+            resuelve la ambigüedad no es un valor por defecto callado sino
+            decir en voz alta hasta cuándo se reciben entregas.
+          */}
+          <p className="text-sm text-muted">{dueSummary(draft)}</p>
         </section>
 
         <section aria-labelledby="forma">
@@ -399,6 +447,7 @@ export function AssignmentEditor({
                 courseId={courseId}
                 steps={draft.workflow}
                 students={students}
+                assignment={{ title: draft.title, description: draft.description }}
                 onChange={(workflow) => patch({ workflow })}
               />
             </div>
@@ -889,7 +938,7 @@ function TeacherPreview({
       <header className="border-b border-line pb-6">
         <h2 className="font-display text-h1">{draft.title || '(sin título)'}</h2>
         <p className="mt-3 text-sm text-muted">
-          {draft.dueDate ? `Entrega: ${draft.dueDate}` : 'Sin fecha límite'}
+          {draft.dueDate ? `Entrega: ${formatDueLabel(draftDue(draft))}` : 'Sin fecha límite'}
         </p>
       </header>
 
@@ -955,6 +1004,16 @@ function TeacherPreview({
                   {step.instructions && (
                     <span className="mt-1 block whitespace-pre-line text-sm text-muted">
                       {step.instructions}
+                    </span>
+                  )}
+                  {step.prompt?.mode === 'inline' && (
+                    <span className="mt-2 block whitespace-pre-wrap rounded-sm border border-line bg-sunken p-2 font-mono text-sm">
+                      {step.prompt.text}
+                    </span>
+                  )}
+                  {step.prompt?.mode === 'library' && (
+                    <span className="mt-1 block text-label text-subtle">
+                      Prompt de la biblioteca: {step.prompt.title || 'sin título'}
                     </span>
                   )}
                   {step.dependsOnStepIds.length > 0 && (

@@ -71,7 +71,7 @@ export function AulaHome() {
                       </span>
                     )}
                     <span>
-                      Entrega: <DueDate value={item.assignment.dueDate} />
+                      Entrega: <DueDate value={item.assignment.dueDate} dueAt={item.assignment.dueAt} />
                     </span>
                   </p>
                   {(item.resources.prompts > 0 || item.resources.skills > 0) && (

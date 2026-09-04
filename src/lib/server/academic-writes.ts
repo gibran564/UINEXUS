@@ -278,6 +278,12 @@ function assignmentFields(
     resourceLinks: input.resourceLinks,
     researchQuestions: questions,
     dueDate: input.dueDate?.trim() ? input.dueDate : null,
+    /**
+     * El instante se normaliza a ISO en UTC aquí, una sola vez. Lo compone el
+     * navegador con la zona horaria de quien crea la tarea; el servidor no
+     * intenta adivinarla, sólo guarda el instante que le dan.
+     */
+    dueAt: input.dueAt?.trim() ? new Date(input.dueAt).toISOString() : null,
     collaborationMode: shared ? 'shared' : 'individual',
     contributionVisibility: input.contributionVisibility,
     // Un reparto que apunta a un concepto que ya no existe se descarta: si no,
@@ -325,6 +331,7 @@ export function buildWorkflowSteps(
     actionType: step.actionType,
     tool: step.tool,
     resources: step.resources,
+    prompt: step.prompt,
     deliverables: step.deliverables.map((deliverable) => ({
       type: deliverable.type,
       required: deliverable.required,

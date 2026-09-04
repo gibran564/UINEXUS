@@ -8,6 +8,7 @@ import type {
   ResearchQuestion,
   StepDeliverable,
   StepEvidence,
+  StepPrompt,
   StepToolChoice,
   SubmissionData,
   SubmissionRecord,
@@ -39,6 +40,46 @@ import type {
 
 const EMPTY_TOOL: StepToolChoice = { mode: 'none', toolIds: [], toolNames: [] };
 
+const EMPTY_PROMPT: StepPrompt = { mode: 'none', title: '', text: '', resourceId: null };
+
+/**
+ * El prompt de un paso, siempre presente al leer.
+ *
+ * Un paso guardado antes de que existiera el campo no tiene ninguno, y eso es
+ * exactamente «este paso no usa prompt»: no hay nada que migrar. Un `inline`
+ * sin texto o un `library` sin recurso se leen también como `none`, para que
+ * nadie aguas abajo tenga que comprobar las dos cosas por separado.
+ */
+export function normalizeStepPrompt(raw: Partial<StepPrompt> | undefined): StepPrompt {
+  const prompt: StepPrompt = {
+    mode: raw?.mode ?? 'none',
+    title: raw?.title ?? '',
+    text: raw?.text ?? '',
+    resourceId: raw?.resourceId ?? null,
+  };
+
+  if (prompt.mode === 'inline' && !prompt.text.trim()) return { ...prompt, mode: 'none' };
+  if (prompt.mode === 'library' && !prompt.resourceId) return { ...prompt, mode: 'none' };
+  return prompt;
+}
+
+/** ¿Este paso trae un prompt que enseñarle a alguien? */
+export function hasStepPrompt(step: { prompt?: Partial<StepPrompt> }): boolean {
+  return normalizeStepPrompt(step.prompt).mode !== 'none';
+}
+
+/** Las referencias a prompts de biblioteca que usan los pasos. */
+export function stepPromptRefs(
+  workflow: readonly { prompt?: Partial<StepPrompt> }[]
+): { kind: 'prompt'; id: string }[] {
+  return workflow.flatMap((step) => {
+    const prompt = normalizeStepPrompt(step.prompt);
+    return prompt.mode === 'library' && prompt.resourceId
+      ? [{ kind: 'prompt' as const, id: prompt.resourceId }]
+      : [];
+  });
+}
+
 export function normalizeDeliverable(raw: Partial<StepDeliverable>): StepDeliverable {
   return {
     type: raw.type ?? 'none',
@@ -61,6 +102,7 @@ export function normalizeStep(
     actionType: raw.actionType ?? 'instruction',
     tool: raw.tool ? { ...EMPTY_TOOL, ...raw.tool } : EMPTY_TOOL,
     resources: raw.resources ?? [],
+    prompt: normalizeStepPrompt(raw.prompt),
     deliverables: (raw.deliverables ?? []).map(normalizeDeliverable),
     required: raw.required ?? true,
     assignedTo: raw.assignedTo ?? null,
@@ -143,6 +185,7 @@ export function synthesizeLegacyStep(assignment: {
     actionType: shape.action,
     tool: { ...EMPTY_TOOL, mode: shape.toolMode },
     resources: assignment.resources,
+    prompt: EMPTY_PROMPT,
     deliverables: [
       {
         type: shape.deliverable,
@@ -477,6 +520,7 @@ export function cloneWorkflowSteps(
     // editar la tarea nueva cambiaría también la plantilla de la que salió.
     tool: { ...step.tool, toolIds: [...step.tool.toolIds], toolNames: [...step.tool.toolNames] },
     resources: [...step.resources],
+    prompt: { ...normalizeStepPrompt(step.prompt) },
     deliverables: step.deliverables.map((deliverable) => ({
       ...deliverable,
       questions: deliverable.questions.map((question) => ({ ...question })),

@@ -8,7 +8,7 @@ import {
   resolveMembers,
 } from '@/lib/server/course-access';
 import { buildWorkflowSteps, createAssignment } from '@/lib/server/academic-writes';
-import { assertResourcesBelongTo } from '@/lib/server/resources';
+import { assertResourcesBelongTo, scopeStepPrompts } from '@/lib/server/resources';
 import { ACADEMIC_LIMITS } from '@/lib/constants';
 import { HttpError } from '@/lib/server/session';
 
@@ -91,8 +91,11 @@ export async function POST(
      * esta inscrito no resuelve, asi que no se puede repartir un paso a alguien
      * de fuera.
      */
-    const workflow = buildWorkflowSteps(input.workflow, (handles) =>
-      resolveMembers(course, handles).map((member) => member.uid)
+    const workflow = await scopeStepPrompts(
+      courseId,
+      buildWorkflowSteps(input.workflow, (handles) =>
+        resolveMembers(course, handles).map((member) => member.uid)
+      )
     );
 
     const assignment = await createAssignment(

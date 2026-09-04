@@ -11,6 +11,7 @@ import type {
   ResearchData,
   WebProjectData,
 } from '@/lib/types';
+import { formatDueLabel, isPastDue } from '@/lib/due-date';
 import { AulaScreen, Crumbs, Notice, SubmissionBadge } from './aula-ui';
 import { WorkflowRunner } from './workflow-runner';
 import {
@@ -91,6 +92,14 @@ export function SubmissionForm({
 
   const assignment = data?.assignment;
 
+  /**
+   * Pasada la fecha límite no se entrega ni se guarda borrador. Se calcula con
+   * el reloj del navegador para poder decirlo antes de que alguien escriba, y
+   * el servidor lo vuelve a comprobar con el suyo al guardar: esto es aviso, no
+   * la barrera (§12).
+   */
+  const closed = assignment ? isPastDue(assignment) : false;
+
   return (
     <AulaScreen
       state={state}
@@ -127,12 +136,21 @@ export function SubmissionForm({
             índice de pasos, estado y evidencia paso a paso. Una de un solo paso
             conserva el formulario de siempre, sin envoltorio (§20).
           */}
+          {closed && (
+            <div className="mt-6">
+              <Notice tone="error">
+                Entrega cerrada. La fecha límite fue el {formatDueLabel(assignment)}.
+              </Notice>
+            </div>
+          )}
+
           {assignment.workflow.length > 1 ? (
             <div className="mt-8">
               <WorkflowRunner
                 data={data}
                 courseId={courseId}
                 assignmentId={assignmentId}
+                closed={closed}
                 onSaved={reload}
               />
             </div>
@@ -183,12 +201,16 @@ export function SubmissionForm({
             {message && <Notice tone={message.tone}>{message.text}</Notice>}
 
             <div className="flex flex-wrap gap-3 border-t border-line pt-6">
-              <button type="submit" disabled={busy} className="btn btn-primary">
-                {busy ? 'Guardando…' : 'Entregar'}
+              <button
+                type="submit"
+                disabled={busy || closed}
+                className="btn btn-primary"
+              >
+                {closed ? 'Entrega cerrada' : busy ? 'Guardando…' : 'Entregar'}
               </button>
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || closed}
                 onClick={() => void save('draft')}
                 className="btn btn-secondary"
               >

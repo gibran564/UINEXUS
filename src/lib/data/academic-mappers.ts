@@ -86,6 +86,7 @@ export function toAssignment(
     resourceLinks: record.resourceLinks ?? [],
     researchQuestions: record.researchQuestions ?? [],
     dueDate: record.dueDate ?? null,
+    dueAt: record.dueAt ?? null,
     collaborationMode: record.collaborationMode,
     contributionVisibility: record.contributionVisibility,
     /**

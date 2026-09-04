@@ -20,6 +20,7 @@ import {
   type Actor,
 } from '@/lib/server/session';
 import { requireAssignmentAccess } from '@/lib/server/course-access';
+import { assertOpenForSubmission } from '@/lib/server/deadline';
 import { upsertSubmission } from '@/lib/server/academic-writes';
 import { assertResourcesBelongTo } from '@/lib/server/resources';
 import { LEGACY_STEP_ID } from '@/lib/types';
@@ -76,6 +77,13 @@ export async function PUT(
     if (role === 'teacher') {
       throw new HttpError(403, 'El profesorado no entrega sus propias tareas.');
     }
+
+    /**
+     * La fecha límite se aplica AQUÍ, con la hora del servidor. Deshabilitar el
+     * botón en el navegador es cortesía; esto es lo que de verdad cierra la
+     * entrega. Cubre también el borrador: pasada la hora no se modifica nada.
+     */
+    assertOpenForSubmission(assignment);
 
     const body: unknown = await request.clone().json().catch(() => null);
 

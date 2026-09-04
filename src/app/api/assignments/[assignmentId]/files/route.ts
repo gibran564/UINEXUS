@@ -9,6 +9,7 @@ import {
 import { canWorkOnStep, primaryDeliverable } from '@/lib/workflow';
 import { HttpError, errorResponse, readJson, requireWriter } from '@/lib/server/session';
 import { requireAssignmentAccess } from '@/lib/server/course-access';
+import { assertOpenForSubmission } from '@/lib/server/deadline';
 import type { MediaData } from '@/lib/types';
 
 /**
@@ -52,6 +53,10 @@ export async function POST(
     if (role === 'teacher') {
       throw new HttpError(403, 'El profesorado no entrega archivos en sus propias tareas.');
     }
+
+    // Subir un archivo es parte de entregar: pasada la fecha límite tampoco se
+    // concede permiso de subida, o se podría seguir cambiando la evidencia.
+    assertOpenForSubmission(assignment);
 
     const input = await readJson(request, uploadSchema);
 

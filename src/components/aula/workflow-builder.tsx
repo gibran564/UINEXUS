@@ -18,6 +18,7 @@ import type {
 import { useApi, type CourseLibrary, type RosterRow } from '@/lib/aula-client';
 import { Field, Notice } from './aula-ui';
 import { ResourcePicker } from './resource-picker';
+import { StepPromptField } from './step-prompt-field';
 
 /**
  * El constructor de pasos (§35, §36).
@@ -59,6 +60,9 @@ export function makeStep(preset: (typeof STEP_ACTIONS)[number]): WorkflowStep {
     actionType: preset.value,
     tool: { mode: preset.toolMode, toolIds: [], toolNames: [] },
     resources: [],
+    // Sin prompt hasta que se escriba uno. «Escribir aquí» es lo que ofrece la
+    // interfaz por defecto, pero un paso vacío no declara un prompt vacío.
+    prompt: { mode: 'none', title: '', text: '', resourceId: null },
     deliverables: [{ type: preset.deliverable, required: true, hint: '', questions: [] }],
     required: true,
     assignedTo: null,
@@ -70,11 +74,14 @@ export function WorkflowBuilder({
   courseId,
   steps,
   students,
+  assignment,
   onChange,
 }: {
   courseId: string;
   steps: WorkflowStep[];
   students: RosterRow[];
+  /** Título y objetivo de la actividad: el generador de prompts los reutiliza. */
+  assignment: { title: string; description: string };
   onChange: (steps: WorkflowStep[]) => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(steps[0]?.id ?? null);
@@ -197,6 +204,7 @@ export function WorkflowBuilder({
               {open && (
                 <StepEditor
                   courseId={courseId}
+                  assignment={assignment}
                   step={step}
                   index={index}
                   previousSteps={steps.slice(0, index)}
@@ -230,6 +238,7 @@ export function WorkflowBuilder({
 
 function StepEditor({
   courseId,
+  assignment,
   step,
   index,
   previousSteps,
@@ -237,6 +246,7 @@ function StepEditor({
   onChange,
 }: {
   courseId: string;
+  assignment: { title: string; description: string };
   step: WorkflowStep;
   index: number;
   previousSteps: WorkflowStep[];
@@ -329,12 +339,26 @@ function StepEditor({
 
       <ToolPicker courseId={courseId} tool={step.tool} onChange={(tool) => onChange({ tool })} />
 
+      <StepPromptField
+        courseId={courseId}
+        prompt={step.prompt}
+        context={{
+          assignmentTitle: assignment.title,
+          assignmentDescription: assignment.description,
+          stepTitle: step.title,
+          stepInstructions: step.instructions,
+          toolNames: step.tool.toolNames,
+          deliverableLabel: DELIVERABLE_LABEL[deliverable.type],
+        }}
+        onChange={(prompt) => onChange({ prompt })}
+      />
+
       <ResourcePicker
         courseId={courseId}
         value={step.resources}
         onChange={(resources: ResourceRef[]) => onChange({ resources })}
         label="Recursos de este paso"
-        hint="El prompt, la Skill o la guía que hacen falta aquí."
+        hint="La Skill o la guía que hacen falta aquí. El prompt se define arriba."
       />
 
       <label className="flex items-center gap-2">
