@@ -116,7 +116,13 @@ Rellena los seis `NEXT_PUBLIC_FIREBASE_*` desde la consola de Firebase, los
 `UINEXUS_*` desde `npm run aws:outputs`, y `FIREBASE_SERVICE_ACCOUNT_JSON` con
 la cuenta de servicio.
 
-## 5. La aplicación en Amplify Hosting
+## 5. La aplicación
+
+Da igual dónde se aloje el Next.js mientras se cumpla una condición: el
+servidor tiene que poder firmar peticiones a DynamoDB y a S3. Cómo obtiene esa
+identidad es la única diferencia real entre las dos opciones.
+
+### 5.a Amplify Hosting
 
 1. Consola de AWS → **Amplify** → *Deploy an app* → conecta el repositorio.
 2. Amplify detecta Next.js y usa el `next build` del `package.json`.
@@ -128,6 +134,44 @@ la cuenta de servicio.
    - `s3:PutObject`, `GetObject`, `DeleteObject`, `ListBucket`
 
    Concédelo acotado a los ARN de la pila, no con comodines de cuenta.
+
+### 5.b Vercel
+
+1. *Add New → Project* → conecta el repositorio. Vercel detecta Next.js solo.
+2. **Environment variables**: todas las de `.env.local`.
+   `FIREBASE_SERVICE_ACCOUNT_JSON` y las claves de AWS, marcadas como
+   **Sensitive**.
+3. **Credenciales de AWS.** Aquí está la diferencia que importa: en Vercel no
+   hay rol de ejecución, así que hay que dárselas explícitamente. Crea un
+   usuario IAM dedicado con los mismos permisos del punto 4 y ponlas en:
+
+   ```
+   UINEXUS_AWS_ACCESS_KEY_ID
+   UINEXUS_AWS_SECRET_ACCESS_KEY
+   UINEXUS_AWS_REGION
+   ```
+
+   **No** uses los nombres estándar `AWS_ACCESS_KEY_ID` /
+   `AWS_SECRET_ACCESS_KEY`. Las funciones de Vercel se ejecutan sobre Lambda,
+   que ya define esas variables con la identidad de Vercel; el SDK tomaría
+   ésas y todas las llamadas responderían `AccessDenied`. Por eso las nuestras
+   llevan prefijo propio y `lib/aws/config.ts` las pasa al cliente a mano.
+
+4. Las variables tienen que estar disponibles también en **Build**, no sólo en
+   runtime: la portada, `/courses` y el `sitemap.xml` se prerenderizan y leen
+   DynamoDB durante `next build`.
+
+> **Si el build se queda parado en `Collecting page data`**, casi siempre es
+> esto: faltan las credenciales y la cadena por defecto del SDK acaba
+> preguntando al servicio de metadatos de EC2, que en el contenedor de
+> compilación no responde ni rechaza. `config.ts` desactiva esa consulta cuando
+> detecta Vercel sin credenciales propias, de modo que el fallo salga en
+> segundos y con nombre en vez de agotar el tiempo del despliegue.
+
+> Vercel corre en su propia infraestructura, no en la cuenta de AWS de la
+> pila: el tráfico entre la aplicación y DynamoDB/S3 sale a internet y se paga
+> como transferencia de salida. A escala de un curso es irrelevante, pero
+> conviene saberlo antes de que lo sea.
 
 ## 6. Los dos orígenes
 

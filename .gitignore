@@ -12,3 +12,7 @@ serviceAccount*.json
 .DS_Store
 *-debug.log
 firebase-export-*/
+
+.vercel
+.env*
+!.env.example

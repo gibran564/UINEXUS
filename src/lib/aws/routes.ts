@@ -6,7 +6,7 @@ import {
   DescribeKeyValueStoreCommand,
   PutKeyCommand,
 } from '@aws-sdk/client-cloudfront-keyvaluestore';
-import { AWS_REGION } from './config';
+import { awsClientConfig } from './config';
 import type { ProjectRecord } from '../types';
 
 /**
@@ -33,7 +33,7 @@ let cached: CloudFrontKeyValueStoreClient | null | undefined;
 
 function getClient(): CloudFrontKeyValueStoreClient | null {
   if (cached !== undefined) return cached;
-  cached = KVS_ARN ? new CloudFrontKeyValueStoreClient({ region: AWS_REGION }) : null;
+  cached = KVS_ARN ? new CloudFrontKeyValueStoreClient(awsClientConfig) : null;
   return cached;
 }
 

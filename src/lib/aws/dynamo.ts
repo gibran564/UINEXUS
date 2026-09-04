@@ -2,7 +2,7 @@ import 'server-only';
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { AWS_REGION, PUBLISHED_KEY, isAwsConfigured } from './config';
+import { PUBLISHED_KEY, awsClientConfig, isAwsConfigured } from './config';
 import type { ProjectRecord } from '../types';
 
 /**
@@ -24,7 +24,7 @@ export function getDynamo(): DynamoDBDocumentClient | null {
     return cached;
   }
 
-  cached = DynamoDBDocumentClient.from(new DynamoDBClient({ region: AWS_REGION }), {
+  cached = DynamoDBDocumentClient.from(new DynamoDBClient(awsClientConfig), {
     marshallOptions: {
       // Firestore guardaba `null` en varios campos opcionales (cover, courseId,
       // publishedAt). Mantenerlos evita tener que distinguir "ausente" de

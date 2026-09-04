@@ -2,7 +2,13 @@ import 'server-only';
 
 import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost, type PresignedPost } from '@aws-sdk/s3-presigned-post';
-import { AWS_REGION, PROJECTS_BUCKET, PUBLIC_BUCKET, isAwsConfigured } from './config';
+import {
+  AWS_REGION,
+  PROJECTS_BUCKET,
+  PUBLIC_BUCKET,
+  awsClientConfig,
+  isAwsConfigured,
+} from './config';
 import { LIMITS } from '../constants';
 import { contentTypeFor, isAllowedExtension, sanitizeRelativePath } from '../files';
 
@@ -23,7 +29,7 @@ let cached: S3Client | null | undefined;
 
 export function getS3(): S3Client | null {
   if (cached !== undefined) return cached;
-  cached = isAwsConfigured ? new S3Client({ region: AWS_REGION }) : null;
+  cached = isAwsConfigured ? new S3Client(awsClientConfig) : null;
   return cached;
 }
 

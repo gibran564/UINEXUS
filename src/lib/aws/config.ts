@@ -67,3 +67,60 @@ export const PUBLISHED_KEY = 'published' as const;
  * El servidor los aplica al firmar la subida; el cliente sólo los usa para
  * avisar antes de intentarlo.
  */
+
+// ---------------------------------------------------------------------------
+// Credenciales
+// ---------------------------------------------------------------------------
+
+/**
+ * Credenciales explícitas de AWS.
+ *
+ * En Amplify las resolvía el rol de ejecución del backend y no hacía falta
+ * escribir nada. En Vercel no hay rol, y además hay una trampa: las funciones
+ * de Vercel se ejecutan sobre Lambda, y Lambda ya define
+ * `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` y `AWS_SESSION_TOKEN` con la
+ * identidad de VERCEL, no con la nuestra. Si dejáramos que la cadena por
+ * defecto del SDK los tomara, las peticiones se firmarían con una identidad
+ * ajena y DynamoDB respondería `AccessDenied` sin que nadie entienda por qué.
+ *
+ * Por eso las nuestras llevan nombre propio (`UINEXUS_AWS_*`) y se pasan al
+ * cliente a mano. Si no están, se usa la cadena por defecto, que es lo correcto
+ * en local (`aws configure`) y en cualquier cómputo con rol propio.
+ */
+const accessKeyId = process.env.UINEXUS_AWS_ACCESS_KEY_ID ?? '';
+const secretAccessKey = process.env.UINEXUS_AWS_SECRET_ACCESS_KEY ?? '';
+
+export const awsCredentials =
+  accessKeyId && secretAccessKey
+    ? {
+        accessKeyId,
+        secretAccessKey,
+        ...(process.env.UINEXUS_AWS_SESSION_TOKEN
+          ? { sessionToken: process.env.UINEXUS_AWS_SESSION_TOKEN }
+          : {}),
+      }
+    : undefined;
+
+/**
+ * Opciones comunes de todos los clientes del SDK.
+ *
+ * `maxAttempts: 3` acota los reintentos: sin credenciales válidas, lo que se
+ * quiere es un error legible en segundos, no un `next build` colgado.
+ */
+export const awsClientConfig = {
+  region: AWS_REGION,
+  maxAttempts: 3,
+  ...(awsCredentials ? { credentials: awsCredentials } : {}),
+};
+
+/**
+ * Sin credenciales propias y fuera de AWS, la cadena del SDK acaba preguntando
+ * al servicio de metadatos de EC2 (169.254.169.254). En un contenedor de
+ * compilación de Vercel esa dirección no responde ni rechaza: se traga la
+ * petición. El resultado es un build que se queda parado en "Collecting page
+ * data" hasta agotar el tiempo del despliegue. Desactivarlo convierte esa
+ * espera indefinida en un error inmediato y con nombre.
+ */
+if (!awsCredentials && process.env.VERCEL) {
+  process.env.AWS_EC2_METADATA_DISABLED ??= 'true';
+}
