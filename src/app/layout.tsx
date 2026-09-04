@@ -7,6 +7,7 @@ import { Footer } from '@/components/app-shell/footer';
 import { Navbar } from '@/components/app-shell/navbar';
 import { AppFrame } from '@/components/app-shell/app-frame';
 import { ThemeScript } from '@/components/theme/theme-script';
+import { SessionScript } from '@/components/home/session-hint';
 import { SITE } from '@/lib/constants';
 import { SITE_URL } from '@/lib/urls';
 
@@ -62,6 +63,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es" suppressHydrationWarning className={`${inter.variable} ${fraunces.variable}`}>
       <head>
         <ThemeScript />
+        <SessionScript />
       </head>
       <body>
         <a href="#contenido" className="skip-link">

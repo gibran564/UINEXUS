@@ -28,6 +28,7 @@ export const RESOURCE_TYPE_LABEL: Record<CourseResourceType, string> = {
   document: 'Documento',
   template: 'Plantilla',
   workflow: 'Proceso',
+  announcement: 'Aviso',
   other: 'Recurso',
 };
 

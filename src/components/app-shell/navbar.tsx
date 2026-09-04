@@ -9,10 +9,27 @@ import { Wordmark } from '@/components/ui/logo';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { profilePath } from '@/lib/urls';
 
-const LINKS = [
+/**
+ * La navegación cambia con la sesión, porque la pregunta cambia con la sesión.
+ *
+ * Quien llega de fuera viene a mirar: explorar, ver los cursos, entender qué es
+ * esto. Quien tiene sesión viene a trabajar, y para eso lo primero es su
+ * Inicio —qué le toca y qué pasó— y después su aula.
+ *
+ * No hay entradas nuevas para «Tareas» y «Recursos» y es deliberado: en UINexus
+ * ambas viven DENTRO de una materia (`/aula/:id`), y añadir dos pantallas
+ * globales que repitieran lo que ya hay sería duplicar para cumplir un nombre.
+ */
+const PUBLIC_LINKS = [
   { href: '/explore', label: 'Explorar' },
   { href: '/courses', label: 'Cursos' },
   { href: '/about', label: 'Acerca de' },
+];
+
+const PRIVATE_LINKS = [
+  { href: '/', label: 'Inicio' },
+  { href: '/aula', label: 'Aula' },
+  { href: '/explore', label: 'Explorar' },
 ];
 
 export function Navbar() {
@@ -45,8 +62,12 @@ export function Navbar() {
     };
   }, [accountOpen]);
 
+  const links = status === 'authenticated' ? PRIVATE_LINKS : PUBLIC_LINKS;
+
   const isActive = (href: string): boolean =>
-    pathname === href || pathname.startsWith(`${href}/`);
+    // «Inicio» es la raíz: sin el caso especial, `startsWith('/')` la marcaría
+    // como activa en todas las pantallas de la aplicación.
+    href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
 
   function onSearch(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -68,7 +89,7 @@ export function Navbar() {
 
         <nav aria-label="Principal" className="hidden md:block">
           <ul className="flex items-center gap-1">
-            {LINKS.map((link) => (
+            {links.map((link) => (
               <li key={link.href}>
                 <Link
                   href={link.href}
@@ -171,6 +192,7 @@ export function Navbar() {
                         <span className="font-mono text-label text-muted">@{user.handle}</span>
                       )}
                     </p>
+                    <MenuLink href="/">Inicio</MenuLink>
                     <MenuLink href="/aula">Tu aula</MenuLink>
                     <MenuLink href="/dashboard">Tus proyectos</MenuLink>
                     {user.handle && (
@@ -230,7 +252,7 @@ export function Navbar() {
               />
             </form>
             <ul className="flex flex-col">
-              {LINKS.map((link) => (
+              {links.map((link) => (
                 <li key={link.href}>
                   <Link
                     href={link.href}
@@ -262,6 +284,11 @@ export function Navbar() {
                   <li>
                     <Link href="/dashboard" className="flex min-h-11 items-center rounded-sm px-2 no-underline">
                       Tus proyectos
+                    </Link>
+                  </li>
+                  <li>
+                    <Link href="/about" className="flex min-h-11 items-center rounded-sm px-2 no-underline">
+                      Acerca de UINexus
                     </Link>
                   </li>
                   <li>
