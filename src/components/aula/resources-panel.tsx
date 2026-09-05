@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import type { z } from 'zod';
+import type { promptTemplateInputSchema } from '@/lib/academic-schemas';
 import { AI_PROVIDERS } from '@/lib/constants';
 import {
   createPrompt,
@@ -454,16 +456,20 @@ function SkillCard({
 }
 
 /** Alta y edición de un prompt (§19). Cabe en línea: son cinco campos. */
-function PromptEditor({
+export function PromptEditor({
   courseId,
   template,
   onDone,
   onCancel,
+  onSubmit,
+  submitLabel = 'Guardar',
 }: {
   courseId: string;
   template: PromptTemplate | null;
   onDone: () => void;
   onCancel: () => void;
+  onSubmit?: (body: z.input<typeof promptTemplateInputSchema>) => Promise<void>;
+  submitLabel?: string;
 }) {
   const [title, setTitle] = useState(template?.title ?? '');
   const [description, setDescription] = useState(template?.description ?? '');
@@ -487,7 +493,8 @@ function PromptEditor({
         recommendedProvider: provider || null,
         recommendedModel: model || null,
       };
-      if (template) await updatePrompt(template.id, body);
+      if (onSubmit) await onSubmit(body);
+      else if (template) await updatePrompt(template.id, body);
       else await createPrompt(courseId, body);
       onDone();
     } catch (caught) {
@@ -565,7 +572,7 @@ function PromptEditor({
           disabled={busy || title.trim().length < 3 || !prompt.trim()}
           className="btn btn-primary"
         >
-          {busy ? 'Guardando…' : 'Guardar'}
+          {busy ? 'Guardando…' : submitLabel}
         </button>
         <button type="button" onClick={onCancel} className="btn btn-ghost">
           Cancelar

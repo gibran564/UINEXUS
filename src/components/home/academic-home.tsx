@@ -4,9 +4,10 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { HomePayload } from '@/app/api/home/route';
 import { useAuth } from '@/components/auth/auth-provider';
-import { createCourseResource, useApi } from '@/lib/aula-client';
+import { useApi } from '@/lib/aula-client';
 import { formatDueLabel } from '@/lib/due-date';
 import {
+  filterEventsByCourse,
   attentionCta,
   progressLabel,
   relativeTime,
@@ -19,7 +20,8 @@ import {
 } from '@/lib/home-feed';
 import { EmptyState } from '@/components/ui/empty-state';
 import { UserAvatar } from '@/components/ui/user-avatar';
-import { Notice } from '@/components/aula/aula-ui';
+import { PublicationComposer, PublicationModeration } from './publication-composer';
+import { PublicationDetail } from './publication-detail';
 
 /**
  * El Inicio de quien tiene sesión (P1–P4).
@@ -50,7 +52,8 @@ const LAST_VISIT_KEY = 'uinexus-home-visit';
 
 export function AcademicHome() {
   const { user } = useAuth();
-  const { data, state, error, reload } = useApi<HomePayload>('/api/home');
+  const [feedCourseId, setFeedCourseId] = useState('');
+  const { data, state, error, reload } = useApi<HomePayload>(feedCourseId ? `/api/home?courseId=${encodeURIComponent(feedCourseId)}` : '/api/home');
   const [since, setSince] = useState<string | null>(null);
 
   /**
@@ -67,11 +70,11 @@ export function AcademicHome() {
     }
   }, []);
 
-  if (state === 'loading') {
+  if (state === 'loading' && !data) {
     return <p className="container-page py-24 text-center text-muted">Abriendo tu inicio…</p>;
   }
 
-  if (state === 'error' || !data) {
+  if (!data) {
     return (
       <div className="container-page py-16">
         <div className="panel mx-auto max-w-md p-8 text-center">
@@ -131,19 +134,34 @@ export function AcademicHome() {
         </>
       )}
 
-      {teachesSomewhere && <TeacherComposer courses={data.courses} onPublished={reload} />}
+      {state === 'error' && <p role="alert" className="mt-4 text-sm text-muted">{error} <button type="button" className="btn btn-secondary btn-sm" onClick={reload}>Reintentar actualización</button></p>}
+      <PublicationModeration publications={data.publications ?? []} courses={data.courses} onChanged={reload} />
+      {data.courses.length > 0 && <PublicationComposer courses={data.courses} onPublished={reload} />}
+      {teachesSomewhere && (
+        <label className="mt-8 block">
+          <span className="label">Filtrar el muro por grupo</span>
+          <select className="field" value={feedCourseId} onChange={(event) => setFeedCourseId(event.target.value)}>
+            <option value="">Todos los grupos</option>
+            {data.courses.filter((course) => course.role === 'teacher').map((course) => (
+              <option key={course.id} value={course.id}>{course.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <FeedSection
         id="de-tu-docente"
         title={teachesSomewhere && !studiesSomewhere ? 'Publicado en tus materias' : 'De tu docente'}
-        events={data.teacherUpdates}
+        events={filterEventsByCourse(data.teacherUpdates, feedCourseId)}
+        courses={data.courses}
         empty="Cuando tu docente publique una actividad, un recurso o un aviso, aparecerá aquí."
       />
 
       <FeedSection
         id="tu-clase"
         title="Novedades de tu clase"
-        events={data.classroomActivity}
+        events={filterEventsByCourse(data.classroomActivity, feedCourseId)}
+        courses={data.courses}
         empty="Tu aula todavía está tranquila. Cuando tu grupo publique proyectos o aporte recursos, aparecerán aquí."
       />
 
@@ -371,167 +389,6 @@ function TeacherTaskCard({ task }: { task: TeacherTask }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// P2 · Publicar desde el Inicio
-// ---------------------------------------------------------------------------
-
-/**
- * Compartir un aviso con el grupo, y los accesos a lo demás.
- *
- * El aviso se escribe aquí porque cabe en dos campos. Todo lo demás —una
- * actividad, un prompt, una Skill— abre la pantalla real que ya existe: meter
- * esos editores dentro del muro sería mantener dos versiones del mismo
- * formulario, y la segunda siempre se queda atrás.
- */
-function TeacherComposer({
-  courses,
-  onPublished,
-}: {
-  courses: HomePayload['courses'];
-  onPublished: () => void;
-}) {
-  const teaching = courses.filter((course) => course.role === 'teacher');
-  const [courseId, setCourseId] = useState(teaching[0]?.id ?? '');
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-
-  if (teaching.length === 0) return null;
-  const active = teaching.find((course) => course.id === courseId) ?? teaching[0]!;
-
-  async function publish(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await createCourseResource(active.id, {
-        type: 'announcement',
-        title,
-        content,
-        description: '',
-        url: '',
-        category: '',
-        tags: [],
-      });
-      setTitle('');
-      setContent('');
-      setOpen(false);
-      setDone(true);
-      onPublished();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'No se pudo publicar.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section aria-labelledby="publicar" className="mt-10">
-      <h2 id="publicar" className="sr-only">
-        Publicar en tu materia
-      </h2>
-
-      <div className="panel p-4">
-        {teaching.length > 1 && (
-          <label className="mb-3 block">
-            <span className="label">Materia</span>
-            <select
-              value={active.id}
-              onChange={(event) => setCourseId(event.target.value)}
-              className="field"
-            >
-              {teaching.map((course) => (
-                <option key={course.id} value={course.id}>
-                  {course.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {!open ? (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="field w-full text-left text-muted"
-          >
-            Comparte algo con tu grupo…
-          </button>
-        ) : (
-          <form onSubmit={publish} className="space-y-3">
-            <label className="block">
-              <span className="label">Aviso</span>
-              <input
-                autoFocus
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Revisión de prototipos"
-                className="field"
-              />
-            </label>
-            <label className="block">
-              <span className="sr-only">Contenido del aviso</span>
-              <textarea
-                rows={3}
-                value={content}
-                onChange={(event) => setContent(event.target.value)}
-                placeholder="Mañana revisaremos los prototipos durante la clase."
-                className="field"
-              />
-            </label>
-            {error && <Notice tone="error">{error}</Notice>}
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="submit"
-                disabled={busy || title.trim().length < 2}
-                className="btn btn-primary btn-sm"
-              >
-                {busy ? 'Publicando…' : 'Publicar aviso'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="btn btn-ghost btn-sm"
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
-        )}
-
-        {done && !open && (
-          <p className="mt-2 text-label text-subtle">Publicado en {active.name}.</p>
-        )}
-
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
-          <Link href={`/aula/${active.id}/tareas/nueva`} className="btn btn-secondary btn-sm">
-            Nueva actividad
-          </Link>
-          <Link href={`/aula/${active.id}?tab=resources`} className="btn btn-ghost btn-sm">
-            Recurso
-          </Link>
-          <Link href={`/aula/${active.id}?tab=resources`} className="btn btn-ghost btn-sm">
-            Prompt
-          </Link>
-          <Link
-            href={`/aula/${active.id}/recursos/skills/nueva`}
-            className="btn btn-ghost btn-sm"
-          >
-            Skill
-          </Link>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// P2 y P3 · El muro
-// ---------------------------------------------------------------------------
-
 const EVENT_VERB: Record<FeedEventKind, string> = {
   assignment: 'Publicó una actividad',
   announcement: 'Compartió un aviso',
@@ -546,11 +403,13 @@ function FeedSection({
   title,
   events,
   empty,
+  courses,
 }: {
   id: string;
   title: string;
   events: FeedEvent[];
   empty: string;
+  courses: HomePayload['courses'];
 }) {
   return (
     <section aria-labelledby={id} className="mt-12">
@@ -563,7 +422,7 @@ function FeedSection({
       ) : (
         <ul className="mt-5 space-y-3">
           {events.map((event) => (
-            <FeedCard key={event.id} event={event} />
+            <FeedCard key={event.id} event={event} courses={courses} />
           ))}
         </ul>
       )}
@@ -579,7 +438,8 @@ function FeedSection({
  * contador de vistas. Un aula no necesita métricas de popularidad para estar
  * viva; necesita que se vea lo que la gente publica.
  */
-function FeedCard({ event }: { event: FeedEvent }) {
+function FeedCard({ event, courses }: { event: FeedEvent; courses: HomePayload['courses'] }) {
+  const [viewing, setViewing] = useState(false);
   return (
     <li className="panel p-4">
       <div className="flex items-start gap-3">
@@ -612,9 +472,13 @@ function FeedCard({ event }: { event: FeedEvent }) {
           )}
 
           <div className="mt-3">
-            <Link href={event.href} className="btn btn-secondary btn-sm">
-              {event.ctaLabel}
-            </Link>
+            {event.publicationId ? (
+              <button type="button" onClick={() => setViewing(true)} className="btn btn-secondary btn-sm">{event.ctaLabel}</button>
+            ) : (
+              <Link href={event.href} className="btn btn-secondary btn-sm">{event.ctaLabel}</Link>
+            )}
+            {event.approvedByName && <p className="mt-2 text-label text-subtle">Aprobado por {event.approvedByName}</p>}
+            {viewing && event.publicationId && <PublicationDetail id={event.publicationId} courses={courses} onClose={() => setViewing(false)} />}
           </div>
         </div>
       </div>

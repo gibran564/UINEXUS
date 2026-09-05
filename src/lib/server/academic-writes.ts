@@ -579,7 +579,8 @@ export async function createPromptTemplate(
   actor: Actor,
   courseId: string,
   input: PromptInput,
-  isCourseTeacher = true
+  isCourseTeacher = true,
+  persist = true
 ): Promise<PromptTemplateRecord> {
   const timestamp = nowIso();
   const template: PromptTemplateRecord = {
@@ -596,7 +597,7 @@ export async function createPromptTemplate(
     ...initialAuthorship(actor, isCourseTeacher),
   };
 
-  await db().send(new PutCommand({ TableName: TABLES.prompts, Item: template }));
+  if (persist) await db().send(new PutCommand({ TableName: TABLES.prompts, Item: template }));
   return template;
 }
 
@@ -694,7 +695,8 @@ export async function createSkill(
   actor: Actor,
   courseId: string,
   input: SkillWriteInput,
-  isCourseTeacher = true
+  isCourseTeacher = true,
+  persist = true
 ): Promise<SkillResourceRecord> {
   const timestamp = nowIso();
   const skill: SkillResourceRecord = {
@@ -707,7 +709,7 @@ export async function createSkill(
     ...initialAuthorship(actor, isCourseTeacher),
   };
 
-  await db().send(new PutCommand({ TableName: TABLES.skills, Item: skill }));
+  if (persist) await db().send(new PutCommand({ TableName: TABLES.skills, Item: skill }));
   return skill;
 }
 
@@ -834,7 +836,8 @@ export async function createCourseResource(
   actor: Actor,
   courseId: string,
   input: CourseResourceInput,
-  isCourseTeacher: boolean
+  isCourseTeacher: boolean,
+  persist = true
 ): Promise<CourseResourceRecord> {
   const timestamp = nowIso();
   const resource: CourseResourceRecord = {
@@ -854,7 +857,7 @@ export async function createCourseResource(
     ...initialAuthorship(actor, isCourseTeacher),
   };
 
-  await db().send(new PutCommand({ TableName: TABLES.resources, Item: resource }));
+  if (persist) await db().send(new PutCommand({ TableName: TABLES.resources, Item: resource }));
   return resource;
 }
 

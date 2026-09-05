@@ -264,6 +264,10 @@ export type FeedEventKind =
 
 export interface FeedEvent {
   id: string;
+  /** La publicación es única aunque llegue por varias membresías. */
+  publicationId?: string;
+  audienceCourseIds?: string[];
+  approvedByName?: string;
   kind: FeedEventKind;
   courseId: string;
   courseName: string;
@@ -284,8 +288,14 @@ export function compareEvents(a: FeedEvent, b: FeedEvent): number {
 }
 
 export function sortEvents(events: readonly FeedEvent[], limit?: number): FeedEvent[] {
-  const sorted = [...events].sort(compareEvents);
+  const sorted = [...new Map(events.map((event) => [event.id, event])).values()].sort(compareEvents);
   return typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
+}
+
+/** El filtro de lectura nunca decide la audiencia del compositor. */
+export function filterEventsByCourse(events: readonly FeedEvent[], courseId: string): FeedEvent[] {
+  return events.filter((event) => !courseId ||
+    (event.audienceCourseIds ?? [event.courseId]).includes(courseId));
 }
 
 export interface SinceSummary {

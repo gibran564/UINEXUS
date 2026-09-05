@@ -265,7 +265,8 @@ describe('el muro', () => {
     const titles = payload.classroomActivity.map((event) => event.title);
     const body = JSON.stringify(payload);
 
-    expect(titles).toContain('Mapa de navegación del SIIT');
+    // Ser público no equivale a haber sido compartido y aprobado en el muro.
+    expect(titles).not.toContain('Mapa de navegación del SIIT');
     expect(body).not.toContain('Borrador oculto');
     expect(body).not.toContain('Proyecto ajeno');
     // Lo propio ya se ve en «Tus proyectos»; el muro es lo que hacen los demás.

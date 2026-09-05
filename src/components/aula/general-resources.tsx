@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import type { z } from 'zod';
+import type { courseResourceInputSchema } from '@/lib/academic-schemas';
 import { DELIVERABLE_LABEL, stepActionLabel } from '@/lib/constants';
 import { createCourseResource, deleteCourseResource } from '@/lib/aula-client';
 import type { CourseResource, CourseResourceType, WorkflowStep } from '@/lib/types';
@@ -220,6 +222,8 @@ export function CourseResourceEditor({
   isTeacher,
   initialType = 'tool',
   initialSteps = [],
+  onSubmit,
+  submitLabel,
   onDone,
   onCancel,
 }: {
@@ -228,6 +232,8 @@ export function CourseResourceEditor({
   /** Con qué tipo abre. `workflow` cuando se guarda un proceso como plantilla. */
   initialType?: CourseResourceType;
   initialSteps?: WorkflowStep[];
+  onSubmit?: (body: z.input<typeof courseResourceInputSchema>) => Promise<void>;
+  submitLabel?: string;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -246,7 +252,7 @@ export function CourseResourceEditor({
     setBusy(true);
     setError(null);
     try {
-      await createCourseResource(courseId, {
+      const body = {
         type,
         title,
         url,
@@ -266,7 +272,9 @@ export function CourseResourceEditor({
                 assignedHandles: null,
               }))
             : [],
-      });
+      };
+      if (onSubmit) await onSubmit(body);
+      else await createCourseResource(courseId, body);
       onDone();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo guardar.');
@@ -382,7 +390,7 @@ export function CourseResourceEditor({
           }
           className="btn btn-primary"
         >
-          {busy ? 'Guardando…' : isTeacher ? 'Guardar' : 'Enviar propuesta'}
+          {busy ? 'Guardando…' : submitLabel ?? (isTeacher ? 'Guardar' : 'Enviar propuesta')}
         </button>
         <button type="button" onClick={onCancel} className="btn btn-ghost">
           Cancelar
