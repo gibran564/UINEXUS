@@ -4,9 +4,11 @@ import {
   attentionRank,
   attentionReason,
   compareEvents,
+  filterEventsByCourse,
   progressLabel,
   relativeTime,
   sortAttention,
+  sortEvents,
   sortTeacherTasks,
   summarizeSince,
   type AttentionItem,
@@ -205,7 +207,6 @@ describe('el orden del Inicio docente', () => {
   });
 });
 
-describe('el muro', () => {
   const event = (overrides: Partial<FeedEvent>): FeedEvent => ({
     id: 'e',
     kind: 'prompt',
@@ -219,6 +220,9 @@ describe('el muro', () => {
     ctaLabel: 'Ver',
     ...overrides,
   });
+
+describe('el muro', () => {
+
 
   it('se ordena por fecha y por nada más', () => {
     const sorted = [
@@ -258,5 +262,25 @@ describe('el muro', () => {
     expect(relativeTime('2026-09-10T17:35:00.000Z', NOW)).toBe('hace 25 min');
     expect(relativeTime('2026-09-10T16:00:00.000Z', NOW)).toBe('hace 2 h');
     expect(relativeTime('2026-09-07T18:00:00.000Z', NOW)).toBe('hace 3 días');
+  });
+});
+
+
+describe('audiencia del muro', () => {
+  const shared = event({ id: 'publication:shared', courseId: 'a', audienceCourseIds: ['a', 'b'] });
+  it('un evento multigrupo aparece una sola vez antes de aplicar el límite', () => {
+    const other = event({id: 'other'});
+    expect(sortEvents([shared, shared, other], 2)).toHaveLength(2);
+  });
+  it('permite filtrar cualquiera de los grupos y excluye grupos fuera de audiencia', () => {
+    expect(filterEventsByCourse([shared], 'a')).toEqual([shared]);
+    expect(filterEventsByCourse([shared], 'b')).toEqual([shared]);
+    expect(filterEventsByCourse([shared], 'c')).toEqual([]);
+    expect(filterEventsByCourse([shared], '')).toEqual([shared]);
+  });
+  it('conserva el filtro de recursos anteriores sin audiencia explícita', () => {
+    const legacy = event({courseId: 'a'});
+    expect(filterEventsByCourse([legacy], 'a')).toEqual([legacy]);
+    expect(filterEventsByCourse([legacy], 'b')).toEqual([]);
   });
 });

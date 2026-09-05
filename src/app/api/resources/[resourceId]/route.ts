@@ -30,7 +30,7 @@ import type { CourseResourceRecord } from '@/lib/types';
 async function load(request: Request, resourceId: string) {
   const actor = await requireWriter(request);
   const resource = await getCourseResource(resourceId);
-  if (!resource) throw new HttpError(404, 'Ese recurso no existe.');
+  if (!resource || resource.publication) throw new HttpError(404, 'Ese recurso no existe.');
   return { actor, resource };
 }
 

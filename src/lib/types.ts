@@ -1,3 +1,4 @@
+import type { PublicationReference } from './publications';
 /**
  * Modelo de dominio de UINexus.
  *
@@ -1013,6 +1014,7 @@ export interface CourseResource extends ResourceAuthorship {
 
 export interface CourseResourceRecord
   extends Omit<CourseResource, 'author' | 'approvedBy' | 'workflowSteps'> {
+  publication?: { audienceCourseIds: string[]; reference?: PublicationReference; origin: 'teacher' | 'student' };
   workflowSteps: WorkflowStepRecord[];
   createdBy: string;
   /** Se guarda desnormalizado: el panel lista sin ir a buscar a cada persona. */

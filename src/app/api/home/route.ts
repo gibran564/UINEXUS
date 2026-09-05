@@ -13,9 +13,11 @@ import {
   toPromptTemplate,
   toSkillResource,
 } from '@/lib/data/academic-mappers';
-import { listProjects } from '@/lib/data/repository';
+import { listPublicationsFor } from '@/lib/server/publications';
+import type { PublicationDTO } from '@/lib/publications';
 import {
   attentionReason,
+  filterEventsByCourse,
   sortAttention,
   sortEvents,
   sortTeacherTasks,
@@ -26,8 +28,7 @@ import {
 } from '@/lib/home-feed';
 import { isPastDue } from '@/lib/due-date';
 import { missingRequiredSteps, workflowProgress } from '@/lib/workflow';
-import { errorResponse, requireWriter } from '@/lib/server/session';
-import { publicProjectPath } from '@/lib/urls';
+import { errorResponse, HttpError, requireWriter } from '@/lib/server/session';
 import type {
   AssignmentRecord,
   CourseMember,
@@ -64,8 +65,8 @@ import { normalizeStepEvidence } from '@/lib/workflow';
  *    aparecer en el muro de nadie: sería publicarla saltándose la moderación.
  *  · De las entregas ajenas no sale NADA: ni estado, ni nota, ni si alguien
  *    entregó. El muro cuenta lo que la gente publica, no cómo le va.
- *  · Los proyectos salen del índice disperso de publicados, donde los
- *    borradores y los `unlisted` sencillamente no están.
+ *  · Los proyectos entran mediante publicaciones aprobadas con audiencia;
+ *    publicar una página pública por sí solo no la incorpora al muro.
  */
 
 const FEED_LIMIT = 20;
@@ -81,6 +82,7 @@ export interface HomePayload {
   attention: AttentionItem[];
   /** Lo que el PROFESORADO tiene que atender, ya ordenado. */
   teacherTasks: TeacherTask[];
+  publications: PublicationDTO[];
   teacherUpdates: FeedEvent[];
   classroomActivity: FeedEvent[];
 }
@@ -134,6 +136,10 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const actor = await requireWriter(request);
     const memberships = await listCoursesForUser(actor.uid);
+    const filterCourseId = new URL(request.url).searchParams.get('courseId') ?? '';
+    if (filterCourseId && !memberships.some(({ course, role }) => course.id === filterCourseId && role === 'teacher')) {
+      throw new HttpError(404, 'Ese grupo no está disponible para el filtro.');
+    }
     const now = new Date();
 
     const courses = memberships.map(({ course }) => course);
@@ -324,42 +330,29 @@ export async function GET(request: Request): Promise<Response> {
       }
     }
 
-    // ---------------------------------------------------------------------
-    // Proyectos publicados por la clase
-    // ---------------------------------------------------------------------
-
-    const myCourseIds = new Set(courses.map((course) => course.id));
-    if (myCourseIds.size > 0) {
-      /**
-       * Una sola lectura del índice de publicados y filtrado en memoria. No hay
-       * consulta capaz de devolver un borrador desde aquí: no están en el
-       * índice (ver `listProjects` en lib/data/repository.ts).
-       */
-      const { projects } = await listProjects({ sort: 'recent' }, 1, 200);
-
-      for (const project of projects) {
-        if (!project.courseId || !myCourseIds.has(project.courseId)) continue;
-        // El muro de la clase es lo que hacen los demás. Lo propio ya se ve en
-        // «Tus proyectos», y repetirlo sólo desplaza a alguien más.
-        if (project.author.handle === actor.profile.handle) continue;
-
-        classroomActivity.push({
-          id: `project:${project.id}`,
-          kind: 'project',
-          courseId: project.courseId,
-          courseName: project.courseName ?? '',
-          actor: people.get(project.author.handle) ?? {
-            handle: project.author.handle,
-            displayName: project.author.displayName,
-            avatarUrl: project.author.avatarUrl,
-          },
-          title: project.title,
-          summary: project.description,
-          at: project.publishedAt ?? project.updatedAt,
-          href: publicProjectPath({ handle: project.author.handle, slug: project.slug }),
-          ctaLabel: 'Ver el proyecto',
-        });
-      }
+    // Compartir un proyecto también exige audiencia y aprobación estudiantil.
+    const publications = await listPublicationsFor(actor);
+    for (const publication of publications) {
+      if (publication.status !== 'approved') continue;
+      const audience = courses.filter((course) => publication.audienceCourseIds.includes(course.id));
+      const first = audience[0];
+      if (!first) continue;
+      const event: FeedEvent = {
+        id: 'publication:' + publication.id,
+        publicationId: publication.id,
+        audienceCourseIds: audience.map((course) => course.id),
+        kind: publication.kind,
+        courseId: first.id,
+        courseName: audience.map((course) => course.name).join(' · '),
+        actor: publication.author,
+        title: publication.title,
+        summary: publication.content,
+        at: publication.createdAt,
+        href: publication.detailHref,
+        ctaLabel: publication.kind === 'project' ? 'Ver página / proyecto' : 'Ver contenido',
+        approvedByName: publication.approvedBy?.displayName,
+      };
+      (publication.origin === 'teacher' ? teacherUpdates : classroomActivity).push(event);
     }
 
     const payload: HomePayload = {
@@ -375,8 +368,9 @@ export async function GET(request: Request): Promise<Response> {
       })),
       attention: sortAttention(attention).slice(0, ATTENTION_LIMIT),
       teacherTasks: sortTeacherTasks(teacherTasks).slice(0, ATTENTION_LIMIT),
-      teacherUpdates: sortEvents(teacherUpdates, FEED_LIMIT),
-      classroomActivity: sortEvents(classroomActivity, FEED_LIMIT),
+      publications: publications.filter((publication) => publication.status !== 'approved'),
+      teacherUpdates: sortEvents(filterEventsByCourse(teacherUpdates, filterCourseId), FEED_LIMIT),
+      classroomActivity: sortEvents(filterEventsByCourse(classroomActivity, filterCourseId), FEED_LIMIT),
     };
 
     return Response.json(payload);

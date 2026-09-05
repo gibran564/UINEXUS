@@ -465,11 +465,12 @@ function authorshipOf(raw: {
   };
 }
 
-function normalizeResource(raw: Partial<CourseResourceRecord>): CourseResourceRecord {
+export function normalizeResource(raw: Partial<CourseResourceRecord>): CourseResourceRecord {
   return {
     id: raw.id ?? '',
     courseId: raw.courseId ?? '',
     createdBy: raw.createdBy ?? '',
+    publication: raw.publication,
     type: raw.type ?? 'other',
     title: raw.title ?? '',
     description: raw.description ?? '',
@@ -505,7 +506,7 @@ export async function listCourseResources(
     })
   );
 
-  return ((result.Items ?? []) as Partial<CourseResourceRecord>[]).map(normalizeResource);
+  return ((result.Items ?? []) as Partial<CourseResourceRecord>[]).map(normalizeResource).filter((resource) => !resource.publication);
 }
 
 export async function getCourseResource(

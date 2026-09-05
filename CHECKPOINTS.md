@@ -27,6 +27,15 @@ procesos estructurados, trazables y reutilizables.
 
 ---
 
+## Sprint — Publicación académica unificada (2026-09-04)
+
+- Compositor en Inicio: anuncio y editores reales de Prompt, Skill y Recurso; compartir contenido existente y páginas/proyectos mediante referencias.
+- Una publicación con audiencia de uno, varios o todos los grupos docentes; propuestas estudiantiles para un grupo inscrito, con moderación existente y autoría conservada.
+- Filtros docentes independientes de la audiencia, aplicados antes del límite del feed; proyectos sólo mediante una acción explícita de compartir.
+- Permisos del servidor y rutas antiguas protegidos; creación y aprobación del contenido inline y su publicación en transacciones, reutilizando las tablas existentes.
+- Verificación: 371 unitarias y 53 de integración; typecheck y lint verdes. Build validado al cerrar este sprint.
+- UI cubierta con renderizado y callbacks; la prueba visual con cuentas reales y Vercel Preview queda para revisión del usuario.
+
 ## Estado actual
 
 **Iteración 5 — Experiencia de producto.** URLs públicas de proyectos bajo el
@@ -35,7 +44,7 @@ editor de tareas, resumen compacto antes de publicar, cierre de la autoría de
 actividades —prompt libre y fecha límite con hora— e Inicio autenticado con
 muro académico.
 
-Pasan **363 pruebas unitarias + 38 pruebas de integración**. Typecheck, lint y
+Pasan **371 pruebas unitarias + 53 pruebas de integración**. Typecheck, lint y
 build también pasan.
 
 | # | Bloque | Estado |

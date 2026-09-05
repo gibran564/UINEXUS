@@ -2,6 +2,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import type { z } from 'zod';
+import type { skillInputSchema } from '@/lib/academic-schemas';
 import { createSkill, updateSkill, useApi } from '@/lib/aula-client';
 import type { InstallMethod, InstallStep, SkillResource } from '@/lib/types';
 import { AulaScreen, Crumbs, Field, Notice } from './aula-ui';
@@ -53,9 +55,19 @@ const EMPTY: DraftState = {
 export function SkillEditor({
   courseId,
   skillId,
+  embedded = false,
+  onSubmit,
+  onSaved,
+  onCancel,
+  submitLabel = 'Guardar Skill',
 }: {
   courseId: string;
   skillId?: string;
+  embedded?: boolean;
+  onSubmit?: (body: z.input<typeof skillInputSchema>) => Promise<void>;
+  onSaved?: () => void;
+  onCancel?: () => void;
+  submitLabel?: string;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState<DraftState>(EMPTY);
@@ -81,6 +93,7 @@ export function SkillEditor({
 
   const patch = (changes: Partial<DraftState>) =>
     setDraft((current) => ({ ...current, ...changes }));
+  const Heading = embedded ? 'h3' : 'h1';
 
   async function save(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -102,10 +115,13 @@ export function SkillEditor({
           })),
       };
 
-      if (skillId) await updateSkill(skillId, body);
+      if (onSubmit) await onSubmit(body);
+      else if (skillId) await updateSkill(skillId, body);
       else await createSkill(courseId, body);
 
-      router.push(`/aula/${courseId}?tab=resources`);
+      if (onSaved) onSaved();
+      else if (!embedded) router.push(`/aula/${courseId}?tab=resources`);
+      setBusy(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo guardar.');
       setBusy(false);
@@ -129,24 +145,21 @@ export function SkillEditor({
     });
   }
 
-  return (
-    <AulaScreen
-      state={skillId ? existing.state : 'ready'}
-      error={existing.error}
-      next={`/aula/${courseId}`}
-    >
+  const editor = (
       <div className="max-w-3xl">
-        <Crumbs
-          items={[
-            { href: '/aula', label: 'Aula' },
-            { href: `/aula/${courseId}`, label: 'Materia' },
-            { label: skillId ? 'Editar Skill' : 'Nueva Skill' },
-          ]}
-        />
+        {!embedded && (
+          <Crumbs
+            items={[
+              { href: '/aula', label: 'Aula' },
+              { href: `/aula/${courseId}`, label: 'Materia' },
+              { label: skillId ? 'Editar Skill' : 'Nueva Skill' },
+            ]}
+          />
+        )}
 
-        <h1 className="mt-4 font-display text-h1">
+        <Heading className={`mt-4 font-display ${embedded ? 'text-h3' : 'text-h1'}`}>
           {skillId ? 'Editar Skill' : 'Nueva Skill'}
-        </h1>
+        </Heading>
         <p className="mt-2 max-w-prose text-muted">
           Una Skill aquí es una ficha: explica qué hace, dónde está y cómo se instala. UINexus no
           ejecuta nada de lo que escribas: los comandos se muestran para copiarlos.
@@ -311,11 +324,14 @@ export function SkillEditor({
               disabled={busy || draft.title.trim().length < 3}
               className="btn btn-primary"
             >
-              {busy ? 'Guardando…' : 'Guardar Skill'}
+              {busy ? 'Guardando…' : submitLabel}
             </button>
             <button
               type="button"
-              onClick={() => router.push(`/aula/${courseId}?tab=resources`)}
+              onClick={() => {
+                if (onCancel) onCancel();
+                else if (!embedded) router.push(`/aula/${courseId}?tab=resources`);
+              }}
               className="btn btn-ghost"
             >
               Cancelar
@@ -323,6 +339,17 @@ export function SkillEditor({
           </div>
         </form>
       </div>
+  );
+
+  if (embedded) return editor;
+
+  return (
+    <AulaScreen
+      state={skillId ? existing.state : 'ready'}
+      error={existing.error}
+      next={`/aula/${courseId}`}
+    >
+      {editor}
     </AulaScreen>
   );
 }
