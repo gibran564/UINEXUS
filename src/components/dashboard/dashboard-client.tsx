@@ -95,7 +95,7 @@ export function DashboardClient() {
       </div>
 
       <div className="mt-7 border-b border-line">
-        <div role="tablist" aria-label="Filtrar tus proyectos" className="flex gap-1">
+        <div role="tablist" aria-label="Filtrar tus proyectos" className="tab-row">
           {TABS.map((item) => (
             <button
               key={item.value}

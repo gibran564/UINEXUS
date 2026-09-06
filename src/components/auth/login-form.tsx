@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { getRoleFromInstitutionalEmail, isInstitutionalEmail } from '@/lib/identity';
+import { postLoginDestination } from '@/lib/auth-navigation';
 import type { PhoneChallenge } from '@/lib/firebase/auth';
 import { useAuth } from './auth-provider';
 
@@ -62,11 +63,7 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
   const [phoneStep, setPhoneStep] = useState<'number' | 'code'>('number');
   const challengeRef = useRef<PhoneChallenge | null>(null);
 
-  const requestedNext = searchParams.get('next');
-  const next =
-    requestedNext?.startsWith('/') && !requestedNext.startsWith('//')
-      ? requestedNext
-      : '/dashboard';
+  const next = postLoginDestination(searchParams.get('next'));
 
   useEffect(() => {
     if (status === 'authenticated') router.replace(next);

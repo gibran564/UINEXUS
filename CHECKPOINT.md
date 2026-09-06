@@ -1,0 +1,34 @@
+# Checkpoint
+
+- [x] F0.1 · Redirect post-login → `/` — ÉXITO
+- [x] F0.2 · Miniaturas compactas — ÉXITO
+- [x] F0.3 · Overflow móvil de pestañas — ÉXITO
+- [x] F1.1 · Separar layout — ÉXITO
+- [x] F1.2 · Separar feed — ÉXITO
+- [x] F1.3 · Separar tarjeta — ÉXITO
+- [x] F1.4 · Separar atención/filtros — ÉXITO
+- [x] F1.5 · Validar refactor sin regresiones — ÉXITO
+- [x] F2.1 · FeedCard compacta definitiva — ÉXITO
+- [x] F2.2 · Metadata y jerarquía — ÉXITO
+- [x] F2.3 · Acciones/navegación coherentes — ÉXITO
+- [x] F3.1 · Layout desktop — ÉXITO
+- [x] F3.2 · Carril de contexto — ÉXITO
+- [x] F3.3 · Tablet — ÉXITO
+- [x] F3.4 · Móvil — ÉXITO
+- [x] F3.5 · Carril derecho sólo si se justifica — ÉXITO
+- [x] F4.1 · Unificar feed — ÉXITO
+- [x] F4.2 · Filtros por materia — ÉXITO
+- [x] F4.3 · Estado de filtros en URL — ÉXITO
+- [x] F4.4 · Separador última visita — ÉXITO
+- [x] F4.5 · Final/cargar más — ÉXITO
+- [x] F5.1 · URL de publicación — ÉXITO
+- [x] F5.2 · Navegación/modal — ÉXITO
+- [x] F5.3 · Autorización y privacidad — ÉXITO
+- [x] F5.4 · Deep links — ÉXITO
+- [x] F6.1 · Loading — ÉXITO
+- [x] F6.2 · Empty — ÉXITO
+- [x] F6.3 · Error — ÉXITO
+- [ ] F6.4 · Responsive QA — NO COMPLETADA
+- [ ] F6.5 · Tema claro/oscuro — NO COMPLETADA
+- [x] F6.6 · Tests finales — ÉXITO
+- [x] F6.7 · Build final — ÉXITO

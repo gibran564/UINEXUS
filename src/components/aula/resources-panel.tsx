@@ -70,7 +70,7 @@ export function ResourcesPanel({ courseId }: { courseId: string }) {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div role="tablist" aria-label="Tipo de recurso" className="flex gap-1">
+        <div role="tablist" aria-label="Tipo de recurso" className="tab-row">
           {[
             { value: 'prompts' as const, label: `Prompts (${data?.prompts.length ?? 0})` },
             { value: 'skills' as const, label: `Skills (${data?.skills.length ?? 0})` },

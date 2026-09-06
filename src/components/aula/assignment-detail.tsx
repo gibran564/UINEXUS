@@ -482,7 +482,7 @@ function TeacherView({
             resultado, y la lista de quién entregó qué es el detalle.
           */}
           <div className="mt-8 border-b border-line">
-            <div role="tablist" aria-label="Secciones de la actividad" className="flex gap-1">
+            <div role="tablist" aria-label="Secciones de la actividad" className="tab-row">
               {[
                 ...(isWorkflow ? [{ value: 'steps' as const, label: 'Avance por paso' }] : []),
                 ...(isShared ? [{ value: 'document' as const, label: 'Vista conjunta' }] : []),
