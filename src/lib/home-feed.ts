@@ -1,5 +1,5 @@
 import { isPastDue, resolveDueInstant, type DueFields } from './due-date';
-import type { CourseMember, SubmissionStatus } from './types';
+import type { CourseMember, ProjectCover, SubmissionStatus } from './types';
 
 /**
  * El Inicio autenticado: qué requiere atención y qué está pasando.
@@ -200,9 +200,15 @@ export function progressLabel(progress: AttentionProgress | null): string {
 // Atención del profesorado
 // ---------------------------------------------------------------------------
 
-export type TeacherTaskKind = 'closing' | 'review' | 'moderation';
+/**
+ * `publication` es su propia tarea y no se suma a `moderation` porque se
+ * resuelve en otro sitio: las aportaciones a la biblioteca se aprueban dentro
+ * de la materia y las publicaciones, en el muro. Un contador que junta las dos
+ * manda a la mitad de la gente a la pantalla equivocada.
+ */
+export type TeacherTaskKind = 'closing' | 'review' | 'moderation' | 'publication';
 
-const TEACHER_ORDER: readonly TeacherTaskKind[] = ['closing', 'review', 'moderation'];
+const TEACHER_ORDER: readonly TeacherTaskKind[] = ['closing', 'review', 'moderation', 'publication'];
 
 export interface TeacherTask {
   kind: TeacherTaskKind;
@@ -264,6 +270,8 @@ export type FeedEventKind =
 
 export interface FeedEvent {
   id: string;
+  /** La portada de la página compartida, cuando la publicación trae una. */
+  cover?: ProjectCover | null;
   /** La publicación es única aunque llegue por varias membresías. */
   publicationId?: string;
   audienceCourseIds?: string[];
@@ -290,6 +298,24 @@ export function compareEvents(a: FeedEvent, b: FeedEvent): number {
 export function sortEvents(events: readonly FeedEvent[], limit?: number): FeedEvent[] {
   const sorted = [...new Map(events.map((event) => [event.id, event])).values()].sort(compareEvents);
   return typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
+}
+
+/**
+ * El muro con las tareas reservadas.
+ *
+ * Una actividad es lo único del muro que alguien TIENE que hacer, así que no
+ * compite por sitio con lo que se publica: un grupo activo que comparte veinte
+ * páginas en una tarde no puede empujar fuera del muro la entrega del viernes.
+ * Se reserva un cupo propio para las tareas y lo demás se disputa el suyo; el
+ * orden final sigue siendo cronológico, sin mezclar bloques.
+ */
+export function sortEventsReservingAssignments(
+  events: readonly FeedEvent[],
+  limit: number
+): FeedEvent[] {
+  const assignments = sortEvents(events.filter((event) => event.kind === 'assignment'), limit);
+  const rest = sortEvents(events.filter((event) => event.kind !== 'assignment'), limit);
+  return sortEvents([...assignments, ...rest]);
 }
 
 /** El filtro de lectura nunca decide la audiencia del compositor. */

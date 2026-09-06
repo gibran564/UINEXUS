@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { courseResourceInputSchema, promptTemplateInputSchema, skillInputSchema } from './academic-schemas';
-import type { CourseResource, Project, ProjectAuthor, PromptTemplate, ResourceStatus, SkillResource } from './types';
+import type { CourseResource, CourseRole, Project, ProjectAuthor, ProjectCover, PromptTemplate, ResourceStatus, SkillResource } from './types';
 
 export type PublicationReference = { kind: 'prompt' | 'skill' | 'resource' | 'project'; id: string };
 export interface PublicationDTO {
@@ -10,6 +10,12 @@ export interface PublicationDTO {
   kind: 'announcement' | PublicationReference['kind'];
   reference?: PublicationReference;
   audienceCourseIds: string[];
+  /**
+   * La portada de la página compartida. Viaja con la publicación porque el muro
+   * enseña la página, no un enlace a la página: sin imagen, compartir un
+   * proyecto de diseño es indistinguible de compartir un aviso de texto.
+   */
+  cover: ProjectCover | null;
   origin: 'teacher' | 'student';
   status: ResourceStatus;
   author: ProjectAuthor;
@@ -18,7 +24,9 @@ export interface PublicationDTO {
   canModerate: boolean;
   detailHref: string;
 }
-export interface PublicationOption extends PublicationReference { title: string; courseId?: string }
+export interface PublicationOption extends PublicationReference { title: string; courseId?: string; cover?: ProjectCover | null }
+/** Los grupos de quien publica, para elegir audiencia sin cargar el muro entero. */
+export interface PublicationCourse { id: string; name: string; role: CourseRole }
 export interface PublicationDetail { publication: PublicationDTO; resource: PromptTemplate | SkillResource | CourseResource | Project | null }
 export const publicationInputSchema = z.object({
   audienceCourseIds: z.array(z.string().min(1)).max(100).default([]),

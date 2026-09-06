@@ -20,6 +20,7 @@ import {
   filterEventsByCourse,
   sortAttention,
   sortEvents,
+  sortEventsReservingAssignments,
   sortTeacherTasks,
   type AttentionItem,
   type AttentionProgress,
@@ -160,6 +161,9 @@ export async function GET(request: Request): Promise<Response> {
     const mySubmissions = await listSubmissionsByStudent(actor.uid);
     const myByAssignment = new Map(mySubmissions.map((item) => [item.assignmentId, item]));
 
+    // Compartir un proyecto también exige audiencia y aprobación estudiantil.
+    const publications = await listPublicationsFor(actor);
+
     for (const { course, role } of memberships) {
       const teacherHandles = new Set(course.teachers.map((teacher) => teacher.handle));
 
@@ -234,6 +238,33 @@ export async function GET(request: Request): Promise<Response> {
             assignmentId: null,
             title: 'Aportaciones por aprobar',
             count: proposed.length,
+            submitted: null,
+            audience: null,
+            dueAt: null,
+            dueDate: null,
+          });
+        }
+
+        /**
+         * Lo que el alumnado propuso para el MURO. Se avisa aquí y no sólo en
+         * el panel de moderación porque una propuesta que nadie revisa es una
+         * propuesta rechazada en silencio: quien la mandó ve su publicación
+         * «pendiente» para siempre sin que nadie se haya enterado.
+         */
+        const waiting = publications.filter(
+          (publication) =>
+            publication.canModerate &&
+            publication.status === 'proposed' &&
+            publication.audienceCourseIds.includes(course.id)
+        );
+        if (waiting.length > 0) {
+          teacherTasks.push({
+            kind: 'publication',
+            courseId: course.id,
+            courseName: course.name,
+            assignmentId: null,
+            title: 'Publicaciones por aprobar',
+            count: waiting.length,
             submitted: null,
             audience: null,
             dueAt: null,
@@ -330,8 +361,6 @@ export async function GET(request: Request): Promise<Response> {
       }
     }
 
-    // Compartir un proyecto también exige audiencia y aprobación estudiantil.
-    const publications = await listPublicationsFor(actor);
     for (const publication of publications) {
       if (publication.status !== 'approved') continue;
       const audience = courses.filter((course) => publication.audienceCourseIds.includes(course.id));
@@ -345,6 +374,7 @@ export async function GET(request: Request): Promise<Response> {
         courseId: first.id,
         courseName: audience.map((course) => course.name).join(' · '),
         actor: publication.author,
+        cover: publication.cover,
         title: publication.title,
         summary: publication.content,
         at: publication.createdAt,
@@ -369,7 +399,11 @@ export async function GET(request: Request): Promise<Response> {
       attention: sortAttention(attention).slice(0, ATTENTION_LIMIT),
       teacherTasks: sortTeacherTasks(teacherTasks).slice(0, ATTENTION_LIMIT),
       publications: publications.filter((publication) => publication.status !== 'approved'),
-      teacherUpdates: sortEvents(filterEventsByCourse(teacherUpdates, filterCourseId), FEED_LIMIT),
+      // Las tareas nunca las desplaza el contenido social: van con cupo propio.
+      teacherUpdates: sortEventsReservingAssignments(
+        filterEventsByCourse(teacherUpdates, filterCourseId),
+        FEED_LIMIT
+      ),
       classroomActivity: sortEvents(filterEventsByCourse(classroomActivity, filterCourseId), FEED_LIMIT),
     };
 

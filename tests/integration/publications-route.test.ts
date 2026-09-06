@@ -24,7 +24,7 @@ async function feed(actor: Actor, query = '') {
   const response = await home(requestAs(actor, 'http://localhost/api/home' + query));
   expect(response.status).toBe(200);
   const payload = await response.json();
-  return [...payload.teacherUpdates, ...payload.classroomActivity] as { publicationId?: string; title: string; actor: { handle: string } }[];
+  return [...payload.teacherUpdates, ...payload.classroomActivity] as { publicationId?: string; title: string; kind: string; cover: unknown; actor: { handle: string } }[];
 }
 async function decision(actor: Actor, id: string, status: 'approved' | 'rejected') {
   return moderate(jsonRequestAs(actor, 'http://localhost/api/publications/' + id, 'PATCH', { status }), context(id));
@@ -114,7 +114,7 @@ describe('publicación unificada y audiencia', () => {
     await putIntegrationItems(tables.projects, [page()]);
     expect(await feed(ACTORS.studentB)).toEqual([]);
     const options = await (await list(requestAs(ACTORS.teacherA, 'http://localhost/api/publications'))).json();
-    expect(options.options).toContainEqual({ kind: 'project', id: 'page', title: 'Página académica' });
+    expect(options.options).toContainEqual({ kind: 'project', id: 'page', title: 'Página académica', cover: null });
     const publication = await create(ACTORS.teacherA, { audienceCourseIds: ['course-a'], reference: { kind: 'project', id: 'page' } });
     expect(publication.detailHref).toBe('/@student-a/page/');
     expect((await feed(ACTORS.studentB)).map((p) => p.publicationId)).toContain(publication.id);
@@ -124,9 +124,36 @@ describe('publicación unificada y audiencia', () => {
       expect((await detail(requestAs(ACTORS.studentB, 'http://localhost'), context(publication.id))).status).toBe(404);
     }
   });
+  it('la portada de la página viaja hasta la tarjeta del muro', async () => {
+    const cover = { url: 'https://cdn.example/portada.png', alt: 'Captura de Página académica' };
+    await putIntegrationItems(tables.projects, [page({ cover })]);
+    const options = await (await list(requestAs(ACTORS.teacherA, 'http://localhost/api/publications?options=1'))).json();
+    expect(options.options).toContainEqual({ kind: 'project', id: 'page', title: 'Página académica', cover });
+    expect(options.courses).toContainEqual({ id: 'course-a', name: COURSE_A.name, role: 'teacher' });
+    const publication = await create(ACTORS.teacherA, { audienceCourseIds: ['course-a'], reference: { kind: 'project', id: 'page' } });
+    expect(publication.cover).toEqual(cover);
+    expect((await feed(ACTORS.studentB)).find((event) => event.publicationId === publication.id)).toMatchObject({ kind: 'project', cover });
+  });
+  it('un anuncio no inventa portada', async () => {
+    const publication = await create(ACTORS.teacherA, { audienceCourseIds: ['course-a'], announcement });
+    expect(publication.cover).toBeNull();
+    expect((await feed(ACTORS.studentA)).find((event) => event.publicationId === publication.id)?.cover).toBeNull();
+  });
 });
 
 describe('moderación común y privacidad', () => {
+  it('avisa al profesorado de las páginas que el alumnado propuso al muro', async () => {
+    await putIntegrationItems(tables.projects, [page()]);
+    const publication = await create(ACTORS.studentA, { audienceCourseIds: ['course-a'], reference: { kind: 'project', id: 'page' } });
+    const teacherHome = await (await home(requestAs(ACTORS.teacherA, 'http://localhost/api/home'))).json();
+    expect(teacherHome.teacherTasks).toContainEqual(expect.objectContaining({ kind: 'publication', courseId: 'course-a', count: 1 }));
+    // Quien la propuso no se avisa a sí mismo, y su compañero tampoco la ve.
+    const ownHome = await (await home(requestAs(ACTORS.studentA, 'http://localhost/api/home'))).json();
+    expect(ownHome.teacherTasks).toEqual([]);
+    expect((await decision(ACTORS.teacherA, publication.id, 'approved')).status).toBe(200);
+    const after = await (await home(requestAs(ACTORS.teacherA, 'http://localhost/api/home'))).json();
+    expect(after.teacherTasks.some((task: { kind: string }) => task.kind === 'publication')).toBe(false);
+  });
   it('pending no llega a compañeros; aprobado conserva autor y entra al feed', async () => {
     const publication = await create(ACTORS.studentA, { audienceCourseIds: ['course-a'], newContent: { kind: 'prompt', data: prompt } });
     expect(publication.status).toBe('proposed');

@@ -1,5 +1,7 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { HomePayload } from '@/app/api/home/route';
 import { apiFetch } from '@/lib/api-client';
@@ -7,6 +9,7 @@ import { Notice } from '@/components/aula/aula-ui';
 import { PromptEditor } from '@/components/aula/resources-panel';
 import { CourseResourceEditor } from '@/components/aula/general-resources';
 import { SkillEditor } from '@/components/aula/skill-editor';
+import { PROJECT_TYPES } from '@/lib/constants';
 import type { PublicationDTO, PublicationOption } from '@/lib/publications';
 import { PublicationDetail } from './publication-detail';
 
@@ -45,6 +48,11 @@ export function PublicationComposer({ courses, onPublished }: {
   const audienceValid = (role === 'teacher' && audienceMode === 'allTeacherGroups') || groupIds.length > 0;
   const courseId = (audienceMode === 'allTeacherGroups' ? available[0]?.id : groupIds[0]) ?? '';
   const submitLabel = role === 'teacher' ? 'Publicar' : 'Enviar para aprobación';
+  // La audiencia elegida aquí viaja al flujo de publicación para no volver a
+  // preguntarla al final. Es una sugerencia: el servidor la vuelve a validar.
+  const shareIds = audienceMode === 'allTeacherGroups' && role === 'teacher'
+    ? available.map((course) => course.id)
+    : groupIds;
 
   useEffect(() => {
     if (!open || mode !== 'share') return;
@@ -121,7 +129,7 @@ export function PublicationComposer({ courses, onPublished }: {
             {role === 'student' && <p className="mt-2 text-sm text-muted">Requiere aprobación de tu docente antes de aparecer en el muro.</p>}
           </fieldset>
           {mode === 'new' && <div className="flex flex-wrap gap-2" role="group" aria-label="Tipo de contenido">
-            {(['announcement', 'resource', 'prompt', 'skill'] as const).map((value) => <button type="button" key={value} aria-pressed={kind === value} onClick={() => setKind(value)} className={`btn btn-sm ${kind === value ? 'btn-primary' : 'btn-secondary'}`}>{PUBLICATION_LABELS[value]}</button>)}
+            {(['announcement', 'resource', 'prompt', 'skill', 'project'] as const).map((value) => <button type="button" key={value} aria-pressed={kind === value} onClick={() => setKind(value)} className={`btn btn-sm ${kind === value ? 'btn-primary' : 'btn-secondary'}`}>{PUBLICATION_LABELS[value]}</button>)}
           </div>}
         </fieldset>
         {error && <Notice tone="error">{error}</Notice>}
@@ -137,6 +145,11 @@ export function PublicationComposer({ courses, onPublished }: {
                   <option value="">Selecciona contenido…</option>
                   {options.filter((option) => option.title.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map((option) => <option key={`${option.kind}:${option.id}`} value={`${option.kind}:${option.id}`}>{PUBLICATION_LABELS[option.kind]} · {option.title}</option>)}
                 </select></label>
+                {/* Confirmar con la vista, no con el título: dos entregas de la
+                    misma práctica se llaman casi igual y la portada las separa. */}
+                {(() => { const chosen = options.find((option) => `${option.kind}:${option.id}` === reference);
+                  return chosen?.cover ? <img src={chosen.cover.url} alt="" loading="lazy" decoding="async"
+                    className="aspect-16/10 w-full max-w-sm rounded-sm border border-line object-cover" /> : null; })()}
                 {!options.length && <p className="text-sm text-muted">Todavía no tienes contenido disponible para compartir.</p>}
               </>}
             </>}
@@ -146,6 +159,20 @@ export function PublicationComposer({ courses, onPublished }: {
           {kind === 'prompt' && <PromptEditor courseId={courseId} template={null} onSubmit={(data) => publish({ newContent: { kind: 'prompt', data } })} submitLabel={submitLabel} onDone={completed} onCancel={cancel} />}
           {kind === 'resource' && <CourseResourceEditor courseId={courseId} isTeacher={role === 'teacher'} onSubmit={(data) => publish({ newContent: { kind: 'resource', data } })} submitLabel={submitLabel} onDone={completed} onCancel={cancel} />}
           {kind === 'skill' && <SkillEditor courseId={courseId} embedded onSubmit={(data) => publish({ newContent: { kind: 'skill', data } })} submitLabel={submitLabel} onSaved={completed} onCancel={cancel} />}
+          {/* Una página no se escribe en un formulario: son archivos que hay
+              que validar, previsualizar y alojar. El muro lleva al flujo real
+              con la audiencia ya elegida y la publicación se cierra allí. */}
+          {kind === 'project' && <div className="space-y-3">
+            <p className="text-sm text-muted">Sube tus archivos y, al terminar, se comparte {role === 'teacher' ? 'en el muro de' : 'para aprobación con'} {shareIds.length === 1 ? 'el grupo elegido' : 'los grupos elegidos'}.</p>
+            <ul className="space-y-2">{PROJECT_TYPES.map((option) => <li key={option.value}>
+              <Link href={`/publish/new?type=${option.value}&compartir=${encodeURIComponent(shareIds.join(','))}`} className="panel flex min-h-11 items-center gap-3 p-3 no-underline transition-colors hover:border-accent">
+                <span className="min-w-0"><span className="block font-medium">{option.label}</span><span className="block text-sm text-muted">{option.helper}</span></span>
+                <span aria-hidden="true" className="ml-auto text-subtle">→</span>
+              </Link>
+            </li>)}</ul>
+            {role === 'student' && <p className="text-sm text-muted">Tu docente recibirá el aviso y decidirá si aparece en el muro.</p>}
+            <p className="text-sm text-muted">¿Ya la tienes subida? Usa <button type="button" className="underline underline-offset-2" onClick={() => { setMode('share'); setReference(''); }}>Compartir existente</button>.</p>
+          </div>}
         </div>}
       </div>}
       {done && <p role="status" className="mt-3 text-sm text-muted">{done}</p>}
@@ -163,6 +190,9 @@ export function PublicationModeration({ publications, onChanged, courses = [] }:
     <h2 id="publication-moderation" className="section-mark font-display text-h2">Publicaciones pendientes de aprobación</h2>
     <p className="mt-2 text-sm text-muted">{pending.length} por revisar</p>
     <ul className="mt-4 space-y-3">{pending.map((publication) => <li key={publication.id} className="panel p-4">
+      {/* Aprobar una página sin verla es firmar a ciegas: la portada va aquí. */}
+      {publication.cover && <img src={publication.cover.url} alt="" loading="lazy" decoding="async"
+        className="mb-3 aspect-16/10 w-full rounded-sm border border-line object-cover" />}
       <p className="text-sm text-muted">{publication.author.displayName} · {PUBLICATION_LABELS[publication.kind]}</p>
       <p className="mt-1 font-medium">{publication.title}</p>
       <p className="mt-1 text-sm text-muted">{publication.audienceCourseIds.map((id) => courses.find((course) => course.id === id)?.name ?? id).join(' · ')}</p>

@@ -11,7 +11,7 @@ import { isPubliclyRoutable } from '../project-access';
 import { publicProjectPath } from '../urls';
 import { toPublicProject } from '../data/mappers';
 import type { CourseResourceRecord } from '../types';
-import type { PublicationDTO, PublicationDetail, PublicationOption, PublicationReference, publicationInputSchema } from '../publications';
+import type { PublicationCourse, PublicationDTO, PublicationDetail, PublicationOption, PublicationReference, publicationInputSchema } from '../publications';
 import { applyModeration, createCourseResource, createPromptTemplate, createSkill } from './academic-writes';
 import { requireCourseContext } from './course-access';
 import { HttpError, type Actor } from './session';
@@ -92,6 +92,7 @@ async function dto(actor: Actor, item: CourseResourceRecord, resource: Publicati
   const audienceCourseIds = meta.audienceCourseIds.filter((id) => memberships.some(({ course }) => course.id === id));
   return { id: item.id, title: resource?.title ?? item.title, content: resource && 'description' in resource ? resource.description : item.content,
     kind: meta.reference?.kind ?? 'announcement', reference: meta.reference, audienceCourseIds,
+    cover: resource && 'cover' in resource ? resource.cover : null,
     origin: meta.origin, status: item.status, author: { handle: item.authorHandle, displayName: item.authorName, avatarUrl: null },
     approvedBy: item.approvedByUid ? { handle: '', displayName: item.approvedByName, avatarUrl: null } : null,
     createdAt: item.createdAt, canModerate: await canModeratePublication(actor, item), detailHref: resource && 'brief' in resource ? publicProjectPath({ handle: resource.author.handle, slug: resource.slug }) : `/api/publications/${item.id}` };
@@ -122,12 +123,15 @@ export async function publicationOptionsFor(actor: Actor): Promise<PublicationOp
   const projects = await listProjects({}, 1, 100);
   for (const project of projects.projects) {
     const original = await getProjectRecordById(project.id);
-    if (original?.status === 'published' && isPubliclyRoutable(original)) options.push({ kind: 'project', id: project.id, title: project.title });
+    if (original?.status === 'published' && isPubliclyRoutable(original)) options.push({ kind: 'project', id: project.id, title: project.title, cover: project.cover });
   }
   for (const publication of await listPublicationsFor(actor)) {
-    if (publication.status === 'approved' && publication.reference) options.push({ ...publication.reference, title: publication.title });
+    if (publication.status === 'approved' && publication.reference) options.push({ ...publication.reference, title: publication.title, cover: publication.cover });
   }
   return [...new Map(options.map((option) => [`${option.kind}:${option.id}`, option])).values()];
+}
+export async function publicationCoursesFor(actor: Actor): Promise<PublicationCourse[]> {
+  return (await listCoursesForUser(actor.uid)).map(({ course, role }) => ({ id: course.id, name: course.name, role }));
 }
 export async function createPublication(actor: Actor, input: z.infer<typeof publicationInputSchema>): Promise<PublicationDTO> {
   const memberships = await listCoursesForUser(actor.uid);

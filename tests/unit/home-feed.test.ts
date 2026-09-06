@@ -9,6 +9,7 @@ import {
   relativeTime,
   sortAttention,
   sortEvents,
+  sortEventsReservingAssignments,
   sortTeacherTasks,
   summarizeSince,
   type AttentionItem,
@@ -282,5 +283,27 @@ describe('audiencia del muro', () => {
     const legacy = event({courseId: 'a'});
     expect(filterEventsByCourse([legacy], 'a')).toEqual([legacy]);
     expect(filterEventsByCourse([legacy], 'b')).toEqual([]);
+  });
+});
+
+describe('las tareas nunca salen del muro', () => {
+  const social = Array.from({ length: 30 }, (_, index) =>
+    event({ id: `prompt:${index}`, kind: 'prompt', at: `2026-09-${String(index + 1).padStart(2, '0')}T10:00:00.000Z` })
+  );
+  const task = event({ id: 'assignment:vieja', kind: 'assignment', at: '2026-08-01T10:00:00.000Z' });
+
+  it('una actividad antigua sobrevive a treinta publicaciones más nuevas', () => {
+    const wall = sortEventsReservingAssignments([...social, task], 20);
+    expect(wall.map((item) => item.id)).toContain('assignment:vieja');
+    expect(sortEvents([...social, task], 20).map((item) => item.id)).not.toContain('assignment:vieja');
+  });
+
+  it('el cupo reservado también tiene límite y el orden sigue siendo cronológico', () => {
+    const tasks = Array.from({ length: 25 }, (_, index) =>
+      event({ id: `assignment:${index}`, kind: 'assignment', at: `2026-07-${String(index + 1).padStart(2, '0')}T10:00:00.000Z` })
+    );
+    const wall = sortEventsReservingAssignments([...tasks, ...social], 20);
+    expect(wall.filter((item) => item.kind === 'assignment')).toHaveLength(20);
+    expect(wall.map((item) => item.at)).toEqual([...wall.map((item) => item.at)].sort().reverse());
   });
 });
