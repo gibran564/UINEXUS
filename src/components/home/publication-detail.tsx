@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useRef, useState } from 'react';
 import type { HomePayload } from '@/app/api/home/route';
@@ -94,6 +95,9 @@ export function PublicationContent({ detail }: { detail: PublicationDetailData }
       {resource.usageInstructions && <section><h3 className="mb-2 font-medium">Cómo usarla</h3><MarkdownContent content={resource.usageInstructions} format="plain_text" /></section>}
     </>}
     {'brief' in resource && <>
+      {/* La portada primero: quien abre una página compartida viene a verla. */}
+      {resource.cover && <img src={resource.cover.url} alt={resource.cover.alt}
+        className="w-full rounded-sm border border-line object-cover" loading="lazy" decoding="async" />}
       {Object.entries(resource.brief).filter(([, value]) => value).map(([key, value]) => <section key={key}>
         <h3 className="font-medium">{({ problem: 'Problema', goal: 'Objetivo', process: 'Proceso', tools: 'Herramientas', reflection: 'Reflexión' } as Record<string, string>)[key] ?? key}</h3>
         <MarkdownContent content={value ?? ''} format="plain_text" />

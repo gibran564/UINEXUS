@@ -19,6 +19,7 @@ import {
   type TeacherTask,
 } from '@/lib/home-feed';
 import { EmptyState } from '@/components/ui/empty-state';
+import { GeneratedCover } from '@/components/project/generated-cover';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import { PublicationComposer, PublicationModeration } from './publication-composer';
 import { PublicationDetail } from './publication-detail';
@@ -354,15 +355,21 @@ function TeacherTaskCard({ task }: { task: TeacherTask }) {
       ? `${task.count} ${task.count === 1 ? 'entrega nueva' : 'entregas nuevas'}`
       : task.kind === 'moderation'
         ? `${task.count} ${task.count === 1 ? 'aportación pendiente' : 'aportaciones pendientes'}`
-        : `Cierra el ${formatDueLabel(task)}`;
+        : task.kind === 'publication'
+          ? `${task.count} ${task.count === 1 ? 'publicación pendiente' : 'publicaciones pendientes'}`
+          : `Cierra el ${formatDueLabel(task)}`;
 
+  // Una publicación se aprueba en el muro, no dentro de la materia: el enlace
+  // baja a la lista que ya está en esta misma pantalla.
   const href =
-    task.kind === 'moderation'
-      ? `/aula/${task.courseId}?tab=resources`
-      : `/aula/${task.courseId}/tareas/${task.assignmentId}`;
+    task.kind === 'publication'
+      ? '#publication-moderation'
+      : task.kind === 'moderation'
+        ? `/aula/${task.courseId}?tab=resources`
+        : `/aula/${task.courseId}/tareas/${task.assignmentId}`;
 
   const cta =
-    task.kind === 'review' ? 'Revisar' : task.kind === 'moderation' ? 'Revisar' : 'Ver el progreso';
+    task.kind === 'closing' ? 'Ver el progreso' : 'Revisar';
 
   return (
     <li className={`panel p-4 ${closing ? 'border-accent' : ''}`}>
@@ -469,6 +476,35 @@ function FeedCard({ event, courses }: { event: FeedEvent; courses: HomePayload['
 
           {event.summary && (
             <p className="mt-1 line-clamp-2 text-sm text-muted">{event.summary}</p>
+          )}
+
+          {/* Una página compartida se enseña, no se menciona. Sin portada la
+              tarjeta sería una línea de texto entre otras y nadie sabría que
+              hay una interfaz al otro lado del botón; cuando el proyecto no
+              subió captura se dibuja la misma portada generada de la galería,
+              que al menos distingue una página de otra. */}
+          {event.kind === 'project' && (
+            <a
+              href={event.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              tabIndex={-1}
+              aria-hidden="true"
+              className="mt-3 block aspect-16/10 overflow-hidden rounded-sm border border-line bg-surface"
+            >
+              {event.cover ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={event.cover.url}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                />
+              ) : (
+                <GeneratedCover seed={event.id} className="h-full w-full" />
+              )}
+            </a>
           )}
 
           <div className="mt-3">

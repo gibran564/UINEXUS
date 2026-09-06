@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
+import { ShareToWall } from '@/components/home/share-to-wall';
 import { isFirebaseConfigured } from '@/lib/firebase/config';
 import type { ProjectRecord, Visibility } from '@/lib/types';
 import { STATUS_LABEL } from '@/lib/constants';
@@ -27,6 +28,7 @@ export function ProjectRowActions({
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -97,6 +99,35 @@ export function ProjectRowActions({
       setBusy(false);
       setConfirming(false);
     }
+  }
+
+  /**
+   * Compartir en el muro desde aquí y no sólo desde el compositor: una página
+   * subida hace tres semanas se comparte cuando toca el tema, y para entonces
+   * quien la hizo la busca donde están sus proyectos, no en un desplegable del
+   * muro con todo lo del semestre dentro.
+   */
+  if (sharing) {
+    const shareId = `share-${project.id}`;
+    return (
+      <div className="panel p-4 text-left" role="group" aria-labelledby={`${shareId}-title`}>
+        <h3 id={`${shareId}-title`} className="font-medium">
+          Compartir “{project.title}” en el muro
+        </h3>
+        <p className="mt-1 text-sm text-muted">
+          Aparecerá con su portada en el muro de la clase que elijas.
+        </p>
+        <div className="mt-4">
+          <ShareToWall
+            projectId={project.id}
+            published={project.status === 'published'}
+          />
+        </div>
+        <button type="button" className="btn btn-ghost btn-sm mt-4" onClick={() => setSharing(false)}>
+          Cerrar
+        </button>
+      </div>
+    );
   }
 
   if (confirming) {
@@ -193,6 +224,20 @@ export function ProjectRowActions({
                 Copiar enlace
               </button>
             </>
+          )}
+
+          {project.status === 'published' && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setSharing(true);
+              }}
+              className="block w-full px-3 py-2 text-left text-sm hover:bg-sunken"
+            >
+              Compartir en el muro
+            </button>
           )}
 
           <Link

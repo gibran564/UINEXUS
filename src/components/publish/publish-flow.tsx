@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { ComboField } from '@/components/ui/combo-field';
 import { CopyField } from '@/components/ui/copy-field';
+import { ShareToWall } from '@/components/home/share-to-wall';
 import { UploadDropzone } from './upload-dropzone';
 import { VisibilitySelector } from './visibility-selector';
 import { ALL_CATEGORIES, LIMITS, PROJECT_TYPES } from '@/lib/constants';
@@ -29,11 +30,18 @@ export function PublishFlow({
   projectType,
   courses,
   groups = [],
+  shareCourseIds = [],
 }: {
   projectType: ProjectType;
   courses: readonly Course[];
   /** Grupos ya usados en proyectos publicados. Sugerencias, no lista cerrada. */
   groups?: readonly string[];
+  /**
+   * Los grupos que venían marcados al entrar desde el muro (`?compartir=`).
+   * Quien empieza en «sube una página y compártela con 7A» no debería tener
+   * que volver a decir 7A al final del flujo.
+   */
+  shareCourseIds?: readonly string[];
 }) {
   const { status, user, refreshProfile } = useAuth();
   const [step, setStep] = useState(1);
@@ -60,7 +68,7 @@ export function PublishFlow({
   const [publishError, setPublishError] = useState<string | null>(null);
   const [retryingProfile, setRetryingProfile] = useState(false);
   const [profileRetryFailed, setProfileRetryFailed] = useState(false);
-  const [result, setResult] = useState<{ handle: string; slug: string } | null>(null);
+  const [result, setResult] = useState<{ projectId: string; handle: string; slug: string } | null>(null);
 
   const typeInfo = PROJECT_TYPES.find((option) => option.value === projectType);
   const files = staging?.files ?? [];
@@ -146,7 +154,7 @@ export function PublishFlow({
         },
         setProgress
       );
-      setResult({ handle: published.handle, slug: published.slug });
+      setResult({ projectId: published.projectId, handle: published.handle, slug: published.slug });
       setStep(5);
     } catch (caught) {
       setProgress(null);
@@ -278,6 +286,26 @@ export function PublishFlow({
             Abrir proyecto
           </Link>
         </div>
+
+        {/* Publicar y compartir son dos cosas distintas y se piden por
+            separado: tener enlace público no mete nada en el muro de nadie,
+            y quien acaba de subir su página casi siempre quiere las dos. */}
+        <section aria-labelledby="compartir-muro" className="panel mt-8 p-5">
+          <h2 id="compartir-muro" className="font-display text-h3">
+            Compartirla con tu clase
+          </h2>
+          <p className="mt-2 text-sm text-muted">
+            Aparecerá en el muro con su portada. Si prefieres, puedes hacerlo más tarde desde el
+            muro o desde tus proyectos.
+          </p>
+          <div className="mt-4">
+            <ShareToWall
+              projectId={result.projectId}
+              published={visibility === 'published'}
+              preselected={shareCourseIds}
+            />
+          </div>
+        </section>
 
         <p className="mt-8 border-t border-line pt-5 text-sm text-muted">
           ¿Te equivocaste en algo? Puedes cambiar la información, reemplazar los archivos o
