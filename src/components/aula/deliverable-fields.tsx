@@ -283,7 +283,7 @@ export function WorklogFields({
               Pégalo tal cual. Se conservan títulos, listas, tablas, enlaces y código.
             </p>
           </div>
-          <div role="tablist" aria-label="Resultado de la IA" className="flex gap-1">
+          <div role="tablist" aria-label="Resultado de la IA" className="tab-row">
             <button
               type="button"
               role="tab"

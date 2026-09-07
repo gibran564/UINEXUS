@@ -58,7 +58,19 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+/**
+ * `modal` es la ranura donde aterriza `/muro/[id]` cuando se abre desde el muro:
+ * la ruta se intercepta y se presenta como diálogo sobre lo que ya había, sin
+ * perder la lista ni el desplazamiento. Con el enlace abierto en frío la ranura
+ * está vacía y manda la pantalla completa.
+ */
+export default function RootLayout({
+  children,
+  modal,
+}: {
+  children: React.ReactNode;
+  modal: React.ReactNode;
+}) {
   return (
     <html lang="es" suppressHydrationWarning className={`${inter.variable} ${fraunces.variable}`}>
       <head>
@@ -72,6 +84,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AuthProvider>
           <AppFrame banner={<DemoBanner />} navigation={<Navbar />} footer={<Footer />}>
             {children}
+            {modal}
           </AppFrame>
         </AuthProvider>
       </body>

@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { getRoleFromInstitutionalEmail, isInstitutionalEmail } from '../../src/lib/identity';
+import { postLoginDestination } from '../../src/lib/auth-navigation';
+
+describe('destino tras iniciar sesión', () => {
+  it('lleva al inicio académico cuando no hay un deep link', () => {
+    expect(postLoginDestination(null)).toBe('/');
+    expect(postLoginDestination('')).toBe('/');
+  });
+
+  it('conserva rutas internas y rechaza destinos externos', () => {
+    expect(postLoginDestination('/aula/materia-1?tab=resources')).toBe(
+      '/aula/materia-1?tab=resources'
+    );
+    expect(postLoginDestination('//example.com/phishing')).toBe('/');
+    expect(postLoginDestination('https://example.com/phishing')).toBe('/');
+  });
+});
 
 describe('validación de correo institucional ITD', () => {
   it('acepta correos válidos de @itdurango.edu.mx', () => {
@@ -39,4 +55,3 @@ describe('clasificación automática de rol (estudiante vs docente)', () => {
     expect(isInstitutionalEmail('cegibran@gmail.com')).toBe(true);
   });
 });
-

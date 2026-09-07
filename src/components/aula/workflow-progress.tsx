@@ -79,7 +79,7 @@ export function WorkflowProgress({
 
   return (
     <div>
-      <div className="mb-5 flex gap-1 border-b border-line" role="tablist" aria-label="Vista del workflow">
+      <div className="tab-row mb-5 border-b border-line" role="tablist" aria-label="Vista del workflow">
         {([
           ['progress', 'Avance por paso'],
           ['group', 'Resultado del grupo'],

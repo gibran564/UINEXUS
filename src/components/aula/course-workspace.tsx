@@ -84,7 +84,7 @@ export function CourseWorkspace({ courseId }: { courseId: string }) {
           </header>
 
           <div className="mt-6 border-b border-line">
-            <div role="tablist" aria-label="Secciones de la materia" className="flex gap-1">
+            <div role="tablist" aria-label="Secciones de la materia" className="tab-row">
               {tabs.map((item) => (
                 <button
                   key={item.value}

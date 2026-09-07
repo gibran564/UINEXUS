@@ -517,6 +517,30 @@
     max-width: 68ch;
     color: var(--fg-muted);
   }
+
+  /* --- Filas de pestañas y chips ---------------------------------------
+     Con cinco pestañas la fila mide ~444 px y no entra en ningún móvil
+     (auditoría R-08). En vez de comprimir los rótulos, la fila se desplaza
+     en horizontal con anclaje; la barra de desplazamiento se oculta porque
+     el recorrido natural aquí es el foco de teclado, que arrastra la
+     pestaña a la vista por sí solo.
+     --------------------------------------------------------------------- */
+  .tab-row {
+    display: flex;
+    min-width: 0;
+    gap: 0.25rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .tab-row::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-row > * {
+    flex: none;
+    scroll-snap-align: start;
+  }
 }
 
 @layer utilities {
