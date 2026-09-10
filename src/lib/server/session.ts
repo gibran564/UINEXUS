@@ -2,6 +2,7 @@ import 'server-only';
 
 import { getAdminAuth } from '../firebase/admin';
 import { getProjectRecordById, getUserRecordByUid } from '../data/repository';
+import { isInstitutionalEmail } from '../identity';
 import type { ProjectRecord, PublicUser, UserRole } from '../types';
 
 /**
@@ -19,6 +20,8 @@ import type { ProjectRecord, PublicUser, UserRole } from '../types';
  * comprobaciones a mano.
  *
  * Invariantes que se mantienen desde la versión con reglas:
+ *  - Un token de Firebase válido NO es una autorización: además tiene que
+ *    pertenecer a la comunidad institucional (`requireIdentity`).
  *  - El rol NUNCA se lee del token ni del cuerpo de la petición: se lee de la
  *    tabla de usuarios, que sólo el servidor escribe.
  *  - `ownerId`, `ownerHandle` y `slug` son inmutables tras la creación.
@@ -58,6 +61,20 @@ function bearerToken(request: Request): string | null {
  * Verifica el ID token de Firebase. `checkRevoked` obliga a una consulta extra
  * pero hace que cerrar sesión en un equipo compartido —un laboratorio del
  * campus— surta efecto de verdad.
+ *
+ * ## Que el token sea auténtico no basta
+ *
+ * Firebase Authentication acepta cualquier cuenta de Google; UINexus, no. Un
+ * token criptográficamente válido de un Gmail personal es exactamente eso: la
+ * prueba de que esa persona existe, no de que pertenezca al ITD. La política
+ * institucional se aplica AQUÍ, sobre `decoded.email` y ANTES de leer el perfil
+ * o de tocar nada académico, porque éste es el único punto por el que pasan
+ * todas las rutas: `requireActor`, `requireWriter`, `requireStaff` y
+ * `requireAdmin` se apoyan en él. Repetir la comprobación en treinta endpoints
+ * sería garantizar que a alguno se le olvida.
+ *
+ * La regla no se reescribe aquí: es `isInstitutionalEmail` (lib/identity.ts),
+ * la misma que usa el navegador, incluida la allowlist docente.
  */
 export async function requireIdentity(request: Request): Promise<Identity> {
   const auth = getAdminAuth();
@@ -66,18 +83,33 @@ export async function requireIdentity(request: Request): Promise<Identity> {
   const token = bearerToken(request);
   if (!token) throw new HttpError(401, 'Necesitas iniciar sesión.');
 
+  let decoded: { uid: string; email?: string; email_verified?: boolean };
   try {
-    const decoded = await auth.verifyIdToken(token, true);
-    return {
-      uid: decoded.uid,
-      email: decoded.email ?? null,
-      emailVerified: Boolean(decoded.email_verified),
-    };
+    decoded = await auth.verifyIdToken(token, true);
   } catch {
     // Nunca se devuelve el motivo exacto: distinguir "token caducado" de
     // "token falso" sólo ayuda a quien está probando tokens falsos.
     throw new HttpError(401, 'Tu sesión ha caducado. Vuelve a iniciar sesión.');
   }
+
+  const email = decoded.email ?? null;
+  if (!isInstitutionalEmail(email)) {
+    /**
+     * 403 y no 401: el token es correcto y volver a iniciar sesión con la misma
+     * cuenta no arreglaría nada. Lo que hay que hacer es entrar con la cuenta
+     * del ITD, y eso es lo que dice el mensaje.
+     */
+    throw new HttpError(
+      403,
+      'Esta cuenta no pertenece a la comunidad del ITD. Entra con tu correo institucional.'
+    );
+  }
+
+  return {
+    uid: decoded.uid,
+    email,
+    emailVerified: Boolean(decoded.email_verified),
+  };
 }
 
 /** Identidad + perfil. Falla si la persona todavía no tiene perfil creado. */

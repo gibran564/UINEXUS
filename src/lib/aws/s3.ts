@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   ListObjectsV2Command,
@@ -16,8 +17,10 @@ import {
   awsClientConfig,
   isAwsConfigured,
 } from './config';
-import { ACADEMIC_FILE_LIMITS, ACADEMIC_FILE_TYPES, LIMITS } from '../constants';
+import { ACADEMIC_FILE_LIMITS, LIMITS } from '../constants';
+import { allowedExtensionsFor, resolveAcademicUpload } from '../academic-files';
 import { contentTypeFor, isAllowedExtension, sanitizeRelativePath } from '../files';
+import type { AcademicFileClass } from '../types';
 
 /**
  * Acceso a S3.
@@ -201,7 +204,7 @@ export function deleteProjectFiles(ownerId: string, projectId: string): Promise<
 // Archivos académicos (iteración 4)
 // ---------------------------------------------------------------------------
 
-export type AcademicFileClass = 'image' | 'document' | 'video';
+export type { AcademicFileClass };
 
 /**
  * Prefijo de los archivos académicos.
@@ -278,42 +281,150 @@ export async function presignAcademicUpload(params: {
   fileClass: AcademicFileClass;
   contentType: string;
   sizeBytes: number;
-}): Promise<{ post: PresignedPost; key: string }> {
-  const s3 = getS3();
-  if (!s3) throw new UploadRejected('El almacenamiento no está disponible.');
+  /** Sólo se le lee la extensión. Nunca entra en la ruta. */
+  fileName?: string;
+}): Promise<{ post: PresignedPost; key: string; contentType: string }> {
+  const resolved = assertUploadable(params.fileClass, params);
+  const key = academicFileKey({ ...params, extension: resolved.extension });
 
-  const extension = ACADEMIC_FILE_TYPES[params.fileClass][params.contentType];
-  if (!extension) {
+  const post = await signAcademicPost(key, params.fileClass, resolved.contentType);
+  return { post, key, contentType: resolved.contentType };
+}
+
+/**
+ * Tipo y tamaño, decididos por el servidor.
+ *
+ * Se comprueban juntos porque juntos son la política: qué puede entrar y cuánto
+ * puede pesar. Devolver el `Content-Type` canónico —y no el que mandó el
+ * cliente— es lo que hace que el objeto guardado no pueda acabar con un tipo
+ * distinto del autorizado.
+ */
+function assertUploadable(
+  fileClass: AcademicFileClass,
+  input: { contentType: string; sizeBytes: number; fileName?: string }
+): { extension: string; contentType: string } {
+  const resolved = resolveAcademicUpload(fileClass, input);
+  if (!resolved) {
     throw new UploadRejected(
-      `Ese tipo de archivo no se admite aquí. Se admiten: ${Object.keys(
-        ACADEMIC_FILE_TYPES[params.fileClass]
-      ).join(', ')}.`
+      `Ese tipo de archivo no se admite aquí. Se admiten: ${allowedExtensionsFor(fileClass).join(', ')}.`
     );
   }
 
-  const maxBytes = ACADEMIC_FILE_LIMITS[params.fileClass];
-  if (params.sizeBytes > maxBytes) {
+  const maxBytes = ACADEMIC_FILE_LIMITS[fileClass];
+  if (input.sizeBytes > maxBytes) {
     throw new UploadRejected(
       `El archivo supera el límite de ${Math.round(maxBytes / (1024 * 1024))} MB.`
     );
   }
 
-  const key = academicFileKey({ ...params, extension });
+  return resolved;
+}
 
-  const post = await createPresignedPost(s3, {
+async function signAcademicPost(
+  key: string,
+  fileClass: AcademicFileClass,
+  contentType: string
+): Promise<PresignedPost> {
+  const s3 = getS3();
+  if (!s3) throw new UploadRejected('El almacenamiento no está disponible.');
+
+  return createPresignedPost(s3, {
     Bucket: PROJECTS_BUCKET,
     Key: key,
     Conditions: [
       // El tamaño se aplica AQUÍ. Es la única forma de que sea un límite y no
       // una promesa del cliente: sólo el POST firmado admite esta condición.
-      ['content-length-range', 0, maxBytes],
-      ['eq', '$Content-Type', params.contentType],
+      ['content-length-range', 0, ACADEMIC_FILE_LIMITS[fileClass]],
+      ['eq', '$Content-Type', contentType],
     ],
-    Fields: { 'Content-Type': params.contentType },
+    Fields: { 'Content-Type': contentType },
     Expires: 600,
   });
+}
 
-  return { post, key };
+// ---------------------------------------------------------------------------
+// Materiales de la tarea
+// ---------------------------------------------------------------------------
+
+/**
+ * Prefijo de los archivos que reparte el profesorado.
+ *
+ * Espacio SEPARADO del de las entregas, y ésa es toda la seguridad de la
+ * separación: una clave de entrega es
+ * `academic/<materia>/<uid>/<tarea>/<paso>/…` y una de material es
+ * `academic/materials/<materia>/<tarea>/…`. Las dos formas no pueden confundirse
+ * ni ser aceptadas la una por la otra, así que nadie puede citar el material de
+ * la clase como si fuera su entrega, ni al revés.
+ *
+ * Sigue bajo `academic/` porque `presignAcademicDownload` sólo firma la lectura
+ * de ese espacio: es el mismo bucket privado y la misma política de lectura.
+ */
+export function assignmentMaterialPrefix(params: {
+  courseId: string;
+  assignmentId: string;
+}): string {
+  return [
+    'academic',
+    'materials',
+    safeAcademicSegment(params.courseId),
+    safeAcademicSegment(params.assignmentId),
+    '',
+  ].join('/');
+}
+
+export function assignmentMaterialKey(params: {
+  courseId: string;
+  assignmentId: string;
+  extension: string;
+}): string {
+  return `${assignmentMaterialPrefix(params)}${randomUUID()}.${params.extension}`;
+}
+
+/** ¿Esta clave es de ESTA tarea? Impide registrar el material de otra. */
+export function isAssignmentMaterialKeyFor(
+  params: { courseId: string; assignmentId: string },
+  key: string
+): boolean {
+  return key.startsWith(assignmentMaterialPrefix(params));
+}
+
+/**
+ * Permiso de subida de un material.
+ *
+ * Mismo bucket privado y mismo mecanismo que una entrega: el navegador sube
+ * DIRECTAMENTE a S3 con un permiso acotado a una ruta, un tipo y un tamaño. Un
+ * `.xlsx` de 20 MB a través de una función serverless sería tiempo pagado para
+ * nada.
+ */
+export async function presignAssignmentMaterialUpload(params: {
+  courseId: string;
+  assignmentId: string;
+  contentType: string;
+  sizeBytes: number;
+  fileName: string;
+}): Promise<{ post: PresignedPost; key: string; contentType: string }> {
+  const resolved = assertUploadable('material', params);
+  const key = assignmentMaterialKey({ ...params, extension: resolved.extension });
+
+  const post = await signAcademicPost(key, 'material', resolved.contentType);
+  return { post, key, contentType: resolved.contentType };
+}
+
+/**
+ * Borra UN objeto académico.
+ *
+ * Se usa al quitar un material: a diferencia de una entrega —que es trabajo de
+ * otra persona y no se borra en cascada— un material lo puso quien lo quita, y
+ * dejar el objeto huérfano en el bucket sólo acumula bytes que nadie va a
+ * reclamar.
+ */
+export async function deleteAcademicObject(key: string): Promise<void> {
+  const s3 = getS3();
+  if (!s3) return;
+  if (!key.startsWith('academic/')) {
+    throw new UploadRejected('Esa ruta no es un archivo académico.');
+  }
+  await s3.send(new DeleteObjectCommand({ Bucket: PROJECTS_BUCKET, Key: key }));
 }
 
 /**

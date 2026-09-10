@@ -1,4 +1,5 @@
 import { LEGACY_STEP_ID } from './types';
+import { DEFAULT_PROGRAMMING_LANGUAGE as DEFAULT_CODE_LANGUAGE } from './constants';
 import { detectTextFormat, normalizeAIResult } from './ai-worklog';
 import type {
   AIWorklogData,
@@ -86,6 +87,13 @@ export function normalizeDeliverable(raw: Partial<StepDeliverable>): StepDeliver
     required: raw.required ?? true,
     hint: raw.hint ?? '',
     questions: raw.questions ?? [],
+    /**
+     * El lenguaje sólo significa algo en un paso de código. Se normaliza a `r`
+     * —el único habilitado hoy— cuando falta, para que el formulario del
+     * alumnado nunca tenga que decidirlo por su cuenta; en cualquier otro tipo
+     * de paso se deja en `null` para no guardar un dato que no describe nada.
+     */
+    language: raw.type === 'code' ? (raw.language ?? DEFAULT_CODE_LANGUAGE) : null,
   };
 }
 
@@ -283,11 +291,21 @@ export function normalizeStepEvidence(
  *
  * Son identificadores estructurales (`questionId`) y valores que los esquemas
  * rellenan solos (`provider` por defecto es «Other», `kind` por defecto es
- * «file»). Sin esta lista, un formulario que nadie tocó parecería relleno:
- * un AI Worklog en blanco llega con `provider: 'Other'`, y una respuesta
- * estructurada vacía llega con sus `questionId` puestos.
+ * «file», `language` por defecto es «r»). Sin esta lista, un formulario que
+ * nadie tocó parecería relleno: un AI Worklog en blanco llega con
+ * `provider: 'Other'`, una respuesta estructurada vacía llega con sus
+ * `questionId` puestos, y un paso de código sin una sola línea escrita llegaría
+ * con su lenguaje y contaría como hecho.
  */
-const STRUCTURAL_KEYS = new Set(['questionId', 'stepId', 'id', 'kind', 'provider', 'format']);
+const STRUCTURAL_KEYS = new Set([
+  'questionId',
+  'stepId',
+  'id',
+  'kind',
+  'provider',
+  'format',
+  'language',
+]);
 
 /** ¿Hay algo escrito en esta evidencia? Vacío no cuenta como hecho. */
 export function hasContent(evidence: StepEvidence | undefined): boolean {

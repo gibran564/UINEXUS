@@ -102,7 +102,8 @@ npm run build               # build de producción
 npm run typecheck           # tsc --noEmit, modo estricto
 npm run lint                # ESLint
 
-npm test                    # 35 pruebas unitarias con Vitest
+npm test                    # pruebas unitarias con Vitest
+npm run test:integration    # rutas de API contra DynamoDB Local
 
 npm run aws:deploy:infra    # crea/actualiza la pila de CloudFormation
 npm run aws:deploy:origin   # publica el código del origen aislado

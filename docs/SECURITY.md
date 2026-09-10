@@ -407,3 +407,118 @@ Van al bucket **privado**, bajo `academic/{courseId}/{uid}/{assignmentId}/{stepI
   usarse para leer el código de los proyectos.
 
 Nada se borra en cascada. Ver la tabla de retención en CHECKPOINTS.md.
+
+---
+
+## Identidad institucional (iteración 5)
+
+### Un token válido de Firebase NO es una autorización
+
+Firebase Authentication acepta cualquier cuenta de Google. UINexus, no: la
+comunidad son los correos `@itdurango.edu.mx` más una allowlist docente
+explícita (`ALLOWED_SPECIAL_EMAILS`). La regla vive en **un solo sitio**,
+`lib/identity.ts`, y la aplican los dos lados:
+
+| Dónde | Qué hace |
+|---|---|
+| `lib/server/session.ts` · `requireIdentity` | Tras verificar el token, comprueba `decoded.email` y responde **403** antes de leer perfil o tocar nada académico. |
+| `lib/auth-session.ts` · `resolveRestoredSession` | Comprueba el correo **antes** de `ensureUserProfile`; si no procede, cierra la sesión de Firebase y lleva a `/login?reason=invalid-domain`. |
+
+El servidor es la garantía; el cliente es la experiencia. Que el navegador
+cierre la sesión evita una plataforma inutilizable, pero incluso si no lo
+hiciera, ninguna ruta respondería con datos.
+
+### El fallo que esto corrige
+
+La validación vivía sólo en los métodos explícitos de login. Firebase **persiste
+la sesión**: al recargar, `onAuthStateChanged` devuelve el usuario sin pasar por
+ninguno de ellos. Una cuenta ajena quedaba restaurada como autenticada, con
+perfil creado y con todas las llamadas al aula respondiendo 403 desde el otro
+lado. Técnicamente había sesión; funcionalmente no había plataforma, y sin
+ninguna salida visible.
+
+Por eso la comprobación está en `requireIdentity` y no repartida por las rutas:
+es el único punto por el que pasan todas —`requireActor`, `requireWriter`,
+`requireStaff`, `requireAdmin` se apoyan en él—, y una comprobación repetida en
+treinta endpoints es una comprobación que en alguno se olvida.
+
+### Acceso por teléfono: retirado
+
+UINexus autoriza sobre el CORREO institucional. Un número de teléfono no puede
+demostrar pertenencia a `@itdurango.edu.mx`, y una sesión creada por SMS llegaba
+sin correo: exactamente el caso que la política no puede evaluar. Se retiró
+—no se deshabilitó a medias— del proveedor de sesión, del formulario y de
+`firebase/auth.ts`. El servidor lo rechazaría igualmente, porque un token sin
+correo no pasa `isInstitutionalEmail`.
+
+Volvería como **segundo factor** de una cuenta institucional ya verificada
+(`linkWithPhoneNumber` sobre el usuario actual), nunca como forma de entrar.
+
+---
+
+## Materiales de la tarea (iteración 5)
+
+Los archivos que el profesorado reparte son un concepto **distinto** de las
+entregas, y tienen su propia ruta (`/api/assignments/[id]/materials`) porque sus
+dos preguntas de autorización son las contrarias:
+
+|  | Entrega (`/files`) | Material (`/materials`) |
+|---|---|---|
+| Escribe | El alumnado, en su paso | Sólo docente de la materia |
+| Lee | Su autor y el profesorado | Cualquiera con acceso a la tarea |
+| Prefijo en S3 | `academic/{materia}/{uid}/{tarea}/{paso}/` | `academic/materials/{materia}/{tarea}/` |
+
+**No se levantó** la restricción que impide al profesorado usar la ruta de
+entregas. Fundir las dos en una función habría mezclado dos preguntas de
+permiso distintas, que es donde después se cuela el permiso equivocado.
+
+Garantías, en orden de importancia:
+
+- **La clave la construye el servidor.** El nombre del archivo no entra en la
+  ruta; sólo se le lee la extensión.
+- **Registrar exige una clave de ESTA tarea** (`isAssignmentMaterialKeyFor`).
+  Las dos formas de ruta —entrega y material— no pueden confundirse, así que el
+  permiso de lectura de una nunca sirve para la otra.
+- **Descargar se pide por `id`, nunca por clave.** El servidor toma la clave de
+  la propia tarea. Aceptar una clave del cliente convertiría el endpoint en un
+  firmador de lecturas para cualquier objeto del espacio académico.
+- **Lista blanca por extensión**, con el `Content-Type` fijado por el servidor
+  en la condición del POST firmado. Sin `.exe`, `.bat`, `.sh`, `.js`, `.html` ni
+  `.svg`: los tres primeros son ejecutables y los dos últimos, contenido activo.
+- **Límite de 25 MB** aplicado con `content-length-range`, y un máximo de
+  archivos por tarea.
+- Los objetos **no se hacen públicos**: se leen con URLs firmadas de 5 minutos.
+
+### Por qué se decide por extensión y no por el `Content-Type` declarado
+
+Para un `.R` el navegador manda el tipo vacío o `application/octet-stream`. Si
+decidiera el tipo declarado no habría forma de admitir un fuente de R sin
+admitir a la vez cualquier binario. La extensión sólo elige una entrada de una
+**tabla cerrada**, y el tipo con el que el objeto acaba guardado lo fija el
+servidor a partir de esa misma tabla. Un tipo declarado que no pertenece a la
+clase —`text/html` en un documento— se rechaza igualmente.
+
+Formatos legacy (`.doc`, `.xls`, `.ppt`) **quedan fuera**: son contenedores OLE
+con macros y no aportan nada que no cubra su equivalente moderno. Es una
+decisión, no un olvido.
+
+---
+
+## Código del alumnado (iteración 5)
+
+UINexus **no ejecuta** el código que se entrega. Ni `exec`, ni `spawn`, ni
+`Rscript` en el host de Next.js. Ejecutar código arbitrario en el mismo proceso
+que firma las subidas a S3 y lee la base de datos es regalar la plataforma a
+quien entregue el `system()` correcto —y un entorno académico es justo donde más
+gente va a probarlo—.
+
+Lo que hay es un **adaptador** (`lib/code-runner.ts`) que define qué tendría que
+cumplir un sandbox externo: fuera del host, tiempo máximo, salida acotada, sin
+red, sin acceso a las variables de entorno de UINexus, y **sin ningún hueco
+donde quepa un comando** —el cliente elige qué código, nunca qué se ejecuta—.
+Sin `UINEXUS_CODE_RUNNER_URL` y `UINEXUS_CODE_RUNNER_TOKEN` no hay ejecutor, la
+interfaz no ofrece ejecutar y la tarea se entrega igual. La ejecución nunca es
+requisito para entregar.
+
+Un `.R` entregado se guarda y se sirve como `text/plain` desde el bucket privado
+y otro origen. Es texto que se muestra; no es un programa que corra.

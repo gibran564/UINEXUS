@@ -7,6 +7,7 @@ import { getDynamo } from '../aws/dynamo';
 import { slugify } from '../slug';
 import { normalizeStepEvidence, normalizeWorkflow, templateSteps } from '../workflow';
 import type {
+  AssignmentMaterialRecord,
   AssignmentRecord,
   Course,
   CourseMemberRecord,
@@ -168,6 +169,37 @@ function normalizeQuestions(
   }));
 }
 
+/**
+ * Los materiales de una tarea, siempre una lista.
+ *
+ * Una tarea anterior a esta iteración no trae el campo, y lo que era —una tarea
+ * sin archivos repartidos— es exactamente la lista vacía. No hay nada que
+ * migrar, igual que con `workflow` y con `dueAt`. Se descarta cualquier entrada
+ * sin clave: un material que no apunta a ningún objeto no se puede descargar y
+ * pintarlo sólo produciría un botón que falla.
+ */
+function normalizeMaterials(
+  raw: readonly Partial<AssignmentMaterialRecord>[] | undefined
+): AssignmentMaterialRecord[] {
+  return (raw ?? []).flatMap((material, index) => {
+    if (!material.storageKey) return [];
+    return [
+      {
+        id: material.id ?? `material-${index}`,
+        kind: material.kind === 'template' ? 'template' : 'resource',
+        displayName: material.displayName || material.fileName || 'Archivo',
+        fileName: material.fileName ?? '',
+        storageKey: material.storageKey,
+        contentType: material.contentType ?? '',
+        sizeBytes: material.sizeBytes ?? 0,
+        createdAt: material.createdAt ?? new Date(0).toISOString(),
+        uploadedBy: material.uploadedBy ?? '',
+        uploadedByName: material.uploadedByName ?? '',
+      },
+    ];
+  });
+}
+
 function normalizeAssignment(raw: Partial<AssignmentRecord>): AssignmentRecord {
   const researchQuestions = normalizeQuestions(raw.researchQuestions);
   const resources = raw.resources ?? [];
@@ -194,6 +226,7 @@ function normalizeAssignment(raw: Partial<AssignmentRecord>): AssignmentRecord {
       researchQuestions,
       resources,
     }),
+    materials: normalizeMaterials(raw.materials),
     dueDate: raw.dueDate ?? null,
     /**
      * Una tarea anterior a esta iteración no lo tiene. No se migra: se

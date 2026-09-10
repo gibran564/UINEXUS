@@ -3,7 +3,12 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { DELIVERABLE_LABEL, stepActionLabel } from '@/lib/constants';
+import {
+  DEFAULT_PROGRAMMING_LANGUAGE,
+  DELIVERABLE_LABEL,
+  programmingLanguageLabel,
+  stepActionLabel,
+} from '@/lib/constants';
 import { saveWorkflowSubmission, type AssignmentDetail } from '@/lib/aula-client';
 import {
   availableDependencyResults,
@@ -16,6 +21,7 @@ import {
 } from '@/lib/workflow';
 import type {
   AIWorklogData,
+  CodeData,
   ExternalLinkData,
   FreeformData,
   MediaData,
@@ -26,6 +32,7 @@ import type {
 } from '@/lib/types';
 import { Field, Notice } from './aula-ui';
 import {
+  CodeFields,
   FreeformFields,
   LinkFields,
   MediaFields,
@@ -376,6 +383,8 @@ function StepPanel({
         ) : (
           <p className="meta mb-3">
             Entrega: {DELIVERABLE_LABEL[deliverable.type]}
+            {deliverable.type === 'code' &&
+              ` · ${programmingLanguageLabel(deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE)}`}
             {deliverable.hint && ` — ${deliverable.hint}`}
           </p>
         )}
@@ -412,6 +421,20 @@ function StepPanel({
             data={payload as unknown as MediaData}
             onChange={onPatchData}
             kind={deliverable.type}
+            hint={deliverable.hint}
+            assignmentId={assignmentId}
+            stepId={step.id}
+          />
+        )}
+
+        {deliverable.type === 'code' && (
+          <CodeFields
+            data={payload as unknown as CodeData}
+            onChange={onPatchData}
+            // El lenguaje lo dicta el PASO. Si el paso no lo trae —un registro
+            // antiguo— se cae al único habilitado en vez de dejar el formulario
+            // sin saber qué pedir.
+            language={deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE}
             hint={deliverable.hint}
             assignmentId={assignmentId}
             stepId={step.id}

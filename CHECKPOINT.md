@@ -32,3 +32,22 @@
 - [ ] F6.5 · Tema claro/oscuro — NO COMPLETADA
 - [x] F6.6 · Tests finales — ÉXITO
 - [x] F6.7 · Build final — ÉXITO
+
+## Iteración — Identidad, materiales y proceso de materia (2026-09-09)
+
+- [x] P0.1 · Sesión restaurada valida el correo institucional antes del perfil — ÉXITO
+- [x] P0.2 · `requireIdentity` aplica la política en TODAS las rutas — ÉXITO
+- [x] P0.3 · Aviso de cuenta no autorizada en `/login`, sin bucle — ÉXITO
+- [x] P0.4 · Acceso por teléfono retirado — ÉXITO
+- [x] P0.5 · `AssignmentMaterial`: modelo, ruta propia y prefijo propio en S3 — ÉXITO
+- [x] P0.6 · Subida en dos tiempos (firmar → subir → registrar) — ÉXITO
+- [x] P0.7 · Materiales visibles y descargables por el alumnado — ÉXITO
+- [x] P0.8 · Entrega de documento con arrastre, aviso previo y archivo visible — ÉXITO
+- [x] P1.1 · Cinco plantillas de Investigación de Operaciones — ÉXITO
+- [x] P1.2 · Galería de plantillas en el constructor, con vista previa — ÉXITO
+- [x] P1.3 · Estado vacío del profesorado sin grupos propios — ÉXITO
+- [x] P2.1 · Entregable de código con lenguaje (R habilitado) — ÉXITO
+- [x] P2.2 · Revisión del código sin descargar — ÉXITO
+- [x] P2.3 · Interfaz de ejecutor externo documentada — ÉXITO (sin conectar, a propósito)
+- [x] V.1 · typecheck · lint · 467 unitarias · 92 de integración · build — ÉXITO
+- [ ] V.2 · Recorridos manuales con cuentas reales — NO COMPLETADA (necesita Firebase y AWS)

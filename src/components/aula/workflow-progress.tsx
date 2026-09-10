@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { DELIVERABLE_LABEL } from '@/lib/constants';
+import { DELIVERABLE_LABEL, programmingLanguageLabel } from '@/lib/constants';
 import { aiWorklogToMarkdown, normalizeAIResult } from '@/lib/ai-worklog';
 import { academicFileUrl, useApi } from '@/lib/aula-client';
 import type {
   AIWorklogData,
+  CodeData,
   ContributionState,
   DeliverableType,
   ExternalLinkData,
@@ -362,6 +363,10 @@ function EvidenceReader({
     return <MediaEvidence assignmentId={assignmentId} data={evidence.data as MediaData} />;
   }
 
+  if (type === 'code') {
+    return <CodeEvidence assignmentId={assignmentId} data={evidence.data as CodeData} />;
+  }
+
   if (type === 'resource_reference') {
     const data = evidence.data as ResourceSelectionData;
     return (
@@ -384,6 +389,54 @@ function EvidenceReader({
         <LinkCard key={`${link.label}-${link.url}`} url={link.url} title={link.label} compact />
       ))}
       {evidence.note && <p className="whitespace-pre-wrap">{evidence.note}</p>}
+    </div>
+  );
+}
+
+/**
+ * El código entregado, legible SIN descargar nada.
+ *
+ * Es lo que hace útil la revisión: leer veinte entregas de R descargando veinte
+ * archivos no lo hace nadie. El fuente se pinta como texto preformateado —nunca
+ * se interpreta ni se ejecuta— y el archivo adjunto, si lo hay, sigue estando a
+ * un clic para quien quiera ejecutarlo en su equipo.
+ */
+function CodeEvidence({ assignmentId, data }: { assignmentId: string; data: CodeData }) {
+  return (
+    <div className="space-y-3 text-sm text-muted">
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="meta">Código · {programmingLanguageLabel(data.language)}</p>
+          {data.code && <CopyButton value={data.code} label="Copiar código" variant="ghost" />}
+        </div>
+        {data.code ? (
+          <pre className="mt-2 max-h-96 overflow-auto rounded-sm border border-line bg-sunken p-3 font-mono text-sm whitespace-pre">
+            {data.code}
+          </pre>
+        ) : (
+          <p className="mt-1 text-subtle">(no pegó código)</p>
+        )}
+      </div>
+
+      {data.storageKey && (
+        <MediaEvidence
+          assignmentId={assignmentId}
+          data={{
+            url: '',
+            storageKey: data.storageKey,
+            fileName: data.fileName,
+            kind: 'file',
+            note: '',
+          }}
+        />
+      )}
+
+      {data.explanation && (
+        <div>
+          <p className="meta">Explicación</p>
+          <p className="mt-1 whitespace-pre-wrap">{data.explanation}</p>
+        </div>
+      )}
     </div>
   );
 }

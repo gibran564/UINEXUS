@@ -183,7 +183,10 @@ async function saveSteppedSubmission(
     }
 
     const parsedData = parsed.data as SubmissionData;
-    if (['file', 'image', 'video'].includes(deliverable.type)) {
+    // Un paso de código también puede llevar archivo adjunto, y su clave se
+    // comprueba con la misma regla: tiene que ser una que este servidor emitió
+    // para esta persona y este paso.
+    if (['file', 'image', 'video', 'code'].includes(deliverable.type)) {
       assertOwnedAcademicFile(parsedData as MediaData, {
         courseId: assignment.courseId,
         uid: actor.uid,

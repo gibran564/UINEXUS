@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import {
   createContext,
   useCallback,
@@ -9,17 +10,10 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { UserRole } from '@/lib/types';
+import { resolveRestoredSession, type SessionUser } from '@/lib/auth-session';
 import { isFirebaseConfigured } from '@/lib/firebase/config';
-import type { PhoneChallenge } from '@/lib/firebase/auth';
 
-export interface SessionUser {
-  uid: string;
-  handle: string;
-  displayName: string;
-  avatarUrl: string | null;
-  role: UserRole;
-}
+export type { SessionUser };
 
 type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
 
@@ -35,11 +29,6 @@ interface AuthContextValue {
   registerWithEmail: (email: string, password: string, name: string) => Promise<void>;
   /** Envía el correo de recuperación. Devuelve false sólo si falló el envío. */
   sendPasswordReset: (email: string) => Promise<boolean>;
-  /** Inicia el reto por SMS. Devuelve null si no se pudo enviar el código. */
-  startPhoneSignIn: (
-    phoneNumber: string,
-    recaptchaContainerId: string
-  ) => Promise<PhoneChallenge | null>;
   signOut: () => Promise<void>;
   error: string | null;
   clearError: () => void;
@@ -68,14 +57,50 @@ const DEMO_KEY = 'uinexus-demo-session';
  * El perfil de Firestore se crea o sincroniza en el primer inicio de sesión
  * (`ensureUserProfile`), no al publicar: el handle es la identidad pública y
  * debe existir desde el minuto uno.
+ *
+ * ## La política institucional se aplica AQUÍ, no sólo al iniciar sesión
+ *
+ * Firebase persiste la sesión: al recargar la página, `onAuthStateChanged`
+ * devuelve el usuario sin volver a pasar por `signInWithGoogle` ni por ningún
+ * otro método. Por eso la comprobación del correo institucional vive en
+ * `lib/auth-session.ts` y se ejecuta en CADA restauración, antes de crear el
+ * perfil. Sin eso, una cuenta ajena que hubiera entrado una vez quedaría
+ * restaurada para siempre como autenticada, con todas las llamadas al aula
+ * respondiendo 403 y sin ninguna salida visible.
+ *
+ * El acceso por teléfono se retiró de la sesión: un número no demuestra
+ * pertenencia a `@itdurango.edu.mx`, que es sobre lo que UINexus autoriza. Ver
+ * CHECKPOINTS.md para cómo volvería, ya como segundo factor de una cuenta
+ * institucional verificada.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<SessionUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isDemo = !isFirebaseConfigured;
 
   const clearError = useCallback(() => setError(null), []);
+
+  /**
+   * Descarta una sesión que Firebase autenticó pero UINexus no admite.
+   *
+   * La sesión de Firebase ya se cerró en `resolveRestoredSession`; aquí sólo se
+   * limpia el estado local y se lleva a `/login` con el motivo en la URL. La
+   * comprobación de dónde estamos evita el bucle login → logout → login: si ya
+   * se está en el formulario, no hay a dónde ir.
+   */
+  const rejectSession = useCallback(
+    (outcome: { message: string; redirectTo: string }) => {
+      setUser(null);
+      setStatus('anonymous');
+      setError(outcome.message);
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        router.replace(outcome.redirectTo);
+      }
+    },
+    [router]
+  );
 
   useEffect(() => {
     let active = true;
@@ -93,11 +118,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     void (async () => {
-      const [{ getClientAuth }, { onAuthStateChanged }, { ensureUserProfile }] = await Promise.all([
-        import('@/lib/firebase/client'),
-        import('firebase/auth'),
-        import('@/lib/firebase/profile'),
-      ]);
+      const [{ getClientAuth }, { onAuthStateChanged }, { ensureUserProfile }, firebaseAuth] =
+        await Promise.all([
+          import('@/lib/firebase/client'),
+          import('firebase/auth'),
+          import('@/lib/firebase/profile'),
+          import('@/lib/firebase/auth'),
+        ]);
 
       const auth = getClientAuth();
       if (!auth) {
@@ -113,16 +140,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const profile = await ensureUserProfile(firebaseUser);
+        /**
+         * AQUÍ está la segunda barrera, y la que de verdad cierra el fallo: una
+         * sesión RESTAURADA no pasa por ningún método de login, así que si la
+         * política no se aplicara en este punto no se aplicaría nunca. El correo
+         * se comprueba antes de crear o leer el perfil (ver `auth-session.ts`).
+         */
+        const outcome = await resolveRestoredSession(firebaseUser, {
+          ensureProfile: ensureUserProfile,
+          signOut: firebaseAuth.signOut,
+        });
         if (!active) return;
 
-        setUser({
-          uid: firebaseUser.uid,
-          handle: profile.handle,
-          displayName: profile.displayName,
-          avatarUrl: profile.avatarUrl,
-          role: profile.role,
-        });
+        if (outcome.kind === 'rejected') {
+          rejectSession(outcome);
+          return;
+        }
+
+        setUser(outcome.user);
         setStatus('authenticated');
       });
     })();
@@ -131,7 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false;
       unsubscribe?.();
     };
-  }, [isDemo]);
+  }, [isDemo, rejectSession]);
 
   /**
    * Reintento explicito de `ensureUserProfile`. Existe porque el perfil se crea
@@ -141,25 +176,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    */
   const refreshProfile = useCallback(async (): Promise<boolean> => {
     if (isDemo) return true;
-    const [{ getClientAuth }, { ensureUserProfile }] = await Promise.all([
+    const [{ getClientAuth }, { ensureUserProfile }, firebaseAuth] = await Promise.all([
       import('@/lib/firebase/client'),
       import('@/lib/firebase/profile'),
+      import('@/lib/firebase/auth'),
     ]);
     const firebaseUser = getClientAuth()?.currentUser;
     if (!firebaseUser) return false;
 
-    const profile = await ensureUserProfile(firebaseUser);
-    if (!profile.handle) return false;
-
-    setUser({
-      uid: firebaseUser.uid,
-      handle: profile.handle,
-      displayName: profile.displayName,
-      avatarUrl: profile.avatarUrl,
-      role: profile.role,
+    // El reintento pasa por la MISMA puerta: si no, sería un segundo camino
+    // hacia `ensureUserProfile` sin comprobar el correo.
+    const outcome = await resolveRestoredSession(firebaseUser, {
+      ensureProfile: ensureUserProfile,
+      signOut: firebaseAuth.signOut,
     });
+
+    if (outcome.kind === 'rejected') {
+      rejectSession(outcome);
+      return false;
+    }
+    if (!outcome.user.handle) return false;
+
+    setUser(outcome.user);
     return true;
-  }, [isDemo]);
+  }, [isDemo, rejectSession]);
 
   const startDemoSession = useCallback(() => {
     setUser(DEMO_SESSION);
@@ -234,44 +274,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [isDemo, run]
   );
 
-  const startPhoneSignIn = useCallback(
-    async (phoneNumber: string, recaptchaContainerId: string): Promise<PhoneChallenge | null> => {
-      setError(null);
-
-      if (isDemo) {
-        return {
-          confirm: async () => {
-            startDemoSession();
-            return null as never;
-          },
-          dispose: () => {},
-        };
-      }
-
-      try {
-        const {
-          startPhoneSignIn: start,
-          normalizePhoneNumber,
-          isValidPhoneNumber,
-        } = await import('@/lib/firebase/auth');
-
-        const normalized = normalizePhoneNumber(phoneNumber);
-        if (!isValidPhoneNumber(normalized)) {
-          setError(
-            'Ese número no parece válido. Escríbelo con código de país, por ejemplo +52 55 1234 5678.'
-          );
-          return null;
-        }
-        return await start(normalized, recaptchaContainerId);
-      } catch (caught) {
-        const { authErrorMessage } = await import('@/lib/firebase/auth');
-        setError(authErrorMessage(caught));
-        return null;
-      }
-    },
-    [isDemo, startDemoSession]
-  );
-
   const signOut = useCallback(async () => {
     if (isDemo) {
       setUser(null);
@@ -297,7 +299,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signInWithEmail,
       registerWithEmail,
       sendPasswordReset,
-      startPhoneSignIn,
       signOut,
       error,
       clearError,
@@ -311,7 +312,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signInWithEmail,
       registerWithEmail,
       sendPasswordReset,
-      startPhoneSignIn,
       signOut,
       error,
       clearError,

@@ -1,21 +1,31 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
-import { ACADEMIC_FILE_LIMITS, ACADEMIC_FILE_TYPES, FILE_CLASS_BY_DELIVERABLE } from '@/lib/constants';
-import { uploadAcademicFile } from '@/lib/aula-client';
+import {
+  ACADEMIC_FILE_LIMITS,
+  FILE_CLASS_BY_DELIVERABLE,
+  acceptAttributeFor,
+  fileLimitLabel,
+  programmingLanguageLabel,
+} from '@/lib/constants';
+import { allowedExtensionsFor, resolveAcademicUpload } from '@/lib/academic-files';
+import { academicFileUrl, openSignedUrl, uploadAcademicFile } from '@/lib/aula-client';
 import { aiWorklogToMarkdown, detectTextFormat, normalizeAIResult } from '@/lib/ai-worklog';
 import { AI_MODEL_SUGGESTIONS, AI_PROVIDERS, LINK_PROVIDERS } from '@/lib/constants';
 import type { AssignmentDetail } from '@/lib/aula-client';
 import { useMyProjects } from '@/lib/use-my-projects';
 import { publicProjectPath } from '@/lib/urls';
 import type {
+  AcademicFileClass,
   AIProvider,
   AIWorklogData,
+  CodeData,
   ExternalLinkData,
   FreeformData,
   MediaData,
+  ProgrammingLanguage,
   ResearchData,
   ResourceRef,
   WebProjectData,
@@ -648,35 +658,44 @@ export function FreeformFields({
 // Archivos, imágenes y video (§18, §19)
 // ---------------------------------------------------------------------------
 
-const MEDIA_COPY: Record<MediaData['kind'], { label: string; hint: string; example: string }> = {
+const MEDIA_COPY: Record<
+  MediaData['kind'],
+  { upload: string; link: string; hint: string; example: string }
+> = {
   file: {
-    label: 'Enlace al archivo',
-    hint: 'Súbelo a Drive, OneDrive o donde prefieras y pega aquí el enlace de acceso.',
+    upload: 'Sube tu entrega',
+    link: 'Enlace al archivo',
+    hint: 'Si prefieres, súbelo a Drive u OneDrive y pega aquí el enlace de acceso.',
     example: 'https://drive.google.com/file/d/…',
   },
   image: {
-    label: 'Enlace a la imagen',
+    upload: 'Sube tu imagen',
+    link: 'Enlace a la imagen',
     hint: 'Puede estar en Drive, en Figma o en cualquier sitio con enlace público.',
     example: 'https://…/captura.png',
   },
   video: {
-    label: 'Enlace al video',
+    upload: 'Sube tu video',
+    link: 'Enlace al video',
     hint: 'HeyGen, YouTube, Drive… Cualquier enlace donde se pueda ver.',
     example: 'https://youtube.com/watch?v=…',
   },
 };
 
 /**
- * Entrega de un archivo.
+ * Entrega de un archivo, una imagen o un video.
  *
- * Se pide un ENLACE y no una subida, y conviene entender por qué: UINexus tiene
- * S3 para el código de los proyectos y para portadas, pero no un prefijo ni una
- * ruta de firma para archivos académicos —un MP4 de 200 MB no es una portada—.
- * §18 pide documentar esa infraestructura antes que improvisarla, así que está
- * anotado en CHECKPOINTS.md como trabajo con nombre propio.
+ * ## Subir y enlazar, en ese orden
  *
- * Mientras tanto, el enlace cubre el caso real de §19: un video de HeyGen, uno
- * de YouTube o un archivo en Drive se entregan igual de bien así.
+ * Subir a UINexus es lo primero y lo evidente, porque es lo que pide una tarea
+ * que dice «entrega el reporte». El enlace externo se conserva DEBAJO y no se
+ * retira: un video hecho con un avatar de IA vive en HeyGen y no tiene sentido
+ * duplicarlo, y un archivo compartido en Drive por todo el equipo tampoco.
+ *
+ * Las dos formas son alternativas y no se acumulan: al subir se limpia la URL y
+ * al escribir una URL se limpia la clave. Guardar las dos dejaría dudando sobre
+ * cuál es la entrega de verdad, que es justo la pregunta que nadie debería
+ * tener que hacerse al corregir.
  */
 export function MediaFields({
   data,
@@ -695,59 +714,30 @@ export function MediaFields({
   stepId?: string;
 }) {
   const copy = MEDIA_COPY[kind];
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileClass = FILE_CLASS_BY_DELIVERABLE[kind];
   const canUpload = Boolean(assignmentId && stepId);
-
-  async function upload(file: File): Promise<void> {
-    if (!assignmentId || !stepId) return;
-    setUploading(true);
-    setUploadError(null);
-    try {
-      const { storageKey, fileName } = await uploadAcademicFile(assignmentId, stepId, file);
-      // Subir y enlazar son alternativas: guardar las dos dejaría dudando sobre
-      // cuál es la entrega de verdad.
-      onChange({ storageKey, fileName, kind, url: '' });
-    } catch (caught) {
-      setUploadError(caught instanceof Error ? caught.message : 'No se pudo subir.');
-    } finally {
-      setUploading(false);
-    }
-  }
 
   return (
     <div className="space-y-5">
       {canUpload && (
-        <Field
-          label="Sube el archivo"
-          hint={`Se guarda en UINexus. ${LIMIT_COPY[kind]}`}
-        >
-          <input
-            type="file"
-            accept={ACCEPT[kind]}
-            disabled={uploading}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file);
-            }}
-            className="field"
-          />
-        </Field>
-      )}
-
-      {uploading && <Notice>Subiendo… no cierres esta pestaña.</Notice>}
-      {uploadError && <Notice tone="error">{uploadError}</Notice>}
-
-      {data.storageKey && (
-        <Notice tone="success">
-          Archivo subido{data.fileName ? `: ${data.fileName}` : ''}. Puedes reemplazarlo
-          eligiendo otro.
-        </Notice>
+        <AcademicFileDrop
+          label={copy.upload}
+          hint={hint}
+          fileClass={fileClass}
+          assignmentId={assignmentId!}
+          stepId={stepId!}
+          storageKey={data.storageKey ?? ''}
+          fileName={data.fileName ?? ''}
+          onUploaded={({ storageKey, fileName }) =>
+            onChange({ storageKey, fileName, kind, url: '' })
+          }
+          onCleared={() => onChange({ storageKey: '', fileName: '' })}
+        />
       )}
 
       <Field
-        label={canUpload ? `${copy.label} (alternativa)` : copy.label}
-        hint={hint || copy.hint}
+        label={canUpload ? `${copy.link} (alternativa)` : copy.link}
+        hint={!canUpload && hint ? hint : copy.hint}
       >
         <input
           type="url"
@@ -762,15 +752,6 @@ export function MediaFields({
 
       {data.url && <LinkCard url={data.url} />}
 
-      <Field label="Nombre" hint="Opcional. Cómo se llama lo que entregas.">
-        <input
-          value={data.fileName ?? ''}
-          onChange={(event) => onChange({ fileName: event.target.value })}
-          placeholder="avatar-presentacion.mp4"
-          className="field"
-        />
-      </Field>
-
       <Field label="Nota" hint="Qué debe mirar tu docente.">
         <textarea
           rows={3}
@@ -783,16 +764,256 @@ export function MediaFields({
   );
 }
 
-/** Qué extensiones ofrece el selector de archivo, por clase de entregable. */
-const ACCEPT: Record<MediaData['kind'], string> = {
-  image: Object.keys(ACADEMIC_FILE_TYPES.image).join(','),
-  video: Object.keys(ACADEMIC_FILE_TYPES.video).join(','),
-  file: Object.keys(ACADEMIC_FILE_TYPES.document).join(','),
-};
+// ---------------------------------------------------------------------------
+// Subida de archivos académicos
+// ---------------------------------------------------------------------------
 
-/** El límite, dicho en megas, para que se lea antes de intentar subir. */
-const LIMIT_COPY: Record<MediaData['kind'], string> = {
-  image: `Máximo ${Math.round(ACADEMIC_FILE_LIMITS[FILE_CLASS_BY_DELIVERABLE.image] / (1024 * 1024))} MB.`,
-  video: `Máximo ${Math.round(ACADEMIC_FILE_LIMITS[FILE_CLASS_BY_DELIVERABLE.video] / (1024 * 1024))} MB.`,
-  file: `Máximo ${Math.round(ACADEMIC_FILE_LIMITS[FILE_CLASS_BY_DELIVERABLE.file] / (1024 * 1024))} MB.`,
-};
+/**
+ * La zona de subida de una entrega.
+ *
+ * Arrastrar y soltar es una comodidad ENCIMA de un `<input type="file">` real,
+ * no en lugar de él: el input sigue ahí, con su etiqueta y alcanzable con el
+ * teclado, porque arrastrar no es una opción para quien navega sin ratón. Lo
+ * que el `div` aporta es la zona grande; lo que decide es el input.
+ *
+ * El archivo va DIRECTO a S3 con un permiso que firmó el servidor (ver
+ * `uploadAcademicFile`). Aquí sólo se ve el progreso y el resultado.
+ */
+export function AcademicFileDrop({
+  label,
+  hint,
+  fileClass,
+  assignmentId,
+  stepId,
+  storageKey,
+  fileName,
+  onUploaded,
+  onCleared,
+}: {
+  label: string;
+  hint?: string;
+  fileClass: AcademicFileClass;
+  assignmentId: string;
+  stepId: string;
+  storageKey: string;
+  fileName: string;
+  onUploaded: (file: { storageKey: string; fileName: string }) => void;
+  onCleared: () => void;
+}) {
+  const inputId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+
+  const accept = acceptAttributeFor(fileClass);
+  const limit = fileLimitLabel(fileClass);
+
+  async function upload(file: File | undefined): Promise<void> {
+    if (!file) return;
+    setError(null);
+
+    // El mismo criterio que aplicará el servidor, dicho antes de gastar la
+    // subida entera para recibir un 422 al final.
+    if (!resolveAcademicUpload(fileClass, { fileName: file.name, contentType: file.type })) {
+      setError(
+        `Ese formato no se admite en este paso. Se admiten: ${allowedExtensionsFor(fileClass).join(', ')}.`
+      );
+      return;
+    }
+    if (file.size > ACADEMIC_FILE_LIMITS[fileClass]) {
+      setError(`El archivo supera el límite de ${limit}.`);
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const uploaded = await uploadAcademicFile(assignmentId, stepId, file);
+      onUploaded(uploaded);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo subir el archivo.');
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  }
+
+  /** Se pide en el momento de abrir: una URL firmada dura pocos minutos. */
+  async function open(): Promise<void> {
+    setOpening(true);
+    setError(null);
+    try {
+      await openSignedUrl(() => academicFileUrl(assignmentId, storageKey));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo abrir el archivo.');
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <div>
+      <label htmlFor={inputId} className="label">
+        {label}
+      </label>
+
+      <div
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          void upload(event.dataTransfer.files?.[0]);
+        }}
+        className={`rounded-sm border border-dashed p-4 transition-colors ${
+          dragging ? 'border-accent bg-accent-soft' : 'border-line-strong'
+        }`}
+      >
+        <p className="text-sm text-muted">
+          Arrastra el archivo aquí o elígelo desde tu equipo.
+        </p>
+        <input
+          id={inputId}
+          ref={inputRef}
+          type="file"
+          accept={accept}
+          disabled={uploading}
+          onChange={(event) => void upload(event.target.files?.[0])}
+          aria-describedby={`${inputId}-hint`}
+          className="field mt-3"
+        />
+        <p id={`${inputId}-hint`} className="hint">
+          {hint ? `${hint} ` : ''}
+          Se admiten {allowedExtensionsFor(fileClass).join(', ')}. Máximo {limit}.
+        </p>
+      </div>
+
+      {uploading && (
+        <div className="mt-3">
+          <Notice>Subiendo… no cierres esta pestaña.</Notice>
+        </div>
+      )}
+
+      {storageKey && !uploading && (
+        <div className="panel mt-3 flex flex-wrap items-center gap-3 p-3">
+          <span aria-hidden="true">📄</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">
+              {fileName || 'Archivo entregado'}
+            </span>
+            <span className="block text-label text-success">Guardado en UINexus</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => void open()}
+            disabled={opening}
+            className="btn btn-secondary btn-sm"
+          >
+            {opening ? 'Abriendo…' : 'Ver'}
+          </button>
+          <button type="button" onClick={onCleared} className="btn btn-ghost btn-sm">
+            Quitar
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3">
+          <Notice tone="error">{error}</Notice>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Código (Investigación de Operaciones y cualquier materia que programe)
+// ---------------------------------------------------------------------------
+
+/**
+ * Entrega de código.
+ *
+ * Dos formas que NO compiten: pegar el fuente y adjuntar el archivo. Pegarlo es
+ * lo que permite a la docente leerlo sin descargar nada —que es como se revisa
+ * de verdad, en la misma pantalla que el resto de la entrega—; adjuntarlo es lo
+ * que permite ejecutarlo tal cual. Cada una resuelve un uso distinto, así que
+ * aquí conviven y ninguna borra a la otra.
+ *
+ * UINexus NO ejecuta este código. No hay botón de «Ejecutar» porque no hay
+ * ningún intérprete detrás: el texto se guarda y se muestra como texto. Ver
+ * `lib/code-runner.ts` para la interfaz que un ejecutor externo tendría que
+ * cumplir el día que se conecte uno.
+ */
+export function CodeFields({
+  data,
+  onChange,
+  language,
+  hint,
+  assignmentId,
+  stepId,
+}: {
+  data: CodeData;
+  onChange: (changes: Record<string, unknown>) => void;
+  /** El lenguaje que pide el paso. Lo decide la docente, no el alumnado. */
+  language: ProgrammingLanguage;
+  hint?: string;
+  assignmentId?: string;
+  stepId?: string;
+}) {
+  const canUpload = Boolean(assignmentId && stepId);
+  const label = programmingLanguageLabel(language);
+
+  return (
+    <div className="space-y-5">
+      <Notice>
+        Esta entrega es en <strong>{label}</strong>. Pega tu código, adjunta el archivo, o las dos
+        cosas.
+      </Notice>
+
+      <Field
+        label={`Tu código en ${label}`}
+        hint={hint || 'Pégalo tal cual. Se conserva la sangría y no se ejecuta en ningún momento.'}
+      >
+        <textarea
+          rows={14}
+          spellCheck={false}
+          value={data.code ?? ''}
+          onChange={(event) => onChange({ code: event.target.value, language })}
+          placeholder={'# Modelo de programación lineal\nlibrary(lpSolve)\n'}
+          className="field font-mono text-sm"
+        />
+      </Field>
+
+      {canUpload && (
+        <AcademicFileDrop
+          label="Adjunta el archivo (opcional)"
+          fileClass="code"
+          assignmentId={assignmentId!}
+          stepId={stepId!}
+          storageKey={data.storageKey ?? ''}
+          fileName={data.fileName ?? ''}
+          onUploaded={({ storageKey, fileName }) =>
+            onChange({ storageKey, fileName, language })
+          }
+          onCleared={() => onChange({ storageKey: '', fileName: '' })}
+        />
+      )}
+
+      <Field
+        label="Explicación"
+        hint="Qué hace el programa y cómo se ejecuta. Opcional si la tarea no la pide."
+      >
+        <textarea
+          rows={4}
+          value={data.explanation ?? ''}
+          onChange={(event) => onChange({ explanation: event.target.value, language })}
+          className="field"
+        />
+      </Field>
+    </div>
+  );
+}

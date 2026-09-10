@@ -143,6 +143,38 @@ export const resourceSelectionDataSchema = z.object({
   note: z.string().trim().max(ACADEMIC_LIMITS.answerMax).default(''),
 });
 
+/**
+ * El lenguaje de un paso de código.
+ *
+ * Cadena acotada y NO un enum, por la misma razón que `actionType`: el día que
+ * se habilite Python, una tarea guardada con ese valor tiene que poder leerse
+ * sin desplegar el esquema antes. Qué se OFRECE hoy lo decide
+ * `ENABLED_PROGRAMMING_LANGUAGES` en la interfaz.
+ */
+export const programmingLanguageSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(24)
+  .regex(/^[a-z0-9+#.-]+$/, 'Ese lenguaje no es válido.');
+
+/**
+ * Código entregado en un paso.
+ *
+ * `code` NO lleva `trim`: la sangría es parte del programa. Tampoco se valida
+ * como código ni se interpreta —UINexus no lo ejecuta en ningún momento—, sólo
+ * se acota su tamaño, que es la única propiedad que puede hacer daño aquí.
+ */
+export const codeDataSchema = z.object({
+  language: programmingLanguageSchema.default('r'),
+  code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese archivo de código es demasiado largo.').default(''),
+  explanation: z.string().trim().max(ACADEMIC_LIMITS.answerMax).default(''),
+  storageKey: z
+    .union([z.literal(''), z.string().trim().regex(/^academic\/[\w./-]{10,300}$/)])
+    .default(''),
+  fileName: z.string().trim().max(200).default(''),
+});
+
 export const deliverableTypeSchema = z.enum([
   'none',
   'text',
@@ -153,6 +185,7 @@ export const deliverableTypeSchema = z.enum([
   'ai_worklog',
   'structured',
   'project',
+  'code',
   'resource_reference',
 ]);
 
@@ -178,6 +211,8 @@ export function deliverableSchemaFor(type: z.infer<typeof deliverableTypeSchema>
     case 'image':
     case 'video':
       return mediaDataSchema;
+    case 'code':
+      return codeDataSchema;
     case 'resource_reference':
       return resourceSelectionDataSchema;
     case 'none':
@@ -195,6 +230,12 @@ export const stepDeliverableSchema = z.object({
     .array(researchQuestionSchema)
     .max(ACADEMIC_LIMITS.maxResearchQuestions)
     .default([]),
+  /**
+   * En qué lenguaje se pide la solución. Sólo significa algo con
+   * `type === 'code'`; ausente en cualquier otro caso, que es lo que traen los
+   * pasos guardados antes de que existiera el entregable de código.
+   */
+  language: programmingLanguageSchema.nullish(),
 });
 
 export const toolChoiceSchema = z.object({
@@ -312,6 +353,47 @@ export const stepEvidenceInputSchema = z.object({
 export const workflowSubmissionInputSchema = z.object({
   intent: z.enum(['draft', 'submit']),
   steps: z.array(stepEvidenceInputSchema).max(WORKFLOW_LIMITS.maxSteps).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// Materiales de la tarea
+// ---------------------------------------------------------------------------
+
+export const assignmentMaterialKindSchema = z.enum(['template', 'resource']);
+
+/** Paso 1: pedir permiso para subir. Todavía no se guarda nada. */
+export const materialUploadRequestSchema = z.object({
+  fileName: z.string().trim().min(1, 'Falta el nombre del archivo.').max(200),
+  /** Lo que dice el navegador. El servidor decide el tipo real por extensión. */
+  contentType: z.string().trim().max(160).default(''),
+  sizeBytes: z.number().int().positive(),
+});
+
+/**
+ * Paso 2: registrar el archivo ya subido.
+ *
+ * La clave se acota al espacio de materiales con el patrón, y la ruta comprueba
+ * ADEMÁS que sea de ESTA tarea (`isAssignmentMaterialKeyFor`). Lo primero
+ * impide citar cualquier objeto del bucket; lo segundo, el material de otra
+ * materia. El `contentType` y el tamaño que lleguen aquí son etiquetas para
+ * mostrar: el servidor los vuelve a derivar del nombre y del límite de la clase.
+ */
+export const materialConfirmSchema = z.object({
+  storageKey: z
+    .string()
+    .trim()
+    .regex(/^academic\/materials\/[\w./-]{10,300}$/, 'Esa referencia no es un material válido.'),
+  fileName: z.string().trim().min(1, 'Falta el nombre del archivo.').max(200),
+  displayName: z.string().trim().max(160).default(''),
+  kind: assignmentMaterialKindSchema.default('resource'),
+  sizeBytes: z.number().int().nonnegative().default(0),
+});
+
+/** Cambiar el nombre visible o la clase de un material ya subido. */
+export const materialPatchSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  displayName: z.string().trim().max(160).optional(),
+  kind: assignmentMaterialKindSchema.optional(),
 });
 
 export const toolInputSchema = z.object({

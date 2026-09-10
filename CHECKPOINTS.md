@@ -27,6 +27,131 @@ procesos estructurados, trazables y reutilizables.
 
 ---
 
+## Sprint — Identidad, materiales y proceso de materia (2026-09-09)
+
+**Objetivo.** Cerrar el fallo de autenticación que dejaba sesiones inutilizables,
+dar al profesorado una forma de repartir archivos con la tarea, hacer evidente la
+entrega de documentos del alumnado, y añadir el proceso académico de
+Investigación de Operaciones sin construir un LMS paralelo.
+
+### Lo que se implementó, por prioridad
+
+**P0 · Identidad institucional.** La regla de `lib/identity.ts` se aplica ahora
+en los dos puntos que faltaban: al RESTAURAR la sesión de Firebase
+(`lib/auth-session.ts`, antes de crear el perfil) y en `requireIdentity`, que es
+el único punto por el que pasan todas las rutas. El acceso por SMS se retiró: un
+teléfono no puede demostrar pertenencia a `@itdurango.edu.mx`.
+
+**P0 · Materiales de la tarea.** `AssignmentMaterial` con su propia ruta, su
+propio prefijo en S3 (`academic/materials/…`) y las dos preguntas de
+autorización invertidas respecto a una entrega. Subida en dos tiempos: firmar →
+subir a S3 → registrar.
+
+**P0 · Entregables de archivo.** `MediaFields` pasa a subir primero y enlazar
+después, con zona de arrastre sobre un `<input type="file">` real, aviso previo
+de formato y tamaño, y el archivo entregado visible con su botón de abrir.
+
+**P1 · Cinco plantillas de Investigación de Operaciones.** Modelado matemático,
+Programación lineal/Simplex, Transporte/Asignación, Redes PERT-CPM y Caso
+práctico con software. Son DATOS sobre el motor de workflows que ya existía.
+
+**P1 · Onboarding docente.** Estado vacío inteligente en `/aula` con la regla
+correcta (`canCreate && teaching.length === 0`), no `courses.length === 0`.
+
+**P2 · Programación, empezando por R.** Entregable `code` con lenguaje, código
+pegado y `.R` adjunto, legible por el profesorado sin descargar nada. Interfaz
+de ejecutor externo documentada y NO conectada.
+
+### Archivos principales
+
+```
+NUEVOS
+src/lib/auth-session.ts                     restauración de sesión con política institucional
+src/lib/academic-files.ts                   resolución de tipo/extensión, pura y compartida
+src/lib/workflow-templates.ts               las cinco plantillas de IO, como datos
+src/lib/aula-onboarding.ts                  cuándo se ofrece crear el primer grupo
+src/lib/code-runner.ts                      interfaz del ejecutor externo (sin implementación viva)
+src/app/api/assignments/[id]/materials/     POST · PUT · PATCH · DELETE · GET
+src/components/aula/assignment-materials.tsx
+src/components/aula/workflow-template-picker.tsx
+
+MODIFICADOS
+src/lib/identity.ts                         motivo del rechazo y textos del aviso
+src/lib/server/session.ts                   requireIdentity aplica la política
+src/components/auth/auth-provider.tsx       usa resolveRestoredSession; sin teléfono
+src/components/auth/login-form.tsx          aviso de cuenta no autorizada; sin teléfono
+src/lib/firebase/auth.ts                    retirado el acceso por SMS
+src/lib/types.ts                            AssignmentMaterial, CodeData, ProgrammingLanguage
+src/lib/constants.ts                        listas blancas por extensión, lenguajes, etiquetas
+src/lib/academic-schemas.ts                 codeData, material*, language en el entregable
+src/lib/data/academic.ts                    normalizeMaterials
+src/lib/data/academic-mappers.ts            materiales sin UID
+src/lib/server/academic-writes.ts           setAssignmentMaterials
+src/lib/aws/s3.ts                           claves de material, borrado, resolución por extensión
+src/lib/workflow.ts                         language en el entregable; `language` es estructural
+src/components/aula/{assignment-editor,assignment-detail,deliverable-fields,
+                     workflow-builder,workflow-runner,workflow-progress,aula-home}.tsx
+```
+
+### Decisiones arquitectónicas
+
+1. **La política de identidad vive en `requireIdentity`, no en las rutas.** Es el
+   único punto por el que pasan todas; repetirla en treinta endpoints garantiza
+   que a alguno se le olvide. Responde 403 y no 401: volver a entrar con la misma
+   cuenta no arreglaría nada.
+2. **Los materiales NO reutilizan la ruta de entregas.** No se levantó la
+   restricción que impide al profesorado usar `/files`. Sus permisos son los
+   contrarios (escribe sólo docente, lee todo el grupo) y fundirlos habría
+   mezclado dos preguntas de autorización distintas.
+3. **Los materiales no viajan en el cuerpo de la tarea.** Se escriben con
+   `UpdateCommand` sobre un atributo, así que editar el enunciado no puede
+   borrarlos ni al revés.
+4. **Descargar un material se pide por `id`, nunca por `storageKey`.** Aceptar
+   una clave del cliente convertiría el endpoint en un firmador de lecturas para
+   cualquier objeto académico.
+5. **El tipo de archivo lo decide la EXTENSIÓN, no el `Content-Type` declarado.**
+   Para un `.R` el navegador manda el tipo vacío; con la regla contraria no
+   habría forma de admitirlo sin admitir cualquier binario. La extensión sólo
+   elige una entrada de una tabla cerrada y el servidor fija el tipo del objeto.
+6. **Las plantillas de materia son datos, no un motor.** Pasan por
+   `cloneWorkflowSteps`, del que heredan la garantía de identificadores nuevos.
+   Añadir colas o inventarios es una entrada más en `workflow-templates.ts`.
+7. **Las dependencias de una plantilla encadenan con el anterior OBLIGATORIO.**
+   Encadenar con el anterior a secas dejaría bloqueado todo lo que sigue a un
+   paso opcional sin rellenar, que es para lo que existe lo opcional.
+8. **El lenguaje es un valor sobre una unión abierta, no un `isR`.** Encender
+   Python es cambiar un `enabled`; las entregas guardadas no se tocan.
+9. **UINexus no ejecuta código.** Sólo hay un adaptador con sus condiciones
+   escritas. Sin runner configurado no aparece ningún botón y la tarea se entrega
+   igual.
+10. **Adjuntar archivos exige que la tarea exista**, así que el editor ofrece
+    «Guardar borrador y adjuntar» en vez de inventar un almacén intermedio en el
+    navegador que se perdería con cualquier recarga.
+
+### Pruebas
+
+- **467 unitarias** (antes 371) y **92 de integración** (antes 53). Typecheck,
+  lint y build de producción en verde.
+- Nuevas suites: `auth-session`, `operations-research-templates`,
+  `assignment-materials`, `code-deliverable`, `aula-onboarding`,
+  `identity-policy-route`, `assignment-materials-route`,
+  `code-submission-route`.
+- Los correos de las identidades de integración pasaron a ser institucionales, y
+  se añadieron dos tokens válidos que la política rechaza: uno de Gmail y uno
+  sin correo (el caso del acceso por teléfono).
+
+### Pendientes y riesgos conocidos
+
+| Tema | Estado |
+|---|---|
+| Recorridos manuales con cuentas reales | **NO ejecutados.** Necesitan Firebase y AWS reales; ninguna ruta se ha ejercido con un token de Firebase de verdad (ver «Lo que NO se validó»). |
+| Ejecución de R | Interfaz y configuración listas, **sin ejecutor conectado**. `UINEXUS_CODE_RUNNER_*` documentadas en `.env.example`. |
+| Exportación de tareas de varios pasos | Sigue leyendo `Submission.data` (el primer paso). El código entregado se revisa en «Avance por paso», no en el export. Es un hueco anterior a esta iteración, ahora más visible. |
+| Objetos huérfanos en S3 | Quitar un material borra su objeto; si el borrado falla se registra y se sigue. Sin política de ciclo de vida en el bucket. |
+| Formatos legacy de Office | `.doc`, `.xls`, `.ppt` **fuera** de la lista blanca: contenedores OLE con macros. Decisión, no olvido. |
+| Teléfono como segundo factor | Retirado por completo. Volvería como `linkWithPhoneNumber` sobre una cuenta institucional verificada. |
+| Materiales al borrar una tarea | No se limpian en cascada, igual que las entregas. Misma tarea de mantenimiento pendiente. |
+
 ## Sprint — Publicación académica unificada (2026-09-04)
 
 - Compositor en Inicio: anuncio y editores reales de Prompt, Skill y Recurso; compartir contenido existente y páginas/proyectos mediante referencias.

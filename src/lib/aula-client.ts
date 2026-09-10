@@ -6,6 +6,8 @@ import { getClientAuth } from './firebase/client';
 import { isFirebaseConfigured } from './firebase/config';
 import type {
   Assignment,
+  AssignmentMaterial,
+  AssignmentMaterialKind,
   CollaborativeView,
   ContributionState,
   CourseResource,
@@ -384,6 +386,108 @@ export const academicFileUrl = (assignmentId: string, storageKey: string) =>
   apiFetch<{ url: string }>(
     `/api/assignments/${assignmentId}/files?key=${encodeURIComponent(storageKey)}`
   );
+
+// ---------------------------------------------------------------------------
+// Materiales de la tarea
+// ---------------------------------------------------------------------------
+
+/**
+ * Sube un archivo para la clase y lo registra en la tarea.
+ *
+ * Tres pasos, en este orden: permiso → subida directa a S3 → registro. El
+ * registro va AL FINAL a propósito; si se hiciera antes, un fallo de red dejaría
+ * en la tarea un archivo que no existe. Devuelve la lista completa ya
+ * actualizada para que la pantalla no tenga que recargar la tarea entera.
+ */
+export async function uploadAssignmentMaterial(
+  assignmentId: string,
+  file: File,
+  options: { kind: AssignmentMaterialKind; displayName?: string }
+): Promise<AssignmentMaterial[]> {
+  const { upload, storageKey } = await apiFetch<{
+    upload: { url: string; fields: Record<string, string> };
+    storageKey: string;
+    contentType: string;
+  }>(`/api/assignments/${assignmentId}/materials`, {
+    method: 'POST',
+    body: { fileName: file.name, contentType: file.type, sizeBytes: file.size },
+  });
+
+  const { uploadSigned } = await import('./api-client');
+  await uploadSigned(upload, file, file.name);
+
+  const { materials } = await apiFetch<{ materials: AssignmentMaterial[] }>(
+    `/api/assignments/${assignmentId}/materials`,
+    {
+      method: 'PUT',
+      body: {
+        storageKey,
+        fileName: file.name,
+        displayName: options.displayName ?? '',
+        kind: options.kind,
+        sizeBytes: file.size,
+      },
+    }
+  );
+
+  return materials;
+}
+
+export const updateAssignmentMaterial = (
+  assignmentId: string,
+  body: { id: string; displayName?: string; kind?: AssignmentMaterialKind }
+) =>
+  apiFetch<{ materials: AssignmentMaterial[] }>(
+    `/api/assignments/${assignmentId}/materials`,
+    { method: 'PATCH', body }
+  );
+
+export const deleteAssignmentMaterial = (assignmentId: string, id: string) =>
+  apiFetch<{ materials: AssignmentMaterial[] }>(
+    `/api/assignments/${assignmentId}/materials?id=${encodeURIComponent(id)}`,
+    { method: 'DELETE' }
+  );
+
+/** Los materiales de una tarea, sin traerse la tarea entera. */
+export const listAssignmentMaterials = (assignmentId: string) =>
+  apiFetch<{ materials: AssignmentMaterial[] }>(`/api/assignments/${assignmentId}/materials`);
+
+/**
+ * URL temporal para descargar un material. Se pide POR ID, nunca por clave: el
+ * servidor toma la clave de la propia tarea (ver la ruta de materiales).
+ */
+export const assignmentMaterialUrl = (assignmentId: string, id: string) =>
+  apiFetch<{ url: string; fileName: string }>(
+    `/api/assignments/${assignmentId}/materials?id=${encodeURIComponent(id)}`
+  );
+
+/**
+ * Abre una URL firmada en otra pestaña, sin perderla por el bloqueador.
+ *
+ * La pestaña se abre EN BLANCO de forma síncrona, dentro del gesto de la
+ * persona, y se le pone la dirección cuando el servidor responde. Al revés
+ * —pedir la firma y después abrir— el navegador ya no relaciona la apertura con
+ * el clic y Safari, entre otros, la bloquea sin decir nada.
+ *
+ * Las URLs no se piden por adelantado a propósito: duran minutos, así que
+ * generarlas al pintar la lista dejaría enlaces caducados y regalaría accesos
+ * temporales a archivos que nadie llegó a abrir.
+ */
+export async function openSignedUrl(load: () => Promise<{ url: string }>): Promise<void> {
+  // Sin `noopener` en las opciones: con esa bandera el navegador devuelve
+  // `null` y no habría a qué asignarle la dirección. Se desvincula a mano.
+  const tab = typeof window === 'undefined' ? null : window.open('', '_blank');
+  if (tab) tab.opener = null;
+
+  try {
+    const { url } = await load();
+    if (tab) tab.location.href = url;
+    else window.location.href = url;
+  } catch (caught) {
+    tab?.close();
+    throw caught;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Exportación

@@ -1,0 +1,334 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { POST as createAssignmentRoute } from '@/app/api/courses/[courseId]/assignments/route';
+import { GET as readAssignmentRoute } from '@/app/api/assignments/[assignmentId]/route';
+import { GET as readSubmissionsRoute } from '@/app/api/assignments/[assignmentId]/submissions/route';
+import {
+  GET as downloadAcademicFileRoute,
+  POST as uploadAcademicFileRoute,
+} from '@/app/api/assignments/[assignmentId]/files/route';
+import { PUT as saveSubmissionRoute } from '@/app/api/assignments/[assignmentId]/submission/route';
+import { submissionIdFor } from '@/lib/data/academic';
+import type { Assignment, CodeData, MediaData } from '@/lib/types';
+import { ACTORS, jsonRequestAs, requestAs } from './helpers/auth';
+import {
+  createIntegrationTables,
+  deleteIntegrationTables,
+  getPersistedSubmission,
+  resetAndSeedIntegrationData,
+} from './helpers/dynamodb';
+
+/**
+ * Una actividad con DOS pasos que piden archivo: uno de documento y uno de
+ * código en R.
+ *
+ * Dos cosas se comprueban a la vez, y las dos importan:
+ *
+ *  1. Que una tarea puede declarar «resuélvelo en R» y entregarse sin que exista
+ *     ningún ejecutor. La ejecución nunca es requisito para entregar.
+ *  2. Que la evidencia de cada paso queda SEPARADA. Con dos pasos que piden
+ *     archivo, mezclarlos significaría que el reporte aparece como si fuera el
+ *     código y viceversa.
+ */
+
+type Actor = (typeof ACTORS)[keyof typeof ACTORS];
+
+async function createCodeAssignment(): Promise<Assignment> {
+  const response = await createAssignmentRoute(
+    jsonRequestAs(
+      ACTORS.teacherA,
+      'http://localhost/api/courses/course-a/assignments',
+      'POST',
+      {
+        title: 'Caso práctico con software',
+        type: 'workflow',
+        status: 'published',
+        workflow: [
+          {
+            id: 'reporte',
+            title: 'Reporte del caso',
+            deliverables: [{ type: 'file', required: true }],
+          },
+          {
+            id: 'codigo',
+            title: 'Desarrolla la solución en R',
+            actionType: 'code',
+            deliverables: [{ type: 'code', required: true, language: 'r' }],
+            dependsOnStepIds: ['reporte'],
+          },
+        ],
+      }
+    ),
+    { params: Promise.resolve({ courseId: 'course-a' }) }
+  );
+
+  expect(response.status).toBe(201);
+  return (await response.json()).assignment as Assignment;
+}
+
+function presign(
+  assignmentId: string,
+  actor: Actor,
+  body: Record<string, unknown>
+): Promise<Response> {
+  return uploadAcademicFileRoute(
+    jsonRequestAs(actor, `http://localhost/api/assignments/${assignmentId}/files`, 'POST', body),
+    { params: Promise.resolve({ assignmentId }) }
+  );
+}
+
+function download(assignmentId: string, actor: Actor, key: string): Promise<Response> {
+  return downloadAcademicFileRoute(
+    requestAs(
+      actor,
+      `http://localhost/api/assignments/${assignmentId}/files?key=${encodeURIComponent(key)}`
+    ),
+    { params: Promise.resolve({ assignmentId }) }
+  );
+}
+
+beforeAll(createIntegrationTables);
+beforeEach(resetAndSeedIntegrationData);
+afterAll(deleteIntegrationTables);
+
+describe('una tarea que se resuelve en R', () => {
+  it('el paso declara el lenguaje y llega así al alumnado', async () => {
+    const assignment = await createCodeAssignment();
+
+    const read = await readAssignmentRoute(
+      requestAs(ACTORS.studentA, `http://localhost/api/assignments/${assignment.id}`),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+
+    expect(read.status).toBe(200);
+    const body = await read.json();
+    const step = (body.assignment.workflow as Assignment['workflow']).find(
+      (item) => item.id === 'codigo'
+    );
+    expect(step?.deliverables[0]).toMatchObject({ type: 'code', language: 'r' });
+  });
+
+  it('se entrega con el código pegado, sin ningún ejecutor de por medio', async () => {
+    const assignment = await createCodeAssignment();
+
+    const response = await saveSubmissionRoute(
+      jsonRequestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignment.id}/submission`,
+        'PUT',
+        {
+          intent: 'submit',
+          steps: [
+            { stepId: 'reporte', data: { url: 'https://drive.google.com/file/d/abc' } },
+            {
+              stepId: 'codigo',
+              data: {
+                language: 'r',
+                code: 'library(lpSolve)\nlp("max", c(3, 5), matrix(c(1, 0), 1), "<=", 4)',
+                explanation: 'Modelo del ejercicio 4.',
+              },
+            },
+          ],
+        }
+      ),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+
+    expect(response.status).toBe(200);
+
+    const persisted = await getPersistedSubmission(
+      submissionIdFor(assignment.id, ACTORS.studentA.uid)
+    );
+    const code = persisted?.stepEvidence.codigo?.data as CodeData;
+    expect(code.language).toBe('r');
+    expect(code.code).toContain('lpSolve');
+  });
+
+  it('acepta el `.R` adjunto aunque el navegador no diga qué tipo es', async () => {
+    const assignment = await createCodeAssignment();
+
+    const response = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'codigo',
+      contentType: '',
+      sizeBytes: 512,
+      fileName: 'modelo.R',
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.storageKey).toMatch(
+      new RegExp(`^academic/course-a/${ACTORS.studentA.uid}/${assignment.id}/codigo/[\\w-]+\\.r$`)
+    );
+    // Se guarda como texto plano: nunca como algo que pueda ejecutarse.
+    expect(body.upload.fields['Content-Type']).toBe('text/plain');
+  });
+
+  it('un paso de código NO admite un ejecutable', async () => {
+    const assignment = await createCodeAssignment();
+
+    const response = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'codigo',
+      contentType: 'application/octet-stream',
+      sizeBytes: 512,
+      fileName: 'modelo.exe',
+    });
+
+    expect(response.status).toBe(422);
+    expect((await response.json()).error).toContain('no se admite');
+  });
+});
+
+describe('la evidencia de cada paso queda separada', () => {
+  it('el archivo de un paso no puede citarse desde el otro', async () => {
+    const assignment = await createCodeAssignment();
+
+    const reportUpload = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'reporte',
+      contentType: 'application/pdf',
+      sizeBytes: 2048,
+      fileName: 'reporte.pdf',
+    });
+    const { storageKey: reportKey } = await reportUpload.json();
+
+    // La clave se emitió para «reporte»; citarla en «codigo» se rechaza porque
+    // la ruta del objeto lleva dentro el paso al que pertenece.
+    const crossed = await saveSubmissionRoute(
+      jsonRequestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignment.id}/submission`,
+        'PUT',
+        {
+          intent: 'draft',
+          steps: [
+            { stepId: 'codigo', data: { language: 'r', code: '', storageKey: reportKey } },
+          ],
+        }
+      ),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+
+    expect(crossed.status).toBe(422);
+    await expect(crossed.json()).resolves.toEqual({
+      error: 'La referencia del archivo no pertenece a esta entrega.',
+    });
+  });
+
+  it('cada paso conserva SU archivo, y no se mezclan', async () => {
+    const assignment = await createCodeAssignment();
+
+    const reportUpload = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'reporte',
+      contentType: 'application/pdf',
+      sizeBytes: 2048,
+      fileName: 'reporte.pdf',
+    });
+    const { storageKey: reportKey } = await reportUpload.json();
+
+    const codeUpload = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'codigo',
+      contentType: '',
+      sizeBytes: 512,
+      fileName: 'modelo.R',
+    });
+    const { storageKey: codeKey } = await codeUpload.json();
+
+    const saved = await saveSubmissionRoute(
+      jsonRequestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignment.id}/submission`,
+        'PUT',
+        {
+          intent: 'submit',
+          steps: [
+            {
+              stepId: 'reporte',
+              data: { storageKey: reportKey, fileName: 'reporte.pdf', kind: 'file' },
+            },
+            {
+              stepId: 'codigo',
+              data: { language: 'r', code: 'x <- 1', storageKey: codeKey, fileName: 'modelo.R' },
+            },
+          ],
+        }
+      ),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+    expect(saved.status).toBe(200);
+
+    const persisted = await getPersistedSubmission(
+      submissionIdFor(assignment.id, ACTORS.studentA.uid)
+    );
+
+    expect((persisted?.stepEvidence.reporte?.data as MediaData).storageKey).toBe(reportKey);
+    expect((persisted?.stepEvidence.codigo?.data as CodeData).storageKey).toBe(codeKey);
+    expect(reportKey).not.toBe(codeKey);
+  });
+});
+
+describe('quién puede leer el archivo entregado', () => {
+  async function submitWithFile(): Promise<{ assignmentId: string; key: string }> {
+    const assignment = await createCodeAssignment();
+
+    const upload = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'codigo',
+      contentType: '',
+      sizeBytes: 512,
+      fileName: 'modelo.R',
+    });
+    const { storageKey } = await upload.json();
+
+    const saved = await saveSubmissionRoute(
+      jsonRequestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignment.id}/submission`,
+        'PUT',
+        {
+          intent: 'draft',
+          steps: [
+            {
+              stepId: 'codigo',
+              data: { language: 'r', code: 'x <- 1', storageKey, fileName: 'modelo.R' },
+            },
+          ],
+        }
+      ),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+    expect(saved.status).toBe(200);
+
+    return { assignmentId: assignment.id, key: storageKey };
+  }
+
+  it('quien lo entregó y el profesorado de la materia', async () => {
+    const { assignmentId, key } = await submitWithFile();
+
+    for (const actor of [ACTORS.studentA, ACTORS.teacherA]) {
+      const response = await download(assignmentId, actor, key);
+      expect(response.status, actor.token).toBe(200);
+    }
+  });
+
+  it('otro estudiante del grupo NO puede leerlo', async () => {
+    const { assignmentId, key } = await submitWithFile();
+    expect((await download(assignmentId, ACTORS.studentB, key)).status).toBe(404);
+  });
+
+  it('alguien ajeno a la materia tampoco', async () => {
+    const { assignmentId, key } = await submitWithFile();
+    expect((await download(assignmentId, ACTORS.outsiderStudent, key)).status).toBe(404);
+    expect((await download(assignmentId, ACTORS.teacherB, key)).status).toBe(404);
+  });
+
+  it('el profesorado ve el código pegado sin descargar nada', async () => {
+    const { assignmentId } = await submitWithFile();
+
+    const response = await readSubmissionsRoute(
+      requestAs(ACTORS.teacherA, `http://localhost/api/assignments/${assignmentId}/submissions`),
+      { params: Promise.resolve({ assignmentId }) }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const evidence = body.submissions[0].stepEvidence.codigo.data as CodeData;
+    expect(evidence.code).toBe('x <- 1');
+  });
+});

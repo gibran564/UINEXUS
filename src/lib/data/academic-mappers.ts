@@ -107,6 +107,13 @@ export function toAssignment(
         : [],
     resources: record.resources ?? [],
     /**
+     * Los materiales los ve TODO EL MUNDO que puede ver la tarea: repartirlos es
+     * justamente su función. Lo único que no cruza es el UID de quien los subió;
+     * el nombre sí, porque en una materia con dos docentes saber quién puso qué
+     * es información útil y no es dato de terceros.
+     */
+    materials: (record.materials ?? []).map(({ uploadedBy: _uploadedBy, ...material }) => material),
+    /**
      * Los pasos, con sus responsables traducidos a handles y SÓLO para el
      * profesorado: al alumnado se le dice qué pasos puede hacer él
      * (`myStepIds` en la vista de la tarea), no quién hace cada uno.

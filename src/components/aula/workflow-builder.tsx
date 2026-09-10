@@ -2,10 +2,13 @@
 
 import { useState } from 'react';
 import {
+  DEFAULT_PROGRAMMING_LANGUAGE,
   DELIVERABLE_LABEL,
+  ENABLED_PROGRAMMING_LANGUAGES,
   STEP_ACTIONS,
   TOOL_MODE_LABEL,
   WORKFLOW_LIMITS,
+  programmingLanguageLabel,
 } from '@/lib/constants';
 import type {
   DeliverableType,
@@ -44,6 +47,7 @@ const DELIVERABLE_OPTIONS: DeliverableType[] = [
   'file',
   'image',
   'video',
+  'code',
   'ai_worklog',
   'structured',
   'project',
@@ -63,7 +67,15 @@ export function makeStep(preset: (typeof STEP_ACTIONS)[number]): WorkflowStep {
     // Sin prompt hasta que se escriba uno. «Escribir aquí» es lo que ofrece la
     // interfaz por defecto, pero un paso vacío no declara un prompt vacío.
     prompt: { mode: 'none', title: '', text: '', resourceId: null },
-    deliverables: [{ type: preset.deliverable, required: true, hint: '', questions: [] }],
+    deliverables: [
+      {
+        type: preset.deliverable,
+        required: true,
+        hint: '',
+        questions: [],
+        language: preset.deliverable === 'code' ? DEFAULT_PROGRAMMING_LANGUAGE : null,
+      },
+    ],
     required: true,
     assignedTo: null,
     dependsOnStepIds: [],
@@ -262,10 +274,17 @@ function StepEditor({
     required: true,
     hint: '',
     questions: [] as ResearchQuestion[],
+    language: null as string | null,
   };
 
-  const patchDeliverable = (changes: Partial<typeof deliverable>) =>
-    onChange({ deliverables: [{ ...deliverable, ...changes }] });
+  const patchDeliverable = (changes: Partial<typeof deliverable>) => {
+    const next = { ...deliverable, ...changes };
+    // Cambiar el entregable a código sin lenguaje dejaría un paso que pide
+    // programar sin decir en qué. Se rellena con el habilitado por defecto.
+    if (next.type === 'code' && !next.language) next.language = DEFAULT_PROGRAMMING_LANGUAGE;
+    if (next.type !== 'code') next.language = null;
+    onChange({ deliverables: [next] });
+  };
 
   return (
     <div className="mt-5 space-y-5 border-t border-line pt-5">
@@ -318,6 +337,40 @@ function StepEditor({
           </select>
         </Field>
       </div>
+
+      {/*
+        El lenguaje sólo aparece cuando el paso pide código. Hoy sólo R está
+        habilitado (`ENABLED_PROGRAMMING_LANGUAGES`); el selector existe igual
+        porque el día que entre el segundo lenguaje no hay que rehacer nada aquí.
+      */}
+      {deliverable.type === 'code' && (
+        <Field
+          label="Lenguaje"
+          hint="En qué lenguaje se resuelve. El alumnado no puede cambiarlo."
+        >
+          <select
+            value={deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE}
+            onChange={(event) => patchDeliverable({ language: event.target.value })}
+            className="field"
+          >
+            {ENABLED_PROGRAMMING_LANGUAGES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+            {/* Un paso guardado con un lenguaje que todavía no se ofrece sigue
+                apareciendo: el modelo lo admite aunque la interfaz no lo liste. */}
+            {deliverable.language &&
+              !ENABLED_PROGRAMMING_LANGUAGES.some(
+                (option) => option.value === deliverable.language
+              ) && (
+                <option value={deliverable.language}>
+                  {programmingLanguageLabel(deliverable.language)}
+                </option>
+              )}
+          </select>
+        </Field>
+      )}
 
       {deliverable.type !== 'none' && (
         <Field label="Pista para el entregable" hint="Opcional.">

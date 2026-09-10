@@ -6,16 +6,33 @@ if (!process.env.UINEXUS_DYNAMODB_ENDPOINT || !process.env.UINEXUS_TABLE_PREFIX)
   throw new Error('Usa `npm run test:integration` para iniciar DynamoDB Local de forma segura.');
 }
 
+/**
+ * Los correos son INSTITUCIONALES a propósito.
+ *
+ * `requireIdentity` aplica la política del ITD sobre `decoded.email` antes de
+ * mirar el perfil, así que un token con un correo cualquiera ya no sirve para
+ * ejercer ninguna ruta. Ese cambio es la corrección de esta iteración, y por eso
+ * existe además `token-outsider-domain`: un token perfectamente válido para
+ * Firebase cuyo correo no pertenece a la comunidad. Sirve para comprobar que la
+ * API lo rechaza, que es justo lo que antes no ocurría.
+ */
 const authState = vi.hoisted(() => {
   const identities = new Map([
-    ['token-teacher-a', { uid: 'uid-teacher-a', email: 'teacher-a@example.test', email_verified: true }],
-    ['token-teacher-b', { uid: 'uid-teacher-b', email: 'teacher-b@example.test', email_verified: true }],
-    ['token-student-a', { uid: 'uid-student-a', email: 'student-a@example.test', email_verified: true }],
-    ['token-student-b', { uid: 'uid-student-b', email: 'student-b@example.test', email_verified: true }],
+    ['token-teacher-a', { uid: 'uid-teacher-a', email: 'teacher.a@itdurango.edu.mx', email_verified: true }],
+    ['token-teacher-b', { uid: 'uid-teacher-b', email: 'teacher.b@itdurango.edu.mx', email_verified: true }],
+    ['token-student-a', { uid: 'uid-student-a', email: 'l21040001@itdurango.edu.mx', email_verified: true }],
+    ['token-student-b', { uid: 'uid-student-b', email: 'l21040002@itdurango.edu.mx', email_verified: true }],
     [
       'token-student-outsider',
-      { uid: 'uid-student-outsider', email: 'student-outsider@example.test', email_verified: true },
+      { uid: 'uid-student-outsider', email: 'l21040003@itdurango.edu.mx', email_verified: true },
     ],
+    // Cuenta autenticada por Firebase pero ajena a la institución.
+    [
+      'token-outsider-domain',
+      { uid: 'uid-outsider-domain', email: 'cualquiera@gmail.com', email_verified: true },
+    ],
+    // Sesión sin correo: es lo que producía el acceso por teléfono.
+    ['token-no-email', { uid: 'uid-no-email', email: undefined, email_verified: false }],
   ]);
 
   return {

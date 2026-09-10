@@ -1,9 +1,12 @@
 import type {
+  AcademicFileClass,
   AIProvider,
+  AssignmentMaterialKind,
   AssignmentStatus,
   AssignmentType,
   ProjectStatus,
   DeliverableType,
+  ProgrammingLanguage,
   ProjectType,
   SortOption,
   StepActionType,
@@ -144,6 +147,10 @@ export const ACADEMIC_LIMITS = {
   maxInstallSteps: 20,
   maxPromptsPerCourse: 100,
   maxSkillsPerCourse: 100,
+  /** Archivos que el profesorado puede repartir en UNA tarea. */
+  maxMaterialsPerAssignment: 20,
+  /** Un fuente pegado en un paso de código. Suficiente para un modelo entero. */
+  codeMax: 60000,
 } as const;
 
 export interface AssignmentTypeOption {
@@ -356,6 +363,13 @@ export const STEP_ACTIONS: readonly StepActionOption[] = [
     toolMode: 'none',
   },
   {
+    value: 'code',
+    label: 'Desarrollo con código',
+    helper: 'Se resuelve programando. Se pega el código y, si quieres, se adjunta el archivo.',
+    deliverable: 'code',
+    toolMode: 'none',
+  },
+  {
     value: 'reflection',
     label: 'Reflexión',
     helper: '¿Qué cambiaste respecto a lo que propuso la IA?',
@@ -384,14 +398,59 @@ export const DELIVERABLE_LABEL: Readonly<Record<DeliverableType, string>> = {
   none: 'Sin entrega',
   text: 'Texto',
   url: 'Enlace',
-  file: 'Archivo',
+  file: 'Documento',
   image: 'Imagen',
   video: 'Video',
   ai_worklog: 'AI Worklog',
   structured: 'Respuesta estructurada',
   project: 'Proyecto de UINexus',
+  code: 'Código',
   resource_reference: 'Recursos de la materia',
 };
+
+// ---------------------------------------------------------------------------
+// Programación
+// ---------------------------------------------------------------------------
+
+export interface ProgrammingLanguageOption {
+  value: ProgrammingLanguage;
+  label: string;
+  /** Extensión canónica del fuente. Decide qué acepta el selector de archivo. */
+  extension: string;
+  /**
+   * Si se puede elegir HOY al crear un paso.
+   *
+   * Los deshabilitados están nombrados a propósito: el modelo ya los admite —una
+   * tarea guardada con `python` se lee sin problema— y encenderlos el día que
+   * haga falta es cambiar este booleano y añadir su extensión a
+   * `ACADEMIC_FILE_EXTENSIONS.code`. No hay nada más que rehacer, y ésa es toda
+   * la razón de que el lenguaje sea un valor y no un `isR`.
+   */
+  enabled: boolean;
+}
+
+export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
+  { value: 'r', label: 'R', extension: 'r', enabled: true },
+  { value: 'python', label: 'Python', extension: 'py', enabled: false },
+  { value: 'javascript', label: 'JavaScript', extension: 'js', enabled: false },
+  { value: 'java', label: 'Java', extension: 'java', enabled: false },
+  { value: 'cpp', label: 'C / C++', extension: 'cpp', enabled: false },
+  { value: 'sql', label: 'SQL', extension: 'sql', enabled: false },
+];
+
+export const ENABLED_PROGRAMMING_LANGUAGES = PROGRAMMING_LANGUAGES.filter(
+  (language) => language.enabled
+);
+
+/** El lenguaje con el que nace un paso de código. */
+export const DEFAULT_PROGRAMMING_LANGUAGE: ProgrammingLanguage = 'r';
+
+export function programmingLanguageLabel(language: ProgrammingLanguage | null | undefined): string {
+  if (!language) return 'Sin lenguaje';
+  return (
+    PROGRAMMING_LANGUAGES.find((option) => option.value === language)?.label ?? String(language)
+  );
+}
 
 export const TOOL_MODE_LABEL: Readonly<Record<ToolChoiceMode, string>> = {
   none: 'Sin herramienta',
@@ -444,20 +503,101 @@ export const TOOL_CATEGORIES = [
  * aplica en la condición `content-length-range` del POST firmado, que es el
  * único sitio donde un límite es real.
  */
-export const ACADEMIC_FILE_LIMITS = {
+export const ACADEMIC_FILE_LIMITS: Readonly<Record<AcademicFileClass, number>> = {
   image: 8 * 1024 * 1024,
   document: 25 * 1024 * 1024,
   video: 200 * 1024 * 1024,
-} as const;
+  /** Un fuente no pesa: un límite generoso aquí sólo invita a subir un binario. */
+  code: 2 * 1024 * 1024,
+  /** Material del profesorado: un caso de estudio o un dataset, no un video. */
+  material: 25 * 1024 * 1024,
+};
 
 /**
- * Tipos MIME admitidos por clase de entregable.
+ * Extensiones admitidas por clase, con el `Content-Type` que les corresponde.
  *
- * Lista blanca y no lista negra: lo que no está, no entra. El `Content-Type` se
- * fija además en la condición del POST firmado, así que el objeto guardado no
- * puede acabar con un tipo distinto del que se autorizó.
+ * ## Por qué manda la EXTENSIÓN y no lo que declare el navegador
+ *
+ * El `Content-Type` que manda el navegador no es un dato fiable: para un `.R`
+ * suele llegar vacío o `application/octet-stream`, y para un `.docx` depende del
+ * sistema. Decidir por extensión —igual que hace `presignProjectUpload` con los
+ * proyectos— es lo que permite admitir un fuente de R sin abrir la puerta a
+ * cualquier binario, porque el tipo del objeto lo FIJA el servidor en la
+ * condición del POST firmado a partir de esta tabla.
+ *
+ * Lo que no está, no entra. No hay `.exe`, `.bat`, `.sh`, `.js`, `.html` ni
+ * `.svg`: los tres primeros son ejecutables, y los dos últimos se sirven como
+ * contenido activo (un SVG puede llevar script dentro).
  */
-export const ACADEMIC_FILE_TYPES: Readonly<Record<'image' | 'document' | 'video', Readonly<Record<string, string>>>> = {
+export const ACADEMIC_FILE_EXTENSIONS: Readonly<
+  Record<AcademicFileClass, Readonly<Record<string, string>>>
+> = {
+  image: {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    avif: 'image/avif',
+    gif: 'image/gif',
+  },
+  document: {
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    csv: 'text/csv',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    // Un fuente de R entregado como archivo. Se guarda y se sirve como texto:
+    // UINexus no lo ejecuta nunca (ver docs/SECURITY.md).
+    r: 'text/plain',
+    /**
+     * Imágenes en un entregable de DOCUMENTO, y no es un descuido.
+     *
+     * Media Investigación de Operaciones se resuelve a mano: las iteraciones de
+     * un Simplex, una matriz de transporte o un diagrama de red se entregan como
+     * la foto de la hoja. Obligar a convertirla a PDF antes de subirla sólo
+     * conseguiría que se entregue peor, o por WhatsApp.
+     */
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+  },
+  video: {
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    mov: 'video/quicktime',
+  },
+  code: {
+    r: 'text/plain',
+  },
+  material: {
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    csv: 'text/csv',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    r: 'text/plain',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+  },
+};
+
+/**
+ * Tipos MIME admitidos por clase.
+ *
+ * Segunda mitad de la lista blanca: se usa cuando el nombre del archivo no trae
+ * una extensión reconocible, y para desmentir un tipo declarado que no
+ * corresponde a la clase. Sigue siendo lista blanca: lo que no está, no entra.
+ */
+export const ACADEMIC_FILE_TYPES: Readonly<
+  Record<AcademicFileClass, Readonly<Record<string, string>>>
+> = {
   image: {
     'image/png': 'png',
     'image/jpeg': 'jpg',
@@ -470,19 +610,68 @@ export const ACADEMIC_FILE_TYPES: Readonly<Record<'image' | 'document' | 'video'
     'text/plain': 'txt',
     'text/markdown': 'md',
     'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
   },
   video: {
     'video/mp4': 'mp4',
     'video/webm': 'webm',
     'video/quicktime': 'mov',
   },
+  // Sólo R está habilitado (ver PROGRAMMING_LANGUAGES), así que un texto plano
+  // en un paso de código es un fuente de R.
+  code: {
+    'text/plain': 'r',
+    'text/x-r': 'r',
+    'text/x-r-source': 'r',
+  },
+  material: {
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'text/markdown': 'md',
+    'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+  },
 };
 
 /** A qué clase de límite corresponde cada entregable de archivo. */
 export const FILE_CLASS_BY_DELIVERABLE: Readonly<
-  Record<'file' | 'image' | 'video', 'image' | 'document' | 'video'>
+  Record<'file' | 'image' | 'video' | 'code', AcademicFileClass>
 > = {
   image: 'image',
   video: 'video',
   file: 'document',
+  code: 'code',
 };
+
+/** Cómo se llama cada clase de material en la pantalla del alumnado. */
+export const MATERIAL_KIND_LABEL: Readonly<Record<AssignmentMaterialKind, string>> = {
+  template: 'Plantilla',
+  resource: 'Material',
+};
+
+export const MATERIAL_KIND_HELP: Readonly<Record<AssignmentMaterialKind, string>> = {
+  template: 'Se rellena y se entrega.',
+  resource: 'Se consulta para hacer la tarea.',
+};
+
+/** Lo que ofrece el selector de archivo, por clase. Es una ayuda, no la regla. */
+export function acceptAttributeFor(fileClass: AcademicFileClass): string {
+  return Object.keys(ACADEMIC_FILE_EXTENSIONS[fileClass])
+    .map((extension) => `.${extension}`)
+    .join(',');
+}
+
+/** El límite en megas, redondeado, para poder decirlo antes de intentar subir. */
+export function fileLimitLabel(fileClass: AcademicFileClass): string {
+  return `${Math.round(ACADEMIC_FILE_LIMITS[fileClass] / (1024 * 1024))} MB`;
+}

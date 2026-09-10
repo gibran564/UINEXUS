@@ -299,7 +299,30 @@ export type DeliverableType =
   | 'ai_worklog'
   | 'structured'
   | 'project'
+  /** Código fuente: pegado, adjunto, o ambos. Ver `ProgrammingLanguage`. */
+  | 'code'
   | 'resource_reference';
+
+/**
+ * Lenguaje de programación de un paso de código.
+ *
+ * Es una unión ABIERTA por la misma razón que `StepActionType`: el modelo no
+ * puede depender de un despliegue para admitir Python el día que haga falta.
+ * Qué se ofrece HOY en la interfaz lo decide `PROGRAMMING_LANGUAGES`
+ * (lib/constants.ts), donde sólo R está habilitado. Los demás valores están
+ * nombrados para que una tarea guardada mañana se lea sin migrar nada.
+ *
+ * Deliberadamente NO es un booleano `isR`: eso habría obligado a rehacer las
+ * entregas el día que entre el segundo lenguaje.
+ */
+export type ProgrammingLanguage =
+  | 'r'
+  | 'python'
+  | 'javascript'
+  | 'java'
+  | 'cpp'
+  | 'sql'
+  | (string & {});
 
 export interface StepDeliverable {
   type: DeliverableType;
@@ -308,6 +331,14 @@ export interface StepDeliverable {
   hint: string;
   /** Sólo cuando `type === 'structured'`: los campos que se rellenan. */
   questions: ResearchQuestion[];
+  /**
+   * Sólo cuando `type === 'code'`: en qué lenguaje se pide la solución.
+   *
+   * OPCIONAL a propósito: los pasos guardados antes de que existiera el
+   * entregable de código no lo traen, y no hay nada que migrar porque tampoco
+   * piden código.
+   */
+  language?: ProgrammingLanguage | null;
 }
 
 /**
@@ -432,6 +463,59 @@ export interface ExternalTool {
  */
 export type EmbedLevel = 0 | 1 | 2 | 3;
 
+// ---------------------------------------------------------------------------
+// Materiales de la tarea
+//
+// El tercer concepto de archivo de UINexus, y el que faltaba. Son DOS cosas
+// distintas y no se mezclan:
+//
+//   Submission / StepEvidence  →  lo que ENTREGA el alumnado. Privado por
+//                                 persona, con fecha límite y revisión.
+//   AssignmentMaterial         →  lo que REPARTE el profesorado para poder
+//                                 hacer la tarea. Lo lee todo el grupo, no
+//                                 caduca y nadie lo revisa.
+//
+// Meterlos en la misma lista habría obligado a preguntarse en cada lectura «¿de
+// quién es este archivo?», que es justo la pregunta que decide quién puede
+// borrarlo. Por eso viven en la tarea y no en las entregas, y por eso tienen su
+// propia ruta de API y su propio prefijo en S3.
+// ---------------------------------------------------------------------------
+
+/**
+ * Para qué sirve el archivo que reparte la docente.
+ *
+ *  · `template` se rellena y se devuelve: el formato del reporte, la hoja de
+ *    cálculo con la tabla vacía.
+ *  · `resource` se consulta: el caso de estudio, el dataset, el ejemplo.
+ *
+ * Es una etiqueta para quien lo lee, no una regla: UINexus no comprueba que la
+ * plantilla se devuelva. Distinguirlas ahorra la pregunta «¿esto lo tengo que
+ * entregar?» en la pantalla del alumnado.
+ */
+export type AssignmentMaterialKind = 'template' | 'resource';
+
+/** Un archivo repartido por el profesorado, tal y como lo ve la clase. */
+export interface AssignmentMaterial {
+  id: string;
+  kind: AssignmentMaterialKind;
+  /** Cómo se llama en la pantalla. Editable sin tocar el archivo. */
+  displayName: string;
+  /** El nombre original, para que la descarga se llame como debe. */
+  fileName: string;
+  /** Clave en S3. La construye el servidor; nunca llega del cliente. */
+  storageKey: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+  /** Quién lo subió, por nombre. El UID se queda en el registro. */
+  uploadedByName: string;
+}
+
+export interface AssignmentMaterialRecord extends AssignmentMaterial {
+  /** UID de quien lo subió. No cruza la frontera hacia el navegador. */
+  uploadedBy: string;
+}
+
 /** Tarea tal y como la ve quien tiene derecho a verla. */
 export interface Assignment {
   id: string;
@@ -487,6 +571,15 @@ export interface Assignment {
    * compatibilidad, y por eso no hace falta migrar la tabla.
    */
   workflow: WorkflowStep[];
+  /**
+   * Los archivos que reparte el profesorado (plantillas y materiales).
+   *
+   * Una tarea anterior a esta iteración no lo trae guardado y se lee como lista
+   * vacía, igual que el resto de campos añadidos: no hay migración. Se gestiona
+   * por su propia ruta (`/api/assignments/[id]/materials`) y NO por el cuerpo de
+   * la tarea, para que editar el título no pueda borrar los archivos.
+   */
+  materials: AssignmentMaterial[];
   /** `true` cuando la tarea es para todo el grupo. Lo ven ambos roles. */
   assignedToAll: boolean;
   /**
@@ -504,7 +597,7 @@ export interface Assignment {
 export interface AssignmentRecord
   extends Omit<
     Assignment,
-    'assignedTo' | 'assignedToAll' | 'groupAssignments' | 'workflow'
+    'assignedTo' | 'assignedToAll' | 'groupAssignments' | 'workflow' | 'materials'
   > {
   /** `null` significa TODO EL GRUPO. Una lista, asignación selectiva por UID. */
   assignedTo: string[] | null;
@@ -512,6 +605,8 @@ export interface AssignmentRecord
   groupAssignments: GroupAssignmentRecord[];
   /** Pasos con sus responsables en UID. */
   workflow: WorkflowStepRecord[];
+  /** Materiales con el UID de quien los subió. */
+  materials: AssignmentMaterialRecord[];
   createdBy: string;
 }
 
@@ -610,10 +705,40 @@ export interface MediaData {
   note: string;
 }
 
+/**
+ * Familias de archivo académico. Cada una tiene su lista blanca y su límite
+ * (`ACADEMIC_FILE_EXTENSIONS`, `ACADEMIC_FILE_TYPES`, `ACADEMIC_FILE_LIMITS`).
+ *
+ * `material` es la del profesorado; las demás son entregas del alumnado.
+ */
+export type AcademicFileClass = 'image' | 'document' | 'video' | 'code' | 'material';
+
 /** Evidencia que consiste en señalar recursos de la materia. */
 export interface ResourceSelectionData {
   refs: ResourceRef[];
   note: string;
+}
+
+/**
+ * Código entregado en un paso.
+ *
+ * Las dos formas conviven a propósito y NO se excluyen: pegar el fuente es lo
+ * que permite al profesorado leerlo sin descargar nada, y adjuntar el `.R` es
+ * lo que permite ejecutarlo tal cual. Pedir sólo una de las dos empeora uno de
+ * los dos usos reales.
+ *
+ * UINexus NO ejecuta este código en ningún momento (ver docs/SECURITY.md). Se
+ * guarda como texto y se muestra como texto.
+ */
+export interface CodeData {
+  language: ProgrammingLanguage;
+  /** El fuente, tal cual se pegó. Sin formatear, sin corregir. */
+  code: string;
+  /** Qué hace el programa, si la tarea lo pide. */
+  explanation: string;
+  /** Clave en S3 del archivo adjunto, cuando se subió uno. */
+  storageKey: string;
+  fileName: string;
 }
 
 export type SubmissionData =
@@ -623,6 +748,7 @@ export type SubmissionData =
   | ExternalLinkData
   | FreeformData
   | MediaData
+  | CodeData
   | ResourceSelectionData;
 
 /**

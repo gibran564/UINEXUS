@@ -395,3 +395,65 @@ Prompts, Skills y recursos generales viven en tres tablas —sus formas son
 distintas y dos ya existían— y se presentan juntos en una sola pestaña. El
 alumnado propone, el profesorado aprueba, y la autoría se conserva siempre: una
 Skill aprobada sigue diciendo quién la aportó.
+
+## 12. Materiales, plantillas de materia y código (iteración 5)
+
+### Tres conceptos de archivo, no uno
+
+```
+Proyecto        projects/{owner}/{id}/v{n}/…          código que se EJECUTA en el origen aislado
+Entrega         academic/{materia}/{uid}/{tarea}/…    trabajo de UNA persona, con fecha límite y revisión
+Material        academic/materials/{materia}/{tarea}/ lo que REPARTE la docente, lo lee todo el grupo
+```
+
+Los materiales cuelgan de la tarea (`Assignment.materials`) y **no viajan en el
+cuerpo de la tarea**: se gestionan por su propia ruta. Es lo que hace que
+corregir el enunciado no pueda llevarse por delante la plantilla del reporte, y
+que subir un archivo mientras alguien edita el título no revierta el título. La
+escritura es un `UpdateCommand` sobre un solo atributo, no un `Put` del registro
+entero.
+
+Compatibilidad: una tarea sin el campo se lee con `materials: []`. Es la misma
+estrategia de siempre —normalizar al leer, migrar al escribir— y por eso no hay
+script de migración.
+
+### Las plantillas de materia son DATOS
+
+`lib/workflow-templates.ts` describe procesos —las cinco de Investigación de
+Operaciones— como listas de pasos que `templateWorkflowSteps()` convierte en
+`WorkflowStep[]` normales. **Nada** en el runner, el constructor o la API sabe
+qué es «Investigación de Operaciones»: para todos ellos una tarea creada desde
+una plantilla es una tarea de varios pasos como cualquier otra.
+
+Entran en una tarea por un único camino, `instantiateWorkflowTemplate()`, que
+delega en el mismo `cloneWorkflowSteps` que las plantillas guardadas en la
+biblioteca. De ahí hereda la garantía que importa: **identificadores nuevos**.
+`Submission.stepEvidence` se indexa por `stepId`, así que dos tareas que
+compartieran ids compartirían la evidencia de sus estudiantes.
+
+Añadir teoría de colas, inventarios o simulación es añadir una entrada a ese
+archivo. No hay nada más que tocar.
+
+### El lenguaje de programación es un valor, no un booleano
+
+`StepDeliverable.language` guarda `'r'`, `'python'`, … sobre una unión abierta,
+y `PROGRAMMING_LANGUAGES` decide cuál se OFRECE hoy (sólo R). Habilitar el
+segundo lenguaje es cambiar un `enabled` y añadir su extensión a
+`ACADEMIC_FILE_EXTENSIONS.code`; las entregas ya guardadas no se tocan. Un
+`isR` habría obligado a rehacerlas.
+
+`CodeData` guarda el fuente pegado **y** la clave del archivo adjunto, y las dos
+conviven: pegarlo es lo que permite revisar sin descargar nada —que es como se
+corrigen veinte entregas—, adjuntarlo es lo que permite ejecutarlo. Cada una
+resuelve un uso distinto. UINexus no ejecuta ninguna de las dos (ver
+docs/SECURITY.md).
+
+### La política institucional, en un solo sitio
+
+`lib/identity.ts` es la única definición de quién pertenece a la comunidad.
+`lib/auth-session.ts` la aplica al restaurar la sesión del navegador —antes de
+crear el perfil— y `lib/server/session.ts` la aplica sobre `decoded.email` en
+`requireIdentity`, que es el punto por el que pasan todas las rutas. El módulo
+de identidad sigue sin declarar lado (ni `'use client'` ni `server-only`) por la
+misma razón de siempre: una regla que ambos lados comparten no puede vivir en un
+módulo que declara uno.
