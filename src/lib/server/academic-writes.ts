@@ -11,7 +11,11 @@ import {
   normalizeCourse,
   submissionIdFor,
 } from '../data/academic';
-import { ACADEMIC_LIMITS } from '../constants';
+import {
+  ACADEMIC_LIMITS,
+  DEFAULT_CODE_MODE,
+  DEFAULT_PROGRAMMING_LANGUAGE,
+} from '../constants';
 import type { AssignmentInput, WorkflowStepInput } from '../academic-schemas';
 import { slugify } from '../slug';
 import { assertAcyclicWorkflow } from '../workflow';
@@ -342,7 +346,14 @@ export function buildWorkflowSteps(
       hint: deliverable.hint,
       // El lenguaje sólo se guarda si el entregable es código: un `language`
       // colgando de un paso de texto sería un campo que hay que interpretar.
-      language: deliverable.type === 'code' ? (deliverable.language ?? 'r') : null,
+      language:
+        deliverable.type === 'code'
+          ? (deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE)
+          : null,
+      codeMode:
+        deliverable.type === 'code' ? (deliverable.codeMode ?? DEFAULT_CODE_MODE) : null,
+      starterCode: deliverable.type === 'code' ? deliverable.starterCode : '',
+      executionEnabled: deliverable.type === 'code' ? deliverable.executionEnabled : false,
       questions: deliverable.questions.map((question, position) => ({
         ...question,
         group: question.group ?? null,

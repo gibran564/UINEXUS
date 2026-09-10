@@ -4,14 +4,22 @@ import Link from 'next/link';
 import { useId, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import {
+  ACADEMIC_LIMITS,
   ACADEMIC_FILE_LIMITS,
   FILE_CLASS_BY_DELIVERABLE,
+  LEGACY_CODE_MODE,
+  PROGRAMMING_LANGUAGES,
   acceptAttributeFor,
   fileLimitLabel,
   programmingLanguageLabel,
 } from '@/lib/constants';
 import { allowedExtensionsFor, resolveAcademicUpload } from '@/lib/academic-files';
-import { academicFileUrl, openSignedUrl, uploadAcademicFile } from '@/lib/aula-client';
+import {
+  academicFileUrl,
+  downloadText,
+  openSignedUrl,
+  uploadAcademicFile,
+} from '@/lib/aula-client';
 import { aiWorklogToMarkdown, detectTextFormat, normalizeAIResult } from '@/lib/ai-worklog';
 import { AI_MODEL_SUGGESTIONS, AI_PROVIDERS, LINK_PROVIDERS } from '@/lib/constants';
 import type { AssignmentDetail } from '@/lib/aula-client';
@@ -22,6 +30,7 @@ import type {
   AIProvider,
   AIWorklogData,
   CodeData,
+  CodeMode,
   ExternalLinkData,
   FreeformData,
   MediaData,
@@ -34,6 +43,7 @@ import { Field, Notice } from './aula-ui';
 import { CopyButton } from './copy-button';
 import { LinkCard } from './link-card';
 import { MarkdownContent } from './markdown-content';
+import { CodeEditor, sourceFilenameFor } from './code-editor';
 
 /**
  * Los formularios de cada tipo de entregable.

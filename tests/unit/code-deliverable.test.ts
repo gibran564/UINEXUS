@@ -37,8 +37,8 @@ const codeStep = (language = 'r') =>
   });
 
 describe('el catálogo de lenguajes', () => {
-  it('hoy sólo R está habilitado', () => {
-    expect(ENABLED_PROGRAMMING_LANGUAGES.map((option) => option.value)).toEqual(['r']);
+  it('R y Python están habilitados', () => {
+    expect(ENABLED_PROGRAMMING_LANGUAGES.map((option) => option.value)).toEqual(['r', 'python']);
     expect(DEFAULT_PROGRAMMING_LANGUAGE).toBe('r');
   });
 
@@ -55,6 +55,17 @@ describe('el catálogo de lenguajes', () => {
     // Uno desconocido no rompe la pantalla: se muestra tal cual.
     expect(programmingLanguageLabel('rust')).toBe('rust');
     expect(programmingLanguageLabel(null)).toBe('Sin lenguaje');
+  });
+
+  it('el catálogo centraliza extensión y lenguaje de Monaco', () => {
+    expect(PROGRAMMING_LANGUAGES.find((option) => option.value === 'r')).toMatchObject({
+      extension: 'r',
+      monacoLanguage: 'r',
+    });
+    expect(PROGRAMMING_LANGUAGES.find((option) => option.value === 'python')).toMatchObject({
+      extension: 'py',
+      monacoLanguage: 'python',
+    });
   });
 
   it('el entregable de código tiene su etiqueta', () => {
@@ -82,8 +93,83 @@ describe('una tarea puede declarar que se resuelve en R', () => {
     expect(normalizeDeliverable({ type: 'code' }).language).toBe('r');
   });
 
+  it('un paso legacy sin modalidad conserva editor y archivo', () => {
+    expect(normalizeDeliverable({ type: 'code' })).toMatchObject({
+      codeMode: 'either',
+      starterCode: '',
+      executionEnabled: false,
+    });
+  });
+
+  it('un input nuevo nace en editor y conserva el código inicial sin trim', () => {
+    const starterCode = '  data = [10, 20, 30]\n\n';
+    const parsed = workflowStepSchema.safeParse({
+      id: 'python',
+      title: 'Resuélvelo en Python',
+      deliverables: [{ type: 'code', language: 'python', starterCode }],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.deliverables[0]).toMatchObject({
+        codeMode: 'editor',
+        starterCode,
+        executionEnabled: false,
+      });
+    }
+  });
+
+  it('acepta configuración explícita de modalidad y ejecución', () => {
+    const parsed = workflowStepSchema.safeParse({
+      id: 'r',
+      title: 'Modelo en R',
+      deliverables: [
+        {
+          type: 'code',
+          language: 'r',
+          codeMode: 'upload',
+          executionEnabled: true,
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.deliverables[0]).toMatchObject({
+        codeMode: 'upload',
+        starterCode: '',
+        executionEnabled: true,
+      });
+    }
+  });
+
+  it('rechaza una modalidad desconocida y un starter demasiado grande', () => {
+    expect(
+      workflowStepSchema.safeParse({
+        id: 'modo',
+        title: 'Modo inválido',
+        deliverables: [{ type: 'code', codeMode: 'terminal' }],
+      }).success
+    ).toBe(false);
+    expect(
+      workflowStepSchema.safeParse({
+        id: 'starter',
+        title: 'Starter inválido',
+        deliverables: [{ type: 'code', starterCode: 'x'.repeat(60_001) }],
+      }).success
+    ).toBe(false);
+  });
+
   it('un paso que NO es de código no arrastra ningún lenguaje', () => {
-    expect(normalizeDeliverable({ type: 'text', language: 'python' }).language).toBeNull();
+    expect(
+      normalizeDeliverable({
+        type: 'text',
+        language: 'python',
+        codeMode: 'editor',
+        starterCode: 'print(1)',
+        executionEnabled: true,
+      })
+    ).toMatchObject({ language: null, codeMode: null, starterCode: '', executionEnabled: false });
   });
 
   it('admite un lenguaje que todavía no se ofrece en la interfaz', () => {
@@ -173,6 +259,24 @@ describe('un archivo .R se procesa según la política de archivos', () => {
     expect(resolveAcademicUpload('document', { fileName: 'modelo.R' })).toEqual({
       extension: 'r',
       contentType: 'text/plain',
+    });
+  });
+});
+
+describe('un archivo .py usa la misma política cerrada', () => {
+  it('se decide por la extensión aunque el navegador mande un tipo genérico', () => {
+    for (const contentType of ['', 'application/octet-stream', 'text/plain', 'text/x-python']) {
+      expect(resolveAcademicUpload('code', { fileName: 'solucion.py', contentType })).toEqual({
+        extension: 'py',
+        contentType: 'text/plain',
+      });
+    }
+  });
+
+  it('sin nombre, un MIME específico de Python conserva la extensión correcta', () => {
+    expect(resolveAcademicUpload('code', { contentType: 'text/x-python' })).toEqual({
+      extension: 'py',
+      contentType: 'text/x-python',
     });
   });
 });

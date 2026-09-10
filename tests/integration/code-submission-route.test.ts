@@ -32,7 +32,7 @@ import {
 
 type Actor = (typeof ACTORS)[keyof typeof ACTORS];
 
-async function createCodeAssignment(): Promise<Assignment> {
+async function createCodeAssignment(language: 'r' | 'python' = 'r'): Promise<Assignment> {
   const response = await createAssignmentRoute(
     jsonRequestAs(
       ACTORS.teacherA,
@@ -50,9 +50,18 @@ async function createCodeAssignment(): Promise<Assignment> {
           },
           {
             id: 'codigo',
-            title: 'Desarrolla la solución en R',
+            title: `Desarrolla la solución en ${language === 'r' ? 'R' : 'Python'}`,
             actionType: 'code',
-            deliverables: [{ type: 'code', required: true, language: 'r' }],
+            deliverables: [
+              {
+                type: 'code',
+                required: true,
+                language,
+                codeMode: 'editor',
+                starterCode: language === 'r' ? 'datos <- c(10, 20, 30)\n' : 'data = [10, 20, 30]\n',
+                executionEnabled: true,
+              },
+            ],
             dependsOnStepIds: ['reporte'],
           },
         ],
@@ -104,7 +113,13 @@ describe('una tarea que se resuelve en R', () => {
     const step = (body.assignment.workflow as Assignment['workflow']).find(
       (item) => item.id === 'codigo'
     );
-    expect(step?.deliverables[0]).toMatchObject({ type: 'code', language: 'r' });
+    expect(step?.deliverables[0]).toMatchObject({
+      type: 'code',
+      language: 'r',
+      codeMode: 'editor',
+      starterCode: 'datos <- c(10, 20, 30)\n',
+      executionEnabled: true,
+    });
   });
 
   it('se entrega con el código pegado, sin ningún ejecutor de por medio', async () => {
@@ -143,6 +158,34 @@ describe('una tarea que se resuelve en R', () => {
     expect(code.code).toContain('lpSolve');
   });
 
+  it('el lenguaje persistido lo dicta el step y no el cuerpo del alumno', async () => {
+    const assignment = await createCodeAssignment('r');
+
+    const response = await saveSubmissionRoute(
+      jsonRequestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignment.id}/submission`,
+        'PUT',
+        {
+          intent: 'draft',
+          steps: [
+            {
+              stepId: 'codigo',
+              data: { language: 'python', code: 'print(2 + 2)' },
+            },
+          ],
+        }
+      ),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+
+    expect(response.status).toBe(200);
+    const persisted = await getPersistedSubmission(
+      submissionIdFor(assignment.id, ACTORS.studentA.uid)
+    );
+    expect((persisted?.stepEvidence.codigo?.data as CodeData).language).toBe('r');
+  });
+
   it('acepta el `.R` adjunto aunque el navegador no diga qué tipo es', async () => {
     const assignment = await createCodeAssignment();
 
@@ -174,6 +217,34 @@ describe('una tarea que se resuelve en R', () => {
 
     expect(response.status).toBe(422);
     expect((await response.json()).error).toContain('no se admite');
+  });
+
+  it('Python llega al alumnado y admite un `.py` como texto plano', async () => {
+    const assignment = await createCodeAssignment('python');
+    const read = await readAssignmentRoute(
+      requestAs(ACTORS.studentA, `http://localhost/api/assignments/${assignment.id}`),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+    const body = await read.json();
+    const step = (body.assignment.workflow as Assignment['workflow']).find(
+      (item) => item.id === 'codigo'
+    );
+    expect(step?.deliverables[0]).toMatchObject({
+      language: 'python',
+      codeMode: 'editor',
+      executionEnabled: true,
+    });
+
+    const upload = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'codigo',
+      contentType: 'application/octet-stream',
+      sizeBytes: 512,
+      fileName: 'solucion.py',
+    });
+    expect(upload.status).toBe(200);
+    const uploadBody = await upload.json();
+    expect(uploadBody.storageKey).toMatch(/\/codigo\/[\w-]+\.py$/);
+    expect(uploadBody.upload.fields['Content-Type']).toBe('text/plain');
   });
 });
 

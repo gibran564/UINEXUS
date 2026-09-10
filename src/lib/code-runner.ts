@@ -1,7 +1,16 @@
 import 'server-only';
 
-import { ACADEMIC_LIMITS } from './constants';
+import {
+  CODE_RUN_LIMITS,
+  clampCodeRunResult,
+  rejectedCodeRun,
+  validateCodeRunRequest,
+} from './code-runner-contract';
+import type { CodeRunRequest, CodeRunResult, CodeRunner } from './code-runner-contract';
 import type { ProgrammingLanguage } from './types';
+
+export type { CodeRunRequest, CodeRunResult, CodeRunner } from './code-runner-contract';
+export { CODE_RUN_LIMITS } from './code-runner-contract';
 
 /**
  * Ejecución de código: la interfaz, y por qué hoy no hay nadie detrás.
@@ -39,38 +48,6 @@ import type { ProgrammingLanguage } from './types';
  *  · El cliente elige QUÉ código y en qué lenguaje, nunca QUÉ COMANDO: en esta
  *    interfaz no hay ningún hueco donde quepa un comando.
  */
-
-export interface CodeRunRequest {
-  language: ProgrammingLanguage;
-  source: string;
-  /** Entrada estándar, si la actividad la necesita. */
-  stdin?: string;
-}
-
-export interface CodeRunResult {
-  /** `ok` ejecutó; `failed` ejecutó y falló; `rejected` ni siquiera se intentó. */
-  status: 'ok' | 'failed' | 'timeout' | 'rejected';
-  stdout: string;
-  stderr: string;
-  /** Código de salida del proceso remoto, si lo hubo. */
-  exitCode: number | null;
-  durationMs: number;
-  /** `true` cuando la salida se cortó por el límite. */
-  truncated: boolean;
-}
-
-export interface CodeRunner {
-  readonly name: string;
-  supports(language: ProgrammingLanguage): boolean;
-  run(request: CodeRunRequest): Promise<CodeRunResult>;
-}
-
-/** Límites del lado de UINexus. El sandbox debe aplicar los suyos igualmente. */
-export const CODE_RUN_LIMITS = {
-  timeoutMs: 10_000,
-  maxOutputChars: 20_000,
-  maxSourceChars: ACADEMIC_LIMITS.codeMax,
-} as const;
 
 const RUNNER_URL = process.env.UINEXUS_CODE_RUNNER_URL?.trim() ?? '';
 const RUNNER_TOKEN = process.env.UINEXUS_CODE_RUNNER_TOKEN?.trim() ?? '';
@@ -116,13 +93,8 @@ class HttpCodeRunner implements CodeRunner {
 
   async run(request: CodeRunRequest): Promise<CodeRunResult> {
     const started = Date.now();
-
-    if (!this.supports(request.language)) {
-      return rejected('Ese lenguaje no se puede ejecutar todavía.', Date.now() - started);
-    }
-    if (request.source.length > CODE_RUN_LIMITS.maxSourceChars) {
-      return rejected('El código es demasiado largo para ejecutarlo.', Date.now() - started);
-    }
+    const invalid = validateCodeRunRequest(request, (language) => this.supports(language));
+    if (invalid) return { ...invalid, durationMs: Date.now() - started };
 
     const abort = AbortSignal.timeout(CODE_RUN_LIMITS.timeoutMs);
 
@@ -143,21 +115,18 @@ class HttpCodeRunner implements CodeRunner {
       });
 
       if (!response.ok) {
-        return rejected('El servicio de ejecución no respondió.', Date.now() - started);
+        return rejectedCodeRun('El servicio de ejecución no respondió.', Date.now() - started);
       }
 
       const body = (await response.json()) as Partial<CodeRunResult>;
-      const stdout = clamp(body.stdout ?? '');
-      const stderr = clamp(body.stderr ?? '');
-
-      return {
+      return clampCodeRunResult({
         status: body.status === 'ok' || body.status === 'failed' ? body.status : 'failed',
-        stdout: stdout.text,
-        stderr: stderr.text,
+        stdout: body.stdout ?? '',
+        stderr: body.stderr ?? '',
         exitCode: typeof body.exitCode === 'number' ? body.exitCode : null,
         durationMs: Date.now() - started,
-        truncated: stdout.truncated || stderr.truncated,
-      };
+        truncated: Boolean(body.truncated),
+      });
     } catch (caught) {
       const timedOut = caught instanceof Error && caught.name === 'TimeoutError';
       return {
@@ -172,20 +141,4 @@ class HttpCodeRunner implements CodeRunner {
       };
     }
   }
-}
-
-function rejected(message: string, durationMs: number): CodeRunResult {
-  return {
-    status: 'rejected',
-    stdout: '',
-    stderr: message,
-    exitCode: null,
-    durationMs,
-    truncated: false,
-  };
-}
-
-function clamp(value: string): { text: string; truncated: boolean } {
-  if (value.length <= CODE_RUN_LIMITS.maxOutputChars) return { text: value, truncated: false };
-  return { text: value.slice(0, CODE_RUN_LIMITS.maxOutputChars), truncated: true };
 }

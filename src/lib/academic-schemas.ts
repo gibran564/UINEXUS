@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ACADEMIC_LIMITS, WORKFLOW_LIMITS } from './constants';
+import { ACADEMIC_LIMITS, DEFAULT_CODE_MODE, WORKFLOW_LIMITS } from './constants';
 import { detectTextFormat } from './ai-worklog';
 import { HANDLE_PATTERN } from './slug';
 import { assertAcyclicWorkflow } from './workflow';
@@ -222,21 +222,32 @@ export function deliverableSchemaFor(type: z.infer<typeof deliverableTypeSchema>
   }
 }
 
-export const stepDeliverableSchema = z.object({
-  type: deliverableTypeSchema,
-  required: z.boolean().default(true),
-  hint: z.string().trim().max(400).default(''),
-  questions: z
-    .array(researchQuestionSchema)
-    .max(ACADEMIC_LIMITS.maxResearchQuestions)
-    .default([]),
-  /**
-   * En qué lenguaje se pide la solución. Sólo significa algo con
-   * `type === 'code'`; ausente en cualquier otro caso, que es lo que traen los
-   * pasos guardados antes de que existiera el entregable de código.
-   */
-  language: programmingLanguageSchema.nullish(),
-});
+export const stepDeliverableSchema = z
+  .object({
+    type: deliverableTypeSchema,
+    required: z.boolean().default(true),
+    hint: z.string().trim().max(400).default(''),
+    questions: z
+      .array(researchQuestionSchema)
+      .max(ACADEMIC_LIMITS.maxResearchQuestions)
+      .default([]),
+    /**
+     * En qué lenguaje se pide la solución. Sólo significa algo con
+     * `type === 'code'`; ausente en cualquier otro caso, que es lo que traen los
+     * pasos guardados antes de que existiera el entregable de código.
+     */
+    language: programmingLanguageSchema.nullish(),
+    codeMode: z.enum(['editor', 'upload', 'either']).nullish(),
+    // Sin trim: la sangría y los saltos son parte del programa inicial.
+    starterCode: z.string().max(ACADEMIC_LIMITS.codeMax).default(''),
+    executionEnabled: z.boolean().default(false),
+  })
+  .transform((deliverable) => ({
+    ...deliverable,
+    codeMode: deliverable.type === 'code' ? (deliverable.codeMode ?? DEFAULT_CODE_MODE) : null,
+    starterCode: deliverable.type === 'code' ? deliverable.starterCode : '',
+    executionEnabled: deliverable.type === 'code' ? deliverable.executionEnabled : false,
+  }));
 
 export const toolChoiceSchema = z.object({
   mode: z.enum(['none', 'required', 'choice', 'free']).default('none'),

@@ -119,6 +119,36 @@ describe('clonar una plantilla: qué se conserva y qué no', () => {
     );
     expect(cloned[0]?.tool.toolNames).toEqual(['Perplexity']);
   });
+
+  it('conserva toda la configuración de un entregable de código', () => {
+    const [cloned] = cloneWorkflowSteps(
+      [
+        step({
+          id: 'code',
+          deliverables: [
+            {
+              type: 'code',
+              required: true,
+              hint: '',
+              questions: [],
+              language: 'python',
+              codeMode: 'editor',
+              starterCode: 'data = [10, 20, 30]\n',
+              executionEnabled: true,
+            },
+          ],
+        }),
+      ],
+      counter('a')
+    );
+
+    expect(cloned?.deliverables[0]).toMatchObject({
+      language: 'python',
+      codeMode: 'editor',
+      starterCode: 'data = [10, 20, 30]\n',
+      executionEnabled: true,
+    });
+  });
 });
 
 describe('clonar no modifica la plantilla original', () => {

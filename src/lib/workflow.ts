@@ -1,5 +1,8 @@
 import { LEGACY_STEP_ID } from './types';
-import { DEFAULT_PROGRAMMING_LANGUAGE as DEFAULT_CODE_LANGUAGE } from './constants';
+import {
+  DEFAULT_PROGRAMMING_LANGUAGE as DEFAULT_CODE_LANGUAGE,
+  LEGACY_CODE_MODE,
+} from './constants';
 import { detectTextFormat, normalizeAIResult } from './ai-worklog';
 import type {
   AIWorklogData,
@@ -89,11 +92,16 @@ export function normalizeDeliverable(raw: Partial<StepDeliverable>): StepDeliver
     questions: raw.questions ?? [],
     /**
      * El lenguaje sólo significa algo en un paso de código. Se normaliza a `r`
-     * —el único habilitado hoy— cuando falta, para que el formulario del
+     * —el valor histórico por defecto— cuando falta, para que el formulario del
      * alumnado nunca tenga que decidirlo por su cuenta; en cualquier otro tipo
      * de paso se deja en `null` para no guardar un dato que no describe nada.
      */
     language: raw.type === 'code' ? (raw.language ?? DEFAULT_CODE_LANGUAGE) : null,
+    // Antes de las modalidades, un paso ofrecía fuente pegado y archivo
+    // opcional. Las entradas nuevas escriben `editor` explícitamente.
+    codeMode: raw.type === 'code' ? (raw.codeMode ?? LEGACY_CODE_MODE) : null,
+    starterCode: raw.type === 'code' ? (raw.starterCode ?? '') : '',
+    executionEnabled: raw.type === 'code' ? (raw.executionEnabled ?? false) : false,
   };
 }
 

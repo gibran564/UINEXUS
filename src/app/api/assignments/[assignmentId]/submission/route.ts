@@ -25,9 +25,11 @@ import { upsertSubmission } from '@/lib/server/academic-writes';
 import { assertResourcesBelongTo } from '@/lib/server/resources';
 import { LEGACY_STEP_ID } from '@/lib/types';
 import { isAcademicFileKeyFor } from '@/lib/aws/s3';
+import { DEFAULT_PROGRAMMING_LANGUAGE } from '@/lib/constants';
 import type {
   AIWorklogData,
   AssignmentRecord,
+  CodeData,
   MediaData,
   StepEvidence,
   SubmissionData,
@@ -182,7 +184,16 @@ async function saveSteppedSubmission(
       );
     }
 
-    const parsedData = parsed.data as SubmissionData;
+    let parsedData = parsed.data as SubmissionData;
+    // El lenguaje lo dicta la tarea, no el navegador. El valor redundante en
+    // CodeData mantiene autocontenidas las entregas viejas, pero no puede dejar
+    // que el alumnado convierta un paso de R en Python cambiando el cuerpo.
+    if (deliverable.type === 'code') {
+      parsedData = {
+        ...(parsedData as CodeData),
+        language: deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE,
+      };
+    }
     // Un paso de código también puede llevar archivo adjunto, y su clave se
     // comprueba con la misma regla: tiene que ser una que este servidor emitió
     // para esta persona y este paso.

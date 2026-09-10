@@ -4,6 +4,7 @@ import type {
   AssignmentMaterialKind,
   AssignmentStatus,
   AssignmentType,
+  CodeMode,
   ProjectStatus,
   DeliverableType,
   ProgrammingLanguage,
@@ -417,11 +418,13 @@ export interface ProgrammingLanguageOption {
   label: string;
   /** Extensión canónica del fuente. Decide qué acepta el selector de archivo. */
   extension: string;
+  /** Identificador del lenguaje que espera Monaco Editor. */
+  monacoLanguage: string;
   /**
    * Si se puede elegir HOY al crear un paso.
    *
    * Los deshabilitados están nombrados a propósito: el modelo ya los admite —una
-   * tarea guardada con `python` se lee sin problema— y encenderlos el día que
+   * tarea guardada con otro valor se lee sin problema— y encenderlo el día que
    * haga falta es cambiar este booleano y añadir su extensión a
    * `ACADEMIC_FILE_EXTENSIONS.code`. No hay nada más que rehacer, y ésa es toda
    * la razón de que el lenguaje sea un valor y no un `isR`.
@@ -430,12 +433,18 @@ export interface ProgrammingLanguageOption {
 }
 
 export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
-  { value: 'r', label: 'R', extension: 'r', enabled: true },
-  { value: 'python', label: 'Python', extension: 'py', enabled: false },
-  { value: 'javascript', label: 'JavaScript', extension: 'js', enabled: false },
-  { value: 'java', label: 'Java', extension: 'java', enabled: false },
-  { value: 'cpp', label: 'C / C++', extension: 'cpp', enabled: false },
-  { value: 'sql', label: 'SQL', extension: 'sql', enabled: false },
+  { value: 'r', label: 'R', extension: 'r', monacoLanguage: 'r', enabled: true },
+  { value: 'python', label: 'Python', extension: 'py', monacoLanguage: 'python', enabled: true },
+  {
+    value: 'javascript',
+    label: 'JavaScript',
+    extension: 'js',
+    monacoLanguage: 'javascript',
+    enabled: false,
+  },
+  { value: 'java', label: 'Java', extension: 'java', monacoLanguage: 'java', enabled: false },
+  { value: 'cpp', label: 'C / C++', extension: 'cpp', monacoLanguage: 'cpp', enabled: false },
+  { value: 'sql', label: 'SQL', extension: 'sql', monacoLanguage: 'sql', enabled: false },
 ];
 
 export const ENABLED_PROGRAMMING_LANGUAGES = PROGRAMMING_LANGUAGES.filter(
@@ -444,6 +453,12 @@ export const ENABLED_PROGRAMMING_LANGUAGES = PROGRAMMING_LANGUAGES.filter(
 
 /** El lenguaje con el que nace un paso de código. */
 export const DEFAULT_PROGRAMMING_LANGUAGE: ProgrammingLanguage = 'r';
+
+/** Las actividades nuevas de programación nacen en el editor integrado. */
+export const DEFAULT_CODE_MODE: CodeMode = 'editor';
+
+/** Los pasos guardados sin modalidad conservan el comportamiento anterior. */
+export const LEGACY_CODE_MODE: CodeMode = 'either';
 
 export function programmingLanguageLabel(language: ProgrammingLanguage | null | undefined): string {
   if (!language) return 'Sin lenguaje';
@@ -571,6 +586,7 @@ export const ACADEMIC_FILE_EXTENSIONS: Readonly<
   },
   code: {
     r: 'text/plain',
+    py: 'text/plain',
   },
   material: {
     pdf: 'application/pdf',
@@ -622,12 +638,14 @@ export const ACADEMIC_FILE_TYPES: Readonly<
     'video/webm': 'webm',
     'video/quicktime': 'mov',
   },
-  // Sólo R está habilitado (ver PROGRAMMING_LANGUAGES), así que un texto plano
-  // en un paso de código es un fuente de R.
+  // Sin nombre de archivo, `text/plain` conserva el fallback histórico de R.
+  // Python se reconoce sin ambigüedad por `.py` o por uno de sus MIME propios.
   code: {
     'text/plain': 'r',
     'text/x-r': 'r',
     'text/x-r-source': 'r',
+    'text/x-python': 'py',
+    'application/x-python-code': 'py',
   },
   material: {
     'application/pdf': 'pdf',

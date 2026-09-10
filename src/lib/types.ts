@@ -309,7 +309,7 @@ export type DeliverableType =
  * Es una unión ABIERTA por la misma razón que `StepActionType`: el modelo no
  * puede depender de un despliegue para admitir Python el día que haga falta.
  * Qué se ofrece HOY en la interfaz lo decide `PROGRAMMING_LANGUAGES`
- * (lib/constants.ts), donde sólo R está habilitado. Los demás valores están
+ * (lib/constants.ts), donde R y Python están habilitados. Los demás valores están
  * nombrados para que una tarea guardada mañana se lea sin migrar nada.
  *
  * Deliberadamente NO es un booleano `isR`: eso habría obligado a rehacer las
@@ -323,6 +323,9 @@ export type ProgrammingLanguage =
   | 'cpp'
   | 'sql'
   | (string & {});
+
+/** Cómo puede entregar el fuente el alumnado en un paso de programación. */
+export type CodeMode = 'editor' | 'upload' | 'either';
 
 export interface StepDeliverable {
   type: DeliverableType;
@@ -339,6 +342,12 @@ export interface StepDeliverable {
    * piden código.
    */
   language?: ProgrammingLanguage | null;
+  /** Opcional por compatibilidad; un paso de código legacy se normaliza a `either`. */
+  codeMode?: CodeMode | null;
+  /** Fuente inicial de la docente. Los espacios son significativos. */
+  starterCode?: string;
+  /** Si la interfaz puede ofrecer ejecución dentro de un sandbox aislado. */
+  executionEnabled?: boolean;
 }
 
 /**

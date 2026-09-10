@@ -1,5 +1,7 @@
 import { cloneWorkflowSteps, normalizeStep, type IdFactory } from './workflow';
+import { DEFAULT_CODE_MODE, DEFAULT_PROGRAMMING_LANGUAGE } from './constants';
 import type {
+  CodeMode,
   DeliverableType,
   ProgrammingLanguage,
   StepActionType,
@@ -49,6 +51,12 @@ export interface WorkflowTemplateStep {
   toolMode?: ToolChoiceMode;
   /** Sólo con `deliverable: 'code'`. */
   language?: ProgrammingLanguage;
+  /** Sólo con `deliverable: 'code'`. */
+  codeMode?: CodeMode;
+  /** Sólo con `deliverable: 'code'`. */
+  starterCode?: string;
+  /** Sólo con `deliverable: 'code'`. */
+  executionEnabled?: boolean;
   /**
    * Pasos previos de los que depende. Si no se dice nada, depende del anterior
    * OBLIGATORIO; ver `chainDependencies` para el porqué.
@@ -376,6 +384,8 @@ export const WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
         deliverable: 'code',
         actionType: 'code',
         language: 'r',
+        codeMode: 'editor',
+        executionEnabled: true,
       },
       {
         key: 'evidencia',
@@ -483,7 +493,15 @@ export function templateWorkflowSteps(template: WorkflowTemplate): WorkflowStepR
             required: step.required !== false,
             hint: step.hint ?? '',
             questions: [],
-            language: step.deliverable === 'code' ? (step.language ?? 'r') : null,
+            language:
+              step.deliverable === 'code'
+                ? (step.language ?? DEFAULT_PROGRAMMING_LANGUAGE)
+                : null,
+            codeMode:
+              step.deliverable === 'code' ? (step.codeMode ?? DEFAULT_CODE_MODE) : null,
+            starterCode: step.deliverable === 'code' ? (step.starterCode ?? '') : '',
+            executionEnabled:
+              step.deliverable === 'code' ? (step.executionEnabled ?? false) : false,
           },
         ],
         required: step.required !== false,

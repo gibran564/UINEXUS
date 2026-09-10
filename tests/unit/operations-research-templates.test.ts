@@ -237,7 +237,11 @@ describe('lo que pide cada plantilla', () => {
     const steps = templateWorkflowSteps(getWorkflowTemplate('io-caso-practico-software')!);
 
     const codigo = steps.find((step) => step.deliverables[0]?.type === 'code');
-    expect(codigo?.deliverables[0]?.language).toBe('r');
+    expect(codigo?.deliverables[0]).toMatchObject({
+      language: 'r',
+      codeMode: 'editor',
+      executionEnabled: true,
+    });
 
     const herramienta = steps.find((step) => step.tool.mode === 'free');
     expect(herramienta?.title).toContain('Herramienta');
