@@ -5,7 +5,8 @@ import Link from 'next/link';
 export const metadata: Metadata = {
   title: 'Acerca de UINexus',
   description:
-    'Qué es UINexus, cómo se protege el contenido que suben los alumnos y qué datos se publican.',
+    'Qué es UINexus, cómo se ejecuta el código del alumnado, cómo se protege lo que publica y ' +
+    'qué datos se hacen públicos.',
 };
 
 export default function AboutPage() {
@@ -15,9 +16,10 @@ export default function AboutPage() {
         <h1 className="font-display text-h1">Acerca de UINexus</h1>
 
         <p className="mt-5 text-lead text-muted">
-          UINexus es el lugar donde el trabajo de una materia de diseño deja de vivir en una
-          carpeta compartida. Un alumno sube su página, obtiene una dirección propia y la
-          comparte. Cualquiera puede verla sin cuenta, sin instalar nada y sin pedir permiso.
+          UINexus es el lugar donde una actividad de clase deja de vivir en una carpeta
+          compartida. Se plantea aquí, se programa aquí, se ejecuta aquí y se entrega aquí; y
+          cuando el trabajo está listo, obtiene una dirección propia que cualquiera puede abrir
+          sin cuenta, sin instalar nada y sin pedir permiso.
         </p>
 
         <p className="mt-4 text-muted">
@@ -42,16 +44,18 @@ export default function AboutPage() {
             <div>
               <dt className="font-medium">Para quien estudia</dt>
               <dd className="mt-1 text-muted">
-                Publicar proyectos, actualizarlos sin perder el enlace, decidir si son públicos
-                o sólo para quien tenga la dirección, y tener un portafolio que crece solo.
+                Programar en el editor, ejecutar Python y R sin instalar nada, guardar prácticas
+                propias, entregar actividades, y publicar proyectos que se actualizan sin perder
+                el enlace. Un portafolio que crece con las clases.
               </dd>
             </div>
             <div>
               <dt className="font-medium">Para quien da clase</dt>
               <dd className="mt-1 text-muted">
-                Una galería oficial por curso, actividades con su fecha límite y la posibilidad
-                de destacar o retirar trabajos. UINexus no pretende sustituir a Moodle, Classroom
-                ni Canvas: sólo publica y exhibe.
+                Actividades de varios pasos, con lenguaje y código inicial cuando piden
+                programar, revisión del código en el mismo editor y una galería oficial por
+                materia. UINexus no pretende sustituir a Moodle, Classroom ni Canvas: se ocupa
+                de lo que se construye.
               </dd>
             </div>
           </dl>

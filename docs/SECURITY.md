@@ -407,3 +407,577 @@ Van al bucket **privado**, bajo `academic/{courseId}/{uid}/{assignmentId}/{stepI
   usarse para leer el código de los proyectos.
 
 Nada se borra en cascada. Ver la tabla de retención en CHECKPOINTS.md.
+
+---
+
+## Identidad institucional (iteración 5)
+
+### Un token válido de Firebase NO es una autorización
+
+Firebase Authentication acepta cualquier cuenta de Google. UINexus, no: la
+comunidad son los correos `@itdurango.edu.mx` más una allowlist docente
+explícita (`ALLOWED_SPECIAL_EMAILS`). La regla vive en **un solo sitio**,
+`lib/identity.ts`, y la aplican los dos lados:
+
+| Dónde | Qué hace |
+|---|---|
+| `lib/server/session.ts` · `requireIdentity` | Tras verificar el token, comprueba `decoded.email` y responde **403** antes de leer perfil o tocar nada académico. |
+| `lib/auth-session.ts` · `resolveRestoredSession` | Comprueba el correo **antes** de `ensureUserProfile`; si no procede, cierra la sesión de Firebase y lleva a `/login?reason=invalid-domain`. |
+
+El servidor es la garantía; el cliente es la experiencia. Que el navegador
+cierre la sesión evita una plataforma inutilizable, pero incluso si no lo
+hiciera, ninguna ruta respondería con datos.
+
+### El fallo que esto corrige
+
+La validación vivía sólo en los métodos explícitos de login. Firebase **persiste
+la sesión**: al recargar, `onAuthStateChanged` devuelve el usuario sin pasar por
+ninguno de ellos. Una cuenta ajena quedaba restaurada como autenticada, con
+perfil creado y con todas las llamadas al aula respondiendo 403 desde el otro
+lado. Técnicamente había sesión; funcionalmente no había plataforma, y sin
+ninguna salida visible.
+
+Por eso la comprobación está en `requireIdentity` y no repartida por las rutas:
+es el único punto por el que pasan todas —`requireActor`, `requireWriter`,
+`requireStaff`, `requireAdmin` se apoyan en él—, y una comprobación repetida en
+treinta endpoints es una comprobación que en alguno se olvida.
+
+### Acceso por teléfono: retirado
+
+UINexus autoriza sobre el CORREO institucional. Un número de teléfono no puede
+demostrar pertenencia a `@itdurango.edu.mx`, y una sesión creada por SMS llegaba
+sin correo: exactamente el caso que la política no puede evaluar. Se retiró
+—no se deshabilitó a medias— del proveedor de sesión, del formulario y de
+`firebase/auth.ts`. El servidor lo rechazaría igualmente, porque un token sin
+correo no pasa `isInstitutionalEmail`.
+
+Volvería como **segundo factor** de una cuenta institucional ya verificada
+(`linkWithPhoneNumber` sobre el usuario actual), nunca como forma de entrar.
+
+---
+
+## Materiales de la tarea (iteración 5)
+
+Los archivos que el profesorado reparte son un concepto **distinto** de las
+entregas, y tienen su propia ruta (`/api/assignments/[id]/materials`) porque sus
+dos preguntas de autorización son las contrarias:
+
+|  | Entrega (`/files`) | Material (`/materials`) |
+|---|---|---|
+| Escribe | El alumnado, en su paso | Sólo docente de la materia |
+| Lee | Su autor y el profesorado | Cualquiera con acceso a la tarea |
+| Prefijo en S3 | `academic/{materia}/{uid}/{tarea}/{paso}/` | `academic/materials/{materia}/{tarea}/` |
+
+**No se levantó** la restricción que impide al profesorado usar la ruta de
+entregas. Fundir las dos en una función habría mezclado dos preguntas de
+permiso distintas, que es donde después se cuela el permiso equivocado.
+
+Garantías, en orden de importancia:
+
+- **La clave la construye el servidor.** El nombre del archivo no entra en la
+  ruta; sólo se le lee la extensión.
+- **Registrar exige una clave de ESTA tarea** (`isAssignmentMaterialKeyFor`).
+  Las dos formas de ruta —entrega y material— no pueden confundirse, así que el
+  permiso de lectura de una nunca sirve para la otra.
+- **Descargar se pide por `id`, nunca por clave.** El servidor toma la clave de
+  la propia tarea. Aceptar una clave del cliente convertiría el endpoint en un
+  firmador de lecturas para cualquier objeto del espacio académico.
+- **Lista blanca por extensión**, con el `Content-Type` fijado por el servidor
+  en la condición del POST firmado. Sin `.exe`, `.bat`, `.sh`, `.js`, `.html` ni
+  `.svg`: los tres primeros son ejecutables y los dos últimos, contenido activo.
+- **Límite de 25 MB** aplicado con `content-length-range`, y un máximo de
+  archivos por tarea.
+- Los objetos **no se hacen públicos**: se leen con URLs firmadas de 5 minutos.
+
+### Por qué se decide por extensión y no por el `Content-Type` declarado
+
+Para un `.R` el navegador manda el tipo vacío o `application/octet-stream`. Si
+decidiera el tipo declarado no habría forma de admitir un fuente de R sin
+admitir a la vez cualquier binario. La extensión sólo elige una entrada de una
+**tabla cerrada**, y el tipo con el que el objeto acaba guardado lo fija el
+servidor a partir de esa misma tabla. Un tipo declarado que no pertenece a la
+clase —`text/html` en un documento— se rechaza igualmente.
+
+Formatos legacy (`.doc`, `.xls`, `.ppt`) **quedan fuera**: son contenedores OLE
+con macros y no aportan nada que no cubra su equivalente moderno. Es una
+decisión, no un olvido.
+
+---
+
+## Código del alumnado (iteración 5)
+
+UINexus **no ejecuta** el código que se entrega. Ni `exec`, ni `spawn`, ni
+`Rscript` en el host de Next.js. Ejecutar código arbitrario en el mismo proceso
+que firma las subidas a S3 y lee la base de datos es regalar la plataforma a
+quien entregue el `system()` correcto —y un entorno académico es justo donde más
+gente va a probarlo—.
+
+Lo que hay es un **adaptador** (`lib/code-runner.ts`) que define qué tendría que
+cumplir un sandbox externo: fuera del host, tiempo máximo, salida acotada, sin
+red, sin acceso a las variables de entorno de UINexus, y **sin ningún hueco
+donde quepa un comando** —el cliente elige qué código, nunca qué se ejecuta—.
+Sin `UINEXUS_CODE_RUNNER_URL` y `UINEXUS_CODE_RUNNER_TOKEN` no hay ejecutor, la
+interfaz no ofrece ejecutar y la tarea se entrega igual. La ejecución nunca es
+requisito para entregar.
+
+Un `.R` entregado se guarda y se sirve como `text/plain` desde el bucket privado
+y otro origen. Es texto que se muestra; no es un programa que corra.
+
+## Ejecución de R y Python (iteración 6)
+
+El código del alumnado ahora **se ejecuta**. Sigue sin ejecutarse en ningún
+servidor de UINexus.
+
+### Dónde corre, y por qué eso es la defensa
+
+En el navegador de quien lo escribió, con Pyodide (Python) y webR (R), dentro de
+un Web Worker. El peor programa imaginable sólo puede estropear **su propia
+pestaña**. No hay proceso compartido, no hay sistema de archivos del servidor,
+no hay red interna, no hay nada de otra persona al alcance.
+
+Lo que el servidor sigue sin hacer —y `tests/unit/code-execution-boundary.test.ts`
+lo comprueba leyendo el código fuente, para que nadie pueda añadirlo sin que la
+suite se ponga roja—: `child_process`, `exec`, `spawn`, `Rscript`, `python3`,
+`subprocess`. Ninguno aparece en `src/`.
+
+### Lo que llega al Worker
+
+Exactamente esto, y el tipo es cerrado:
+
+```ts
+{ type: 'run', id, language, source, executionOptions: { maxOutputChars } }
+```
+
+No hay hueco para un token de Firebase, una cookie, una credencial de AWS, una
+variable de entorno ni el perfil de nadie. `sanitizeWorkerRun()` construye el
+mensaje **campo a campo** en vez de reenviar un objeto que venga de arriba,
+porque un `...spread` descuidado es la forma exacta en que estos contratos se
+rompen. Probado en `code-runner-contract.test.ts`.
+
+### Red: tres capas, y cuál es cuál
+
+**Python.** Pyodide expone JavaScript a Python por UN solo objeto, el que se
+pasa como `jsglobals`. Aquí se pasa un objeto vacío y congelado, así que
+`js.fetch`, `js.XMLHttpRequest`, `js.WebSocket` y `js.EventSource` no están
+«bloqueados»: **no existen** para el programa. Eso arrastra a `urllib` y
+`requests`, que en Pyodide van contra `js.fetch`. Es la barrera que se puede
+probar, y está probada en `code-engines.test.ts` con Python de verdad.
+
+**R.** El prólogo de `r-engine.ts` enmascara `install.packages()`,
+`download.file()`, `url()` y `webr::install()` recorriendo la ruta de búsqueda
+entera y los espacios de nombres. Esto es **claridad**, no la barrera: el error
+dice por qué en vez de un «no se pudo conectar».
+
+> Detalle que costó encontrarlo: la primera versión enmascaraba sólo en
+> `package:base`. Parecía bien y no lo estaba —`install.packages` y
+> `download.file` viven en `package:utils`—, así que seguían intactas. Se vio
+> comprobándolo en el navegador: `download.file` llegó a imprimir «trying URL
+> 'https://example.com'», es decir, **intentó salir a la red**. Por eso ahora se
+> recorre `search()` y `asNamespace()`.
+
+**Las dos.** El Worker se endurece tras arrancar el runtime
+(`hardenWorkerScope()`): `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` e
+`importScripts` pasan a lanzar, e `indexedDB` y `caches` desaparecen. Se hace
+*después* de arrancar porque arrancar es justo lo que necesita `fetch` para
+traerse el WebAssembly; a partir de ahí no queda ninguna descarga legítima.
+
+### Paquetes
+
+Biblioteca estándar de Python y R base. Nada más. No se llama a `loadPackage`,
+no se instala `micropip`, y `install.packages()` está enmascarada. NumPy, pandas
+o lpSolve el día que hagan falta serán una **lista blanca declarada en el
+código**, nunca un `pip install` que escriba quien entrega la tarea.
+
+### Los runtimes son del propio origen
+
+Pyodide y webR se sirven desde `/runtime/`, no desde `cdn.jsdelivr.net` ni desde
+`webr.r-wasm.org`. Monaco se carga del paquete instalado y no del CDN que trae
+por defecto `@monaco-editor/react`. Tres razones, por orden: la CSP puede
+quedarse en `'self'`; una clase no depende de que un dominio ajeno esté vivo esa
+mañana; y la versión que se ejecuta es la que fija `package-lock.json`. Hay una
+prueba que falla si alguien vuelve a meter un CDN.
+
+### CSP: qué se auditó y qué se decidió
+
+**La plataforma (`uinexus.mx`) no envía `Content-Security-Policy` hoy, y esta
+iteración no la ha introducido.** El resultado de la auditoría es que ejecutar R
+y Python **no exige relajar nada**:
+
+- Monaco sale del paquete instalado → ningún `script-src` de terceros.
+- Pyodide y webR salen de `/runtime/` → ningún `connect-src` de terceros.
+- Los Workers son rutas absolutas del propio origen → `worker-src 'self'` basta.
+
+Es decir: no había ninguna CSP que ajustar, y la funcionalidad no pide abrir
+ningún permiso. Escribir la CSP completa de la plataforma —cubriendo Firebase
+Auth, S3, las imágenes de Google y los scripts en línea de Next— es un cambio
+con su propio riesgo y su propia validación, y no era este sprint. **Queda
+pendiente**, anotado en docs/LIMITATIONS.md.
+
+Cuando se active, las directivas que este código necesita son:
+
+```
+script-src  'self' 'wasm-unsafe-eval'   ← sin 'wasm-unsafe-eval' no arranca ningún WebAssembly
+worker-src  'self' blob:
+connect-src 'self'                      ← los .wasm y el vfs de webR salen de /runtime/
+```
+
+La única no obvia es `'wasm-unsafe-eval'`. `connect-src 'self'` es además lo que
+cierra el repositorio de paquetes de webR: es la barrera real detrás del
+enmascarado de `install.packages()`.
+
+Lo que **no** hay que hacer, por si alguien tiene prisa: `script-src *` o
+`connect-src *`.
+
+### Los dos sandboxes no son el mismo, y no deben confundirse
+
+| | Publicación de proyectos | Ejecución académica |
+| --- | --- | --- |
+| Qué corre | HTML/JS que escribió el alumnado | R y Python de una tarea |
+| Dónde | `projects.uinexus.mx`, origen aislado | Web Worker del navegador de quien programa |
+| Quién lo ve | cualquiera con el enlace | sólo esa persona (y la docente al revisar) |
+| CSP | la permisiva de `functions/src/index.ts` | la del origen de la plataforma |
+
+La separación de orígenes de §1 sigue intacta. Una tarea de R **no** publica
+nada en `projects.uinexus.mx`, y una página publicada **no** obtiene un
+intérprete de Python. Que las dos cosas se llamen «ejecutar» no las hace la
+misma, y mezclarlas —servir los runtimes desde el origen aislado, o publicar
+proyectos desde la plataforma— rompería las dos garantías a la vez.
+
+### Revisión docente
+
+La docente ve el código en el mismo editor, en sólo lectura, y puede ejecutarlo.
+**Ejecutar no modifica la entrega**, y no es una promesa: no hay por dónde. El
+editor de la vista de revisión va sin `onChange` y sin `beforeExecute`, así que
+no existe ninguna ruta desde ese componente hacia una escritura. La salida se
+pinta y se olvida.
+
+El lenguaje lo impone el **servidor** a partir del paso
+(`submission/route.ts`): mandar `language: 'python'` en el cuerpo de un paso de
+R no lo convierte en Python. Probado en integración.
+
+## Prácticas de programación (iteración 7)
+
+### Una práctica es privada, y eso no lo decide un `if`
+
+`data/workspaces.ts` no tiene **ninguna** función que devuelva prácticas de otra
+persona. `ownerUid` es parámetro obligatorio en todas las que leen, así que «ver
+la práctica de otro» no está prohibido: es que no hay ninguna firma donde quepa
+pedirlo. Es la misma decisión que en `/api/assignments/:id/submission`, donde el
+UID sale del token y no del cuerpo.
+
+Tres capas, y las tres se prueban:
+
+1. **El esquema no acepta dueño.** `workspaceInputSchema` descarta `ownerUid`,
+   `id`, `context` y `createdAt` si llegan en el cuerpo. El dueño sale del token
+   verificado, el id lo genera el servidor y `context` es `personal` porque es lo
+   único que existe.
+2. **La lectura comprueba el dueño.** `getOwnWorkspace(id, ownerUid)` lee por id y
+   devuelve `null` si no coincide.
+3. **La escritura lo comprueba en DynamoDB.** `updateOwnWorkspace` y
+   `deleteOwnWorkspace` llevan `ConditionExpression: ownerUid = :owner`, así que
+   la condición la aplica la base de datos y no el proceso que la llama.
+
+### «No existe» y «no es tuya» se responden igual
+
+Las dos son 404, con el mismo cuerpo. Distinguirlas convertiría la ruta en un
+oráculo: probando ids se podría averiguar qué prácticas existen aunque no se
+pudieran leer. Está probado comparando las dos respuestas byte a byte
+(`tests/integration/workspace-routes.test.ts`).
+
+**No hay ningún rol que abra una práctica ajena.** Ni un compañero de la misma
+materia, ni el profesorado, ni un administrador. Una práctica no se revisa; el
+camino para enseñar una es convertirla en entrega o en proyecto, no un permiso.
+
+### Java y C: qué significa «no se ejecutan»
+
+Significa que **no hay código que los ejecute**, en ninguna parte. No es un
+interruptor apagado: no existe un compilador de Java ni de C en el navegador, y
+no se invoca ninguno en el servidor —eso sigue comprobado leyendo el código
+fuente en `tests/unit/code-execution-boundary.test.ts`, que falla si alguien
+introduce `child_process`, `exec`, `spawn`, `Rscript` o `python3`—.
+
+`languageCapabilities()` devuelve `EDITOR_ONLY` para un lenguaje desconocido,
+así que un valor guardado por una versión futura tampoco se ejecuta por
+accidente. Y `isBrowserExecutableLanguage` exige **dos** condiciones: que el
+catálogo lo declare y que exista un Worker de verdad para él. Marcar Java como
+ejecutable por error no arrancaría nada.
+
+### `.html` y `.js` en un paso de código no son una brecha
+
+Ahora se admiten adjuntos en un entregable de código, y siguen guardándose y
+sirviéndose como `text/plain` desde el bucket **privado** y a través del origen
+aislado. Es texto que se muestra, nunca algo que se sirva para ejecutarse.
+Publicar un proyecto sigue pasando por `projects/`, otro prefijo y otro dominio.
+
+Lo que sigue rechazado es lo que un sistema operativo sabría arrancar solo:
+`.exe`, `.sh`, `.bat`, `.dll`, `.jar`.
+
+### El código de la portada no ejecuta nada
+
+`components/home/workspace-preview.tsx` es HTML estático con los tokens del
+sistema de diseño. No es una captura retocada ni un Monaco de verdad: una captura
+promete cosas que el producto puede dejar de hacer, y cargar Monaco en la portada
+serían 3 MB para alguien que aún no ha decidido si le interesa el producto.
+
+## NexBook (iteración 8)
+
+### La sesión persistente no relajó ningún aislamiento
+
+Un kernel de NexBook usa el **mismo** Worker, el mismo Pyodide y el mismo webR
+que un paso de actividad. Lo único que cambia es un campo del mensaje. Sigue
+intacto todo lo de la iteración anterior: `jsglobals` vacío en Python, el prólogo
+que enmascara la red y los paquetes en R, el endurecimiento del scope del Worker,
+y el payload que sólo lleva `{ language, source, executionOptions, mode }`.
+
+El mensaje creció en un campo y la prueba que cuenta sus claves creció con él.
+`mode` por defecto es `isolated`: si fuera `session`, un paso de actividad
+empezaría a ver variables de un NexBook abierto en otra pestaña y alguien
+entregaría un programa que sólo funciona en su navegador.
+
+Los límites de ejecución son los mismos. Persistente **no** significa `while
+True` sin freno: el tiempo excedido sigue terminando el Worker, y por tanto la
+sesión. Eso se dice en la interfaz en lugar de dejar un kernel en un estado que
+nadie ha inspeccionado.
+
+### Ownership: tres capas, otra vez
+
+1. **El esquema no acepta dueño.** `nexBookPatchSchema` descarta `ownerUid`,
+   `id`, `context`, `visibility` y `createdAt` si llegan en el cuerpo. Probado
+   comprobando las claves que sobreviven al parseo.
+2. **La lectura comprueba el dueño.** `getOwnNexBook(id, ownerUid)`.
+3. **La escritura lo comprueba en DynamoDB.** `ConditionExpression` con
+   `ownerUid`, así que la condición la aplica la base de datos y no el proceso
+   que la llama.
+
+«No existe» y «no es tuyo» son el **mismo 404 con el mismo cuerpo**, comparado
+byte a byte en las pruebas. Distinguirlos convertiría la ruta en un oráculo de
+qué documentos existen.
+
+### La única lectura sin dueño está acotada
+
+`getNexBookRecord` lee sin comprobar propietario, y existe para dos casos donde
+la autorización la da otra cosa: la **plantilla** de una actividad —que pertenece
+a la docente pero la lee todo el grupo— y la revisión de una entrega. Quien la
+llama ha pasado antes por `requireAssignmentAccess`. Por eso no es la función por
+defecto y por eso su nombre no dice «own».
+
+Además comprueba `kind === 'nexbook'`: pedir una práctica de código por esa puerta
+devuelve «no existe» en lugar de medio documento.
+
+### Una copia por persona, y de nadie más
+
+El id de la copia se deriva de `(actividad, paso, uid)` y es un hash: no se puede
+adivinar la de otro a partir de la propia, y el id no lleva el UID dentro aunque
+viaje en la URL. Probado: dos estudiantes de la misma materia trabajan en el
+mismo paso y ninguno puede leer, escribir ni borrar la copia del otro; tampoco la
+docente.
+
+### La docente no lee el documento vivo del estudiante
+
+Lee el **snapshot** que viajó en la evidencia. Abrir el NexBook vivo de alguien
+da 404, y está probado. Dos consecuencias buenas: se califica lo que se entregó y
+no lo que haya ahora, y no existe una ruta por la que la revisión pueda escribir
+en el trabajo de nadie.
+
+La vista de revisión monta Studio con `editable: false`, que deja el documento sin
+botones de añadir, mover ni borrar y sin `onChange` en los editores. Ejecutar una
+celda sí se puede —hace falta para comprobar la salida— y no toca nada.
+
+### Markdown: sin HTML crudo
+
+Los bloques de texto se renderizan con el mismo `MarkdownContent` de las
+entregas: `skipHtml`, sin `rehype-raw`, URLs por lista blanca HTTP(S) y las
+imágenes remotas como enlace. Un documento que una docente reparte a treinta
+personas no puede ejecutar el JavaScript de quien lo escribió, y una plantilla
+que vuelve como copia de trescientas personas tampoco.
+
+No hay ningún `dangerouslySetInnerHTML` en el proyecto.
+
+### Un documento no puede reventar el item
+
+`documentBytes` (300 KB) se comprueba sobre el JSON serializado, antes de
+escribir. Sin ese tope, cien bloques que pasan su límite individual suman cuatro
+megas y la escritura falla con «item too large» cuando ya hay noventa bloques
+escritos —es decir, con el trabajo hecho y sin poder guardarlo—.
+
+### El formato `.nexbook` todavía no exporta nada
+
+Está diseñado y no implementado, así que **no hay tests de que no filtre
+secretos**: una prueba de que un exportador inexistente no filtra nada no prueba
+nada. La lista de lo que nunca debe contener está en docs/NEXBOOK.md, y las
+pruebas se escribirán con el exportador.
+
+## NexBook modular (iteración 9)
+
+La iteración añadió tres superficies nuevas —binarios que suben, documentos que
+salen y archivos que entran— y cambió una garantía existente. Esto último
+primero, porque es lo que no se puede pasar por alto.
+
+### `fetch` en el Worker: de «nada» a «sólo lo suyo»
+
+Hasta ahora, al terminar de arrancar el runtime se sustituía `fetch` por una
+función que siempre lanzaba. Era correcto **mientras no quedara ninguna descarga
+legítima pendiente**, y dejó de serlo al permitir `numpy`, `pandas` y
+`matplotlib`: sus ruedas se cargan cuando una celda las importa, no al arrancar,
+porque cuál hace falta depende del código.
+
+La regla nueva:
+
+```
+✓  /runtime/pyodide/pandas-3.0.2-….whl    mismo origen, prefijo del runtime
+✗  https://ejemplo.mx/robar               otro origen
+✗  /api/nexbooks/abc                      mismo origen, fuera del prefijo
+```
+
+La URL se **resuelve** contra el origen del Worker antes de comparar. Comparar el
+texto sin resolver dejaría pasar `https://evil.mx/../runtime/pyodide/x`, que es
+la forma clásica de burlar una comprobación de prefijo.
+
+`XMLHttpRequest`, `WebSocket`, `EventSource` e `importScripts` siguen
+desapareciendo enteros, y `indexedDB` y `caches` también. Lo que queda alcanzable
+son archivos estáticos públicos que ese mismo Worker ya descargó para arrancar:
+no hay forma de sacar datos ni de tocar la API de UINexus.
+
+Sigue sin ser la primera capa. La primera es que Python recibe un `jsglobals`
+vacío y congelado, así que el código del alumnado no tiene ni siquiera un `fetch`
+al que llamar.
+
+Esto **se descubrió en el navegador**, y sólo ahí: las pruebas del motor no pasan
+por el endurecimiento, que sólo tiene sentido dentro de un Worker de verdad.
+
+### Los paquetes de Python no amplían nada
+
+La lista blanca está en el código (`python-packages.ts`), no en lo que escriba
+quien resuelve una tarea. `micropip` sigue sin instalarse y `pip` sigue sin
+existir dentro del intérprete.
+
+El análisis de imports es deliberadamente simple y **sólo puede equivocarse por
+defecto**: un `importlib.import_module("pandas")` no se detecta y el import falla.
+Por exceso no puede, que es lo que importaría: sólo devuelve nombres de la lista.
+
+La integridad de las ruedas **no la da la CDN**. Cada una se verifica contra el
+`sha256` del `pyodide-lock.json` que instala npm, fijado por `package-lock.json`.
+Si la CDN devolviera un archivo distinto, el script para en seco en vez de
+publicar código que se va a ejecutar en el navegador de alguien.
+
+Y el lockfile que se publica va recortado a las ruedas presentes: lo que no está
+en el directorio no existe para el runtime.
+
+### Subidas de imágenes
+
+| Control | Dónde se aplica |
+| --- | --- |
+| La ruta | La construye el servidor con el uid del token |
+| El tipo | Lista blanca; el servidor fija el `Content-Type` de la subida |
+| El tamaño | S3, con `content-length-range` del POST firmado |
+| Cuántas | 100 por NexBook, en el esquema del documento |
+
+El tamaño declarado por el cliente **no es la defensa**: sirve para dar un error
+legible antes de gastar una subida. La defensa es la condición que aplica S3
+sobre los bytes de verdad.
+
+**SVG no se acepta**, y es una decisión y no un olvido. Es XML que puede llevar
+`<script>`, `<foreignObject>` y manejadores `on*`; servirlo desde el mismo origen
+y pintarlo sería ejecutar código de quien subió el archivo en la sesión de quien
+lo mira. Y una publicación la abre cualquiera. Aceptarlo exige un saneador de SVG
+que este proyecto no tiene.
+
+### Quién puede leer un asset
+
+No lo decide el asset: lo decide el **documento que lo referencia**.
+
+```
+/api/nexbooks/:id/assets/:assetId              hace falta poder abrir ESE NexBook
+/api/nexbooks/published/:slug/assets/:assetId  hace falta poder ver ESA publicación
+                                               Y que el documento publicado lo use
+```
+
+La segunda condición es la que impide que una publicación sirva de llave para
+leer cualquier imagen de su autor: sólo salen las que forman parte de lo que se
+publicó. Si el autor quita una imagen y actualiza la publicación, esa imagen deja
+de poder leerse aunque siga en el bucket.
+
+El `ownerUid` con el que se construye la clave sale del registro, **nunca de la
+petición**. Y el identificador de asset se valida como UUID antes de tocar nada:
+acaba formando parte de una clave de S3, y una cadena libre del cliente dentro de
+una ruta es la forma clásica de escribir donde no se debe.
+
+La URL que ve la página es estable; lo que caduca es la firma de cinco minutos
+que hay detrás. Guardar una URL firmada dentro del documento habría convertido un
+permiso temporal en permanente, y además habría viajado en cada exportación.
+
+### Lo que sale de la plataforma
+
+`publishableDocument` reconstruye el documento **campo a campo**. No copia y
+borra: construye. La diferencia está en el futuro —con una lista negra, un campo
+nuevo en el modelo sale publicado sin que nadie haga nada— y es la misma decisión
+que toma `sanitizeWorkerRun` con el mensaje del Worker.
+
+Lo usan publicar **y** exportar: los dos sacan el documento fuera de su contexto,
+y dos implementaciones habrían acabado discrepando.
+
+Probado con documentos deliberadamente contaminados —`ownerUid`, `lastEditorUid`,
+`storageKey`, `apiKey`, `authorization`, `cookie`, `signedUrl` con
+`X-Amz-Signature`— y con la publicación de extremo a extremo contra DynamoDB
+Local: nada de eso aparece en el resultado, y lo que sí debe salir sale.
+
+Una publicación tampoco lleva el **id del documento vivo**. Importa tanto como el
+uid: es la dirección donde esa persona sigue editando.
+
+### Una entrega no se publica
+
+El servidor lo rechaza: sólo se publica un NexBook de contexto `personal`. El
+documento de un paso puede llevar instrucciones internas de la materia, datos que
+repartió el profesorado o retroalimentación. El camino es «Copiar a mis
+prácticas» y publicar la copia.
+
+### `link` no promete lo que no cumple
+
+`link` y `public` se sirven igual. Lo que los distingue es si la dirección se
+anuncia, no quién puede leer: el slug es un hash de 24 caracteres. Presentar
+`link` como «más privado» sería la promesa que lleva a poner ahí algo que no
+debería estar. La interfaz lo dice tal cual: «quien tenga la dirección puede
+abrirlo».
+
+### Importar: un contenedor ajeno es hostil
+
+| Amenaza | Defensa |
+| --- | --- |
+| Zip slip | Lista blanca de rutas —tres formas, nada más— aplicada **antes** de descomprimir |
+| ZIP bomb | Tope al envío, al número de entradas y a la suma de tamaños **declarados** |
+| ZIP que declara menos de lo que trae | fflate reserva la salida con el tamaño declarado y falla si el flujo produce más |
+| Imagen que no lo es | Número mágico de los bytes, no el tipo del manifiesto |
+| Versión del futuro | Se rechaza antes de interpretar el contenido |
+| Dueño falsificado | El dueño sale del token; el del archivo ni se lee |
+| Contexto falsificado | Lo importado nace `personal` y `private` |
+
+Las dos mentiras posibles sobre el tamaño quedan cubiertas: declarar mucho lo
+filtra la cabecera, declarar poco lo revienta la descompresión.
+
+UINexus no escribe estas entradas en un disco —van a S3 con una clave que
+construye el servidor—, así que hoy el zip slip no tendría dónde aterrizar. Se
+rechaza igual: una defensa que depende de que nadie cambie el destino en el
+futuro no es una defensa.
+
+### Las fórmulas de una hoja no son código
+
+Las escribe el alumnado y se guardan en un documento que otra persona abre.
+Convertirlas en JavaScript y evaluarlas sería ejecución de código de terceros en
+la sesión de quien lo lee.
+
+El intérprete sólo hace aritmética y llama a funciones de una lista cerrada. No
+hay acceso a variables, ni a objetos del navegador, ni forma de escribir una
+llamada que no esté en la lista. Probado con `=globalThis`, `=constructor`,
+`=fetch(...)`, `=process`, `=require("fs")` y
+`=[].constructor.constructor("return 1")()`.
+
+### Lo que NO cambió
+
+Sigue intacto todo lo anterior: `jsglobals` vacío en Python, el prólogo que
+enmascara la red y los paquetes en R, el payload del Worker montado campo a
+campo, `mode` por defecto `isolated`, el tiempo límite que termina el Worker,
+ownership en tres capas, el 404 indistinguible, Markdown sin HTML crudo y la
+separación `uinexus.mx` / `projects.uinexus.mx`.
+
+El mensaje que viaja al Worker no creció: sigue llevando `{ language, source,
+executionOptions, mode }` y su prueba de conteo de claves sigue en pie.

@@ -11,12 +11,17 @@ import {
   normalizeCourse,
   submissionIdFor,
 } from '../data/academic';
-import { ACADEMIC_LIMITS } from '../constants';
+import {
+  ACADEMIC_LIMITS,
+  DEFAULT_CODE_MODE,
+  DEFAULT_PROGRAMMING_LANGUAGE,
+} from '../constants';
 import type { AssignmentInput, WorkflowStepInput } from '../academic-schemas';
 import { slugify } from '../slug';
 import { assertAcyclicWorkflow } from '../workflow';
 import type {
   AIProvider,
+  AssignmentMaterialRecord,
   AssignmentRecord,
   CourseMemberRecord,
   CourseResourceRecord,
@@ -247,7 +252,10 @@ function assignmentFields(
   assignedUids: string[] | null,
   groupAssignments: GroupAssignmentRecord[],
   workflow: WorkflowStepRecord[] = []
-): Omit<AssignmentRecord, 'id' | 'courseId' | 'createdBy' | 'createdAt' | 'updatedAt'> {
+): Omit<
+  AssignmentRecord,
+  'id' | 'courseId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'materials'
+> {
   /**
    * Sólo una investigación puede ser colaborativa. Un AI Worklog o un enlace no
    * tienen conceptos que repartir, y guardarles `shared` produciría una tarea
@@ -336,6 +344,16 @@ export function buildWorkflowSteps(
       type: deliverable.type,
       required: deliverable.required,
       hint: deliverable.hint,
+      // El lenguaje sólo se guarda si el entregable es código: un `language`
+      // colgando de un paso de texto sería un campo que hay que interpretar.
+      language:
+        deliverable.type === 'code'
+          ? (deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE)
+          : null,
+      codeMode:
+        deliverable.type === 'code' ? (deliverable.codeMode ?? DEFAULT_CODE_MODE) : null,
+      starterCode: deliverable.type === 'code' ? deliverable.starterCode : '',
+      executionEnabled: deliverable.type === 'code' ? deliverable.executionEnabled : false,
       questions: deliverable.questions.map((question, position) => ({
         ...question,
         group: question.group ?? null,
@@ -362,6 +380,9 @@ export async function createAssignment(
     id: randomUUID(),
     courseId,
     ...assignmentFields(input, assignedUids, groupAssignments, workflow),
+    // Los materiales NO llegan del cuerpo: se añaden después, uno a uno, por su
+    // propia ruta. Ver `setAssignmentMaterials`.
+    materials: [],
     createdBy: actor.uid,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -400,6 +421,38 @@ export async function updateAssignment(
   );
 
   return next;
+}
+
+/**
+ * Reemplaza la lista de materiales de una tarea.
+ *
+ * Se escribe con `UpdateCommand` sobre UN atributo y no con un `Put` del
+ * registro entero, y la diferencia importa: subir un archivo mientras alguien
+ * edita el enunciado en otra pestaña no puede revertir el enunciado, ni al
+ * revés. Son dos cambios a partes distintas de la misma tarea y no tienen por
+ * qué pisarse.
+ *
+ * La lista llega YA compuesta por la ruta, que es quien comprobó el permiso y
+ * que cada clave pertenezca a esta tarea.
+ */
+export async function setAssignmentMaterials(
+  assignment: AssignmentRecord,
+  materials: readonly AssignmentMaterialRecord[]
+): Promise<AssignmentRecord> {
+  const timestamp = nowIso();
+
+  await db().send(
+    new UpdateCommand({
+      TableName: TABLES.assignments,
+      Key: { id: assignment.id },
+      UpdateExpression: 'SET #materials = :materials, #updatedAt = :updatedAt',
+      ExpressionAttributeNames: { '#materials': 'materials', '#updatedAt': 'updatedAt' },
+      ExpressionAttributeValues: { ':materials': materials, ':updatedAt': timestamp },
+      ConditionExpression: 'attribute_exists(id)',
+    })
+  );
+
+  return { ...assignment, materials: [...materials], updatedAt: timestamp };
 }
 
 /**

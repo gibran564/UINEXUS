@@ -2,24 +2,29 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
-import { getRoleFromInstitutionalEmail, isInstitutionalEmail } from '@/lib/identity';
+import { useEffect, useState } from 'react';
+import {
+  INVALID_DOMAIN_NOTICE,
+  INVALID_DOMAIN_REASON,
+  INVALID_DOMAIN_TITLE,
+  getRoleFromInstitutionalEmail,
+  isInstitutionalEmail,
+} from '@/lib/identity';
 import { postLoginDestination } from '@/lib/auth-navigation';
-import type { PhoneChallenge } from '@/lib/firebase/auth';
 import { useAuth } from './auth-provider';
 
-type Mode = 'signin' | 'signup' | 'reset' | 'phone';
-
-/** Contenedor del reCAPTCHA invisible que Firebase exige antes de enviar un SMS. */
-const RECAPTCHA_ID = 'uinexus-recaptcha';
+type Mode = 'signin' | 'signup' | 'reset';
 
 /**
  * Entrada a la plataforma.
  *
  * Deliberadamente corta: Google primero (es lo que ya tiene todo el mundo con
- * el correo institucional) y correo como alternativa. El teléfono y la
- * recuperación de contraseña están un clic más adentro para no convertir la
- * pantalla en un muro de opciones. Nunca se pide iniciar sesión para explorar.
+ * el correo institucional) y correo como alternativa. La recuperación de
+ * contraseña está un clic más adentro para no convertir la pantalla en un muro
+ * de opciones. Nunca se pide iniciar sesión para explorar.
+ *
+ * El acceso por SMS se retiró: UINexus autoriza sobre el correo institucional y
+ * un teléfono no puede demostrarlo (ver `lib/firebase/auth.ts`).
  */
 interface LoginFormProps {
   initialMode?: Mode;
@@ -34,7 +39,6 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
     signInWithEmail,
     registerWithEmail,
     sendPasswordReset,
-    startPhoneSignIn,
     error,
     clearError,
     isDemo,
@@ -42,14 +46,32 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
 
   const queryMode = searchParams.get('mode') as Mode | null;
   const [mode, setMode] = useState<Mode>(
-    queryMode && ['signin', 'signup', 'reset', 'phone'].includes(queryMode)
-      ? queryMode
-      : initialMode
+    queryMode && ['signin', 'signup', 'reset'].includes(queryMode) ? queryMode : initialMode
   );
   const [emailInput, setEmailInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  /**
+   * Se llegó aquí porque UINexus descartó una sesión con un correo ajeno.
+   *
+   * El motivo se lee UNA vez y se borra de la dirección: si se quedara, volver
+   * atrás en el historial —o compartir el enlace— repetiría un aviso que ya no
+   * describe nada. El aviso sí permanece en pantalla hasta que la persona actúe.
+   */
+  const [rejected, setRejected] = useState(
+    () => searchParams.get('reason') === INVALID_DOMAIN_REASON
+  );
+
+  useEffect(() => {
+    if (searchParams.get('reason') !== INVALID_DOMAIN_REASON) return;
+    setRejected(true);
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('reason');
+    const query = next.toString();
+    router.replace(query ? `/login?${query}` : '/login');
+  }, [searchParams, router]);
 
   const trimmedEmail = emailInput.trim();
   const isInstitutional = isInstitutionalEmail(trimmedEmail);
@@ -59,23 +81,13 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
       ? getRoleFromInstitutionalEmail(trimmedEmail)
       : null;
 
-  // Teléfono: primero el número, después el código de seis dígitos.
-  const [phoneStep, setPhoneStep] = useState<'number' | 'code'>('number');
-  const challengeRef = useRef<PhoneChallenge | null>(null);
-
   const next = postLoginDestination(searchParams.get('next'));
 
   useEffect(() => {
     if (status === 'authenticated') router.replace(next);
   }, [status, next, router]);
 
-  // El widget de reCAPTCHA sobrevive al desmontaje si no se libera a mano.
-  useEffect(() => () => challengeRef.current?.dispose(), []);
-
   function switchMode(nextMode: Mode): void {
-    challengeRef.current?.dispose();
-    challengeRef.current = null;
-    setPhoneStep('number');
     setNotice(null);
     setLocalError(null);
     clearError();
@@ -85,6 +97,7 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
   async function onGoogleClick(): Promise<void> {
     setNotice(null);
     setLocalError(null);
+    setRejected(false);
     clearError();
     await signInWithGoogle();
   }
@@ -94,19 +107,18 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
     const data = new FormData(event.currentTarget);
     setNotice(null);
     setLocalError(null);
+    setRejected(false);
     clearError();
 
     const rawEmail = String(data.get('email') ?? '').trim();
 
-    if (mode !== 'phone') {
-      if (!rawEmail) {
-        setLocalError('Ingresa tu correo institucional.');
-        return;
-      }
-      if (!isInstitutionalEmail(rawEmail)) {
-        setLocalError('El correo debe pertenecer al dominio institucional (@itdurango.edu.mx) o ser un docente autorizado.');
-        return;
-      }
+    if (!rawEmail) {
+      setLocalError('Ingresa tu correo institucional.');
+      return;
+    }
+    if (!isInstitutionalEmail(rawEmail)) {
+      setLocalError('El correo debe pertenecer al dominio institucional (@itdurango.edu.mx) o ser un docente autorizado.');
+      return;
     }
 
     setBusy(true);
@@ -117,30 +129,6 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
         setNotice(
           'Si ese correo tiene una cuenta, le acaba de llegar un enlace para crear una contraseña nueva. Revisa también el correo no deseado.'
         );
-        return;
-      }
-
-      if (mode === 'phone') {
-        if (phoneStep === 'number') {
-          const challenge = await startPhoneSignIn(
-            String(data.get('phone') ?? ''),
-            RECAPTCHA_ID
-          );
-          if (challenge) {
-            challengeRef.current = challenge;
-            setPhoneStep('code');
-            setNotice('Te enviamos un código por SMS. Puede tardar un minuto.');
-          }
-          return;
-        }
-
-        const challenge = challengeRef.current;
-        if (!challenge) return;
-        try {
-          await challenge.confirm(String(data.get('code') ?? ''));
-        } catch {
-          setNotice('Ese código no es correcto o ya caducó. Pide uno nuevo.');
-        }
         return;
       }
 
@@ -166,18 +154,14 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
       ? 'Crea tu cuenta institucional'
       : mode === 'reset'
         ? 'Recupera tu contraseña'
-        : mode === 'phone'
-          ? 'Entra con tu teléfono'
-          : 'Entra a UINexus';
+        : 'Entra a UINexus';
 
   const subheading =
     mode === 'signup'
       ? 'Regístrate con tu correo @itdurango.edu.mx para publicar y alojar tus proyectos web.'
       : mode === 'reset'
         ? 'Te enviamos un enlace a tu correo institucional.'
-        : mode === 'phone'
-          ? 'Recibirás un código por SMS. Puede tener coste según tu operador.'
-          : 'Inicia sesión con tu cuenta del Instituto Tecnológico de Durango.';
+        : 'Inicia sesión con tu cuenta del Instituto Tecnológico de Durango.';
 
   const displayError = localError || error;
 
@@ -195,6 +179,21 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
 
       <h1 className="font-display text-h1">{heading}</h1>
       <p className="mt-2 text-muted">{subheading}</p>
+
+      {/*
+        La cuenta con la que se entró no es del ITD. Se dice qué pasó y qué
+        hacer, sin jerga y sin traza técnica: quien lo lee sólo necesita saber
+        que tiene que elegir su otra cuenta de Google.
+      */}
+      {rejected && (
+        <div
+          role="alert"
+          className="mt-5 rounded-sm border border-warning/40 bg-warning-soft p-3.5 text-sm"
+        >
+          <strong className="block font-medium">{INVALID_DOMAIN_TITLE}</strong>
+          <span className="mt-1 block text-muted">{INVALID_DOMAIN_NOTICE}</span>
+        </div>
+      )}
 
       {isDemo && (
         <p className="mt-5 rounded-sm border border-warning/40 bg-warning-soft p-3 text-sm">
@@ -260,46 +259,44 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
           </div>
         )}
 
-        {mode !== 'phone' && (
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label htmlFor="email" className="label mb-0">
-                Correo institucional
-              </label>
-              {detectedRole && (
-                <span
-                  className={`inline-flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs font-medium ${
-                    detectedRole === 'teacher'
-                      ? 'border border-purple-500/30 bg-purple-500/10 text-purple-400'
-                      : 'border border-accent/30 bg-accent-soft text-accent'
-                  }`}
-                >
-                  {detectedRole === 'teacher' ? '👨‍🏫 Docente' : '🎓 Estudiante'}
-                </span>
-              )}
-            </div>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              autoComplete="email"
-              value={emailInput}
-              onChange={(e) => {
-                setEmailInput(e.target.value);
-                if (localError) setLocalError(null);
-              }}
-              placeholder="l21040000@itdurango.edu.mx"
-              aria-describedby={displayError ? 'auth-error' : undefined}
-              className="field"
-            />
-            <p className="hint">
-              {mode === 'signup'
-                ? 'Estudiantes: con número de control (ej. l21040000). Docentes: nombre.apellido (sin números).'
-                : 'Debe ser tu cuenta terminada en @itdurango.edu.mx'}
-            </p>
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label htmlFor="email" className="label mb-0">
+              Correo institucional
+            </label>
+            {detectedRole && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs font-medium ${
+                  detectedRole === 'teacher'
+                    ? 'border border-purple-500/30 bg-purple-500/10 text-purple-400'
+                    : 'border border-accent/30 bg-accent-soft text-accent'
+                }`}
+              >
+                {detectedRole === 'teacher' ? '👨‍🏫 Docente' : '🎓 Estudiante'}
+              </span>
+            )}
           </div>
-        )}
+          <input
+            id="email"
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+            value={emailInput}
+            onChange={(e) => {
+              setEmailInput(e.target.value);
+              if (localError) setLocalError(null);
+            }}
+            placeholder="l21040000@itdurango.edu.mx"
+            aria-describedby={displayError ? 'auth-error' : undefined}
+            className="field"
+          />
+          <p className="hint">
+            {mode === 'signup'
+              ? 'Estudiantes: con número de control (ej. l21040000). Docentes: nombre.apellido (sin números).'
+              : 'Debe ser tu cuenta terminada en @itdurango.edu.mx'}
+          </p>
+        </div>
 
         {(mode === 'signin' || mode === 'signup') && (
           <div>
@@ -331,52 +328,6 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
           </div>
         )}
 
-        {mode === 'phone' && phoneStep === 'number' && (
-          <div>
-            <label htmlFor="phone" className="label">
-              Teléfono
-            </label>
-            <input
-              id="phone"
-              name="phone"
-              type="tel"
-              required
-              autoComplete="tel"
-              placeholder="+52 55 1234 5678"
-              aria-describedby={displayError ? 'auth-error' : undefined}
-              className="field"
-            />
-            <p className="hint">Con código de país. Si escribes sin él, asumimos México (+52).</p>
-          </div>
-        )}
-
-        {mode === 'phone' && phoneStep === 'code' && (
-          <div>
-            <label htmlFor="code" className="label">
-              Código recibido
-            </label>
-            <input
-              id="code"
-              name="code"
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              required
-              maxLength={6}
-              className="field"
-            />
-            <p className="hint">
-              <button
-                type="button"
-                onClick={() => switchMode('phone')}
-                className="text-accent underline underline-offset-2"
-              >
-                Usar otro número
-              </button>
-            </p>
-          </div>
-        )}
-
         {notice && (
           <p role="status" className="rounded-sm border border-line bg-line/20 p-3 text-sm">
             {notice}
@@ -400,28 +351,9 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
               ? 'Crear mi cuenta'
               : mode === 'reset'
                 ? 'Enviar enlace de recuperación'
-                : mode === 'phone'
-                  ? phoneStep === 'number'
-                    ? 'Enviarme un código'
-                    : 'Entrar'
-                  : 'Iniciar sesión'}
+                : 'Iniciar sesión'}
         </button>
       </form>
-
-      {/* Firebase monta aquí el reCAPTCHA invisible del envío de SMS. */}
-      <div id={RECAPTCHA_ID} />
-
-      {(mode === 'signin' || mode === 'signup') && (
-        <p className="mt-6 text-sm text-muted">
-          <button
-            type="button"
-            onClick={() => switchMode('phone')}
-            className="text-accent underline underline-offset-2"
-          >
-            Entrar con mi teléfono
-          </button>
-        </p>
-      )}
 
       <p className="mt-6 text-sm text-muted">
         {mode === 'signin' && '¿Todavía no tienes cuenta? '}

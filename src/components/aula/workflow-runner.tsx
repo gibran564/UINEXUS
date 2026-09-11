@@ -2,8 +2,13 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { DELIVERABLE_LABEL, stepActionLabel } from '@/lib/constants';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  LEGACY_CODE_LANGUAGE,
+  DELIVERABLE_LABEL,
+  programmingLanguageLabel,
+  stepActionLabel,
+} from '@/lib/constants';
 import { saveWorkflowSubmission, type AssignmentDetail } from '@/lib/aula-client';
 import {
   availableDependencyResults,
@@ -16,6 +21,7 @@ import {
 } from '@/lib/workflow';
 import type {
   AIWorklogData,
+  CodeData,
   ExternalLinkData,
   FreeformData,
   MediaData,
@@ -26,6 +32,8 @@ import type {
 } from '@/lib/types';
 import { Field, Notice } from './aula-ui';
 import {
+  CodeFields,
+  type CodeSaveState,
   FreeformFields,
   LinkFields,
   MediaFields,
@@ -35,6 +43,7 @@ import {
 } from './deliverable-fields';
 import { CopyButton } from './copy-button';
 import { MarkdownContent } from './markdown-content';
+import { NexBookStep } from '@/components/studio/nexbook-step';
 
 /**
  * La ejecución de una actividad de varios pasos (§21, §22).
@@ -51,6 +60,22 @@ import { MarkdownContent } from './markdown-content';
  * Cada paso se guarda por separado. No hay un botón «guardar todo» que pueda
  * perder cuatro pasos por un error en el quinto.
  */
+
+/**
+ * Lo que se espera tras la última pulsación antes de guardar.
+ *
+ * Menos convertiría cada tecla en una petición; más deja demasiado trabajo sólo
+ * en memoria. Además se guarda SIEMPRE antes de ejecutar, de cambiar de paso y
+ * de entregar, así que este número decide la frecuencia, no si se pierde algo.
+ */
+const AUTOSAVE_DELAY_MS = 800;
+
+function withState<T>(current: Record<string, T>, stepIds: string[], value: T): Record<string, T> {
+  const next = { ...current };
+  for (const stepId of stepIds) next[stepId] = value;
+  return next;
+}
+
 export function WorkflowRunner({
   data,
   courseId,
@@ -76,6 +101,22 @@ export function WorkflowRunner({
   const [message, setMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [saveState, setSaveState] = useState<Record<string, CodeSaveState>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  /**
+   * El estado más reciente, legible desde un temporizador.
+   *
+   * El autoguardado dispara fuera del render, así que leer `evidence` de la
+   * clausura le daría el valor de hace 800 ms: justo las últimas pulsaciones
+   * que hacían falta.
+   */
+  const evidenceRef = useRef(evidence);
+  evidenceRef.current = evidence;
+
+  const pendingRef = useRef<Set<string>>(new Set());
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightRef = useRef<Promise<void> | null>(null);
 
   // El borrador se carga UNA vez: sin la guarda, cada recarga pisaría lo que la
   // persona lleva escrito sin guardar.
@@ -87,6 +128,96 @@ export function WorkflowRunner({
 
   const active = steps.find((step) => step.id === activeId) ?? steps[0];
   const progress = workflowProgress(steps, evidence);
+
+  /**
+   * Guarda AHORA lo que esté pendiente, y nada más.
+   *
+   * Manda sólo los pasos en cola, no la entrega entera. La ruta fusiona por
+   * paso sobre lo ya guardado (ver `saveSteppedSubmission`), así que dos pasos
+   * de código no pueden pisarse aunque se escriban casi a la vez, y un
+   * autoguardado no puede revertir lo que otro paso acababa de escribir.
+   */
+  const flushAutosave = useCallback(async (): Promise<void> => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    // Una escritura en vuelo se espera antes de empezar otra: el orden de las
+    // versiones guardadas tiene que ser el orden en que se escribieron.
+    if (inFlightRef.current) await inFlightRef.current;
+
+    const stepIds = [...pendingRef.current];
+    if (stepIds.length === 0 || closed) {
+      pendingRef.current.clear();
+      return;
+    }
+    pendingRef.current.clear();
+
+    const payload = stepIds.flatMap((stepId) => {
+      const entry = evidenceRef.current[stepId];
+      return entry
+        ? [
+            {
+              stepId,
+              toolId: entry.toolId,
+              toolName: entry.toolName,
+              note: entry.note,
+              data: entry.data as unknown as Record<string, unknown>,
+            },
+          ]
+        : [];
+    });
+    if (payload.length === 0) return;
+
+    setSaveState((current) => withState(current, stepIds, 'saving'));
+    setSaveError(null);
+
+    const request = (async () => {
+      try {
+        await saveWorkflowSubmission(assignmentId, 'draft', payload);
+        setSaveState((current) => withState(current, stepIds, 'saved'));
+      } catch (caught) {
+        // Se devuelven a la cola: el siguiente intento —o «Guardar borrador»—
+        // los reintenta en vez de darlos por perdidos.
+        for (const stepId of stepIds) pendingRef.current.add(stepId);
+        setSaveState((current) => withState(current, stepIds, 'error'));
+        setSaveError(caught instanceof Error ? caught.message : 'No se pudo guardar.');
+      } finally {
+        inFlightRef.current = null;
+      }
+    })();
+
+    inFlightRef.current = request;
+    await request;
+  }, [assignmentId, closed]);
+
+  /** Encola un paso y reinicia la espera. Escribir seguido no dispara ráfagas. */
+  const queueAutosave = useCallback(
+    (stepId: string): void => {
+      if (closed) return;
+      pendingRef.current.add(stepId);
+      setSaveState((current) => withState(current, [stepId], 'saving'));
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => void flushAutosave(), AUTOSAVE_DELAY_MS);
+    },
+    [closed, flushAutosave]
+  );
+
+  // Salir de la pantalla con un temporizador vivo dejaría una escritura
+  // programada contra un componente que ya no existe.
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    []
+  );
+
+  function goToStep(stepId: string): void {
+    // Cambiar de paso guarda lo pendiente del anterior. Volver y encontrarse el
+    // editor vacío sería indistinguible de haber perdido el trabajo.
+    void flushAutosave();
+    setActiveId(stepId);
+  }
 
   function patchEvidence(stepId: string, changes: Partial<StepEvidence>): void {
     setEvidence((current) => ({
@@ -119,6 +250,16 @@ export function WorkflowRunner({
   }
 
   async function save(intent: 'draft' | 'submit'): Promise<void> {
+    // Un autoguardado en vuelo escribiría DESPUÉS de la entrega y la devolvería
+    // a borrador. Se vacía la cola —el envío de abajo ya lleva todo— antes de
+    // tocar nada.
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (inFlightRef.current) await inFlightRef.current;
+    pendingRef.current.clear();
+
     setBusy(true);
     setMessage(null);
     try {
@@ -133,6 +274,9 @@ export function WorkflowRunner({
           data: entry.data as unknown as Record<string, unknown>,
         }))
       );
+
+      setSaveState({});
+      setSaveError(null);
 
       if (intent === 'submit') {
         router.push(`/aula/${courseId}/tareas/${assignmentId}`);
@@ -182,7 +326,7 @@ export function WorkflowRunner({
               <li key={step.id}>
                 <button
                   type="button"
-                  onClick={() => setActiveId(step.id)}
+                  onClick={() => goToStep(step.id)}
                   aria-current={current ? 'step' : undefined}
                   className={`flex w-full items-center gap-3 rounded-sm px-2 py-2 text-left text-sm ${
                     current ? 'bg-accent-soft text-accent' : 'hover:bg-sunken'
@@ -218,8 +362,13 @@ export function WorkflowRunner({
           stepTools={data.stepTools}
           workflow={assignment.workflow}
           evidenceByStep={evidence}
+          closed={closed}
+          saveState={saveState[active.id] ?? 'idle'}
+          saveError={saveError ?? undefined}
           onPatchEvidence={(changes) => patchEvidence(active.id, changes)}
           onPatchData={(changes) => patchData(active.id, changes)}
+          onCodeEdited={() => queueAutosave(active.id)}
+          beforeExecute={flushAutosave}
         />
       )}
 
@@ -283,8 +432,13 @@ function StepPanel({
   stepTools,
   workflow,
   evidenceByStep,
+  closed,
+  saveState,
+  saveError,
   onPatchEvidence,
   onPatchData,
+  onCodeEdited,
+  beforeExecute,
 }: {
   step: WorkflowStep;
   index: number;
@@ -295,8 +449,13 @@ function StepPanel({
   stepTools: AssignmentDetail['stepTools'];
   workflow: WorkflowStep[];
   evidenceByStep: Record<string, StepEvidence>;
+  closed: boolean;
+  saveState: CodeSaveState;
+  saveError?: string;
   onPatchEvidence: (changes: Partial<StepEvidence>) => void;
   onPatchData: (changes: Record<string, unknown>) => void;
+  onCodeEdited: () => void;
+  beforeExecute: () => Promise<void>;
 }) {
   const deliverable = primaryDeliverable(step);
   const payload = (evidence?.data ?? {}) as Record<string, unknown>;
@@ -376,6 +535,8 @@ function StepPanel({
         ) : (
           <p className="meta mb-3">
             Entrega: {DELIVERABLE_LABEL[deliverable.type]}
+            {deliverable.type === 'code' &&
+              ` · ${programmingLanguageLabel(deliverable.language ?? LEGACY_CODE_LANGUAGE)}`}
             {deliverable.hint && ` — ${deliverable.hint}`}
           </p>
         )}
@@ -415,6 +576,44 @@ function StepPanel({
             hint={deliverable.hint}
             assignmentId={assignmentId}
             stepId={step.id}
+          />
+        )}
+
+        {deliverable.type === 'code' && (
+          <CodeFields
+            data={payload as unknown as CodeData}
+            onChange={onPatchData}
+            // El lenguaje lo dicta el PASO. Si el paso no lo trae —un registro
+            // antiguo— se cae al valor por defecto en vez de dejar el
+            // formulario sin saber qué pedir.
+            language={deliverable.language ?? LEGACY_CODE_LANGUAGE}
+            codeMode={deliverable.codeMode}
+            starterCode={deliverable.starterCode ?? ''}
+            executionEnabled={deliverable.executionEnabled ?? false}
+            hint={deliverable.hint}
+            assignmentId={assignmentId}
+            stepId={step.id}
+            readOnly={closed}
+            onCodeEdited={onCodeEdited}
+            beforeExecute={beforeExecute}
+            saveState={saveState}
+            saveError={saveError}
+          />
+        )}
+
+        {deliverable.type === 'nexbook' && (
+          <NexBookStep
+            assignmentId={assignmentId}
+            stepId={step.id}
+            readOnly={closed}
+            /*
+              La evidencia del paso es una COPIA del documento, no su id. Es lo
+              que hace que entregar congele el trabajo: seguir editando después
+              cambia el NexBook, no la entrega. Ver `NexBookSubmissionData`.
+            */
+            onSnapshot={(snapshot) =>
+              onPatchData({ ...snapshot, submittedAt: new Date().toISOString() })
+            }
           />
         )}
 

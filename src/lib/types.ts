@@ -299,7 +299,67 @@ export type DeliverableType =
   | 'ai_worklog'
   | 'structured'
   | 'project'
+  /** Código fuente: pegado, adjunto, o ambos. Ver `ProgrammingLanguage`. */
+  | 'code'
+  /**
+   * Un documento computacional. Ver `NexBook`.
+   *
+   * Es un entregable MÁS, no el sustituto de `code`: una actividad que sólo
+   * pide veinte líneas de Python no debería obligar a nadie a abrir un
+   * documento por bloques.
+   */
+  | 'nexbook'
   | 'resource_reference';
+
+/**
+ * Lenguaje de programación de un paso de código.
+ *
+ * Es una unión ABIERTA por la misma razón que `StepActionType`: el modelo no
+ * puede depender de un despliegue para admitir un lenguaje nuevo. Qué se ofrece
+ * HOY, y para qué, lo decide `PROGRAMMING_LANGUAGES` (lib/constants.ts).
+ *
+ * Deliberadamente NO es un booleano `isR`: eso habría obligado a rehacer las
+ * entregas el día que entrara el segundo lenguaje.
+ */
+export type ProgrammingLanguage =
+  | 'r'
+  | 'python'
+  | 'java'
+  | 'c'
+  | 'cpp'
+  | 'javascript'
+  | 'html'
+  | 'css'
+  | 'sql'
+  | (string & {});
+
+/**
+ * Qué se puede hacer con un lenguaje, dicho campo por campo.
+ *
+ * Antes esto era UN booleano, `enabled`, y era un error de diseño: mezclaba
+ * «se puede escribir» con «se puede ejecutar». Con un solo interruptor, ofrecer
+ * Java en el editor significaba prometer que Java corre, y no corre. Separarlos
+ * es lo que permite decir la verdad en la interfaz —«Ejecución no disponible»—
+ * en vez de esconder el lenguaje o fingir que funciona.
+ *
+ * `execution` es la pregunta que le importa a quien programa; `browserExecution`
+ * y `remoteExecution` son DÓNDE, y le importan a la arquitectura.
+ */
+export interface LanguageCapabilities {
+  /** Se puede escribir en Monaco, con resaltado y su extensión propia. */
+  editor: boolean;
+  /** Se puede ejecutar en alguna parte. Si es `false`, la UI lo dice. */
+  execution: boolean;
+  /** Se ejecuta en el navegador de quien programa (Pyodide, webR). */
+  browserExecution: boolean;
+  /** Necesitaría un sandbox remoto. Hoy ninguno está conectado. */
+  remoteExecution: boolean;
+  /** Puede ser la base de un proyecto web publicable en el origen aislado. */
+  projects: boolean;
+}
+
+/** Cómo puede entregar el fuente el alumnado en un paso de programación. */
+export type CodeMode = 'editor' | 'upload' | 'either';
 
 export interface StepDeliverable {
   type: DeliverableType;
@@ -308,6 +368,20 @@ export interface StepDeliverable {
   hint: string;
   /** Sólo cuando `type === 'structured'`: los campos que se rellenan. */
   questions: ResearchQuestion[];
+  /**
+   * Sólo cuando `type === 'code'`: en qué lenguaje se pide la solución.
+   *
+   * OPCIONAL a propósito: los pasos guardados antes de que existiera el
+   * entregable de código no lo traen, y no hay nada que migrar porque tampoco
+   * piden código.
+   */
+  language?: ProgrammingLanguage | null;
+  /** Opcional por compatibilidad; un paso de código legacy se normaliza a `either`. */
+  codeMode?: CodeMode | null;
+  /** Fuente inicial de la docente. Los espacios son significativos. */
+  starterCode?: string;
+  /** Si la interfaz puede ofrecer ejecución dentro de un sandbox aislado. */
+  executionEnabled?: boolean;
 }
 
 /**
@@ -432,6 +506,59 @@ export interface ExternalTool {
  */
 export type EmbedLevel = 0 | 1 | 2 | 3;
 
+// ---------------------------------------------------------------------------
+// Materiales de la tarea
+//
+// El tercer concepto de archivo de UINexus, y el que faltaba. Son DOS cosas
+// distintas y no se mezclan:
+//
+//   Submission / StepEvidence  →  lo que ENTREGA el alumnado. Privado por
+//                                 persona, con fecha límite y revisión.
+//   AssignmentMaterial         →  lo que REPARTE el profesorado para poder
+//                                 hacer la tarea. Lo lee todo el grupo, no
+//                                 caduca y nadie lo revisa.
+//
+// Meterlos en la misma lista habría obligado a preguntarse en cada lectura «¿de
+// quién es este archivo?», que es justo la pregunta que decide quién puede
+// borrarlo. Por eso viven en la tarea y no en las entregas, y por eso tienen su
+// propia ruta de API y su propio prefijo en S3.
+// ---------------------------------------------------------------------------
+
+/**
+ * Para qué sirve el archivo que reparte la docente.
+ *
+ *  · `template` se rellena y se devuelve: el formato del reporte, la hoja de
+ *    cálculo con la tabla vacía.
+ *  · `resource` se consulta: el caso de estudio, el dataset, el ejemplo.
+ *
+ * Es una etiqueta para quien lo lee, no una regla: UINexus no comprueba que la
+ * plantilla se devuelva. Distinguirlas ahorra la pregunta «¿esto lo tengo que
+ * entregar?» en la pantalla del alumnado.
+ */
+export type AssignmentMaterialKind = 'template' | 'resource';
+
+/** Un archivo repartido por el profesorado, tal y como lo ve la clase. */
+export interface AssignmentMaterial {
+  id: string;
+  kind: AssignmentMaterialKind;
+  /** Cómo se llama en la pantalla. Editable sin tocar el archivo. */
+  displayName: string;
+  /** El nombre original, para que la descarga se llame como debe. */
+  fileName: string;
+  /** Clave en S3. La construye el servidor; nunca llega del cliente. */
+  storageKey: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+  /** Quién lo subió, por nombre. El UID se queda en el registro. */
+  uploadedByName: string;
+}
+
+export interface AssignmentMaterialRecord extends AssignmentMaterial {
+  /** UID de quien lo subió. No cruza la frontera hacia el navegador. */
+  uploadedBy: string;
+}
+
 /** Tarea tal y como la ve quien tiene derecho a verla. */
 export interface Assignment {
   id: string;
@@ -487,6 +614,15 @@ export interface Assignment {
    * compatibilidad, y por eso no hace falta migrar la tabla.
    */
   workflow: WorkflowStep[];
+  /**
+   * Los archivos que reparte el profesorado (plantillas y materiales).
+   *
+   * Una tarea anterior a esta iteración no lo trae guardado y se lee como lista
+   * vacía, igual que el resto de campos añadidos: no hay migración. Se gestiona
+   * por su propia ruta (`/api/assignments/[id]/materials`) y NO por el cuerpo de
+   * la tarea, para que editar el título no pueda borrar los archivos.
+   */
+  materials: AssignmentMaterial[];
   /** `true` cuando la tarea es para todo el grupo. Lo ven ambos roles. */
   assignedToAll: boolean;
   /**
@@ -504,7 +640,7 @@ export interface Assignment {
 export interface AssignmentRecord
   extends Omit<
     Assignment,
-    'assignedTo' | 'assignedToAll' | 'groupAssignments' | 'workflow'
+    'assignedTo' | 'assignedToAll' | 'groupAssignments' | 'workflow' | 'materials'
   > {
   /** `null` significa TODO EL GRUPO. Una lista, asignación selectiva por UID. */
   assignedTo: string[] | null;
@@ -512,6 +648,8 @@ export interface AssignmentRecord
   groupAssignments: GroupAssignmentRecord[];
   /** Pasos con sus responsables en UID. */
   workflow: WorkflowStepRecord[];
+  /** Materiales con el UID de quien los subió. */
+  materials: AssignmentMaterialRecord[];
   createdBy: string;
 }
 
@@ -610,10 +748,40 @@ export interface MediaData {
   note: string;
 }
 
+/**
+ * Familias de archivo académico. Cada una tiene su lista blanca y su límite
+ * (`ACADEMIC_FILE_EXTENSIONS`, `ACADEMIC_FILE_TYPES`, `ACADEMIC_FILE_LIMITS`).
+ *
+ * `material` es la del profesorado; las demás son entregas del alumnado.
+ */
+export type AcademicFileClass = 'image' | 'document' | 'video' | 'code' | 'material';
+
 /** Evidencia que consiste en señalar recursos de la materia. */
 export interface ResourceSelectionData {
   refs: ResourceRef[];
   note: string;
+}
+
+/**
+ * Código entregado en un paso.
+ *
+ * Las dos formas conviven a propósito y NO se excluyen: pegar el fuente es lo
+ * que permite al profesorado leerlo sin descargar nada, y adjuntar el `.R` es
+ * lo que permite ejecutarlo tal cual. Pedir sólo una de las dos empeora uno de
+ * los dos usos reales.
+ *
+ * UINexus NO ejecuta este código en ningún momento (ver docs/SECURITY.md). Se
+ * guarda como texto y se muestra como texto.
+ */
+export interface CodeData {
+  language: ProgrammingLanguage;
+  /** El fuente, tal cual se pegó. Sin formatear, sin corregir. */
+  code: string;
+  /** Qué hace el programa, si la tarea lo pide. */
+  explanation: string;
+  /** Clave en S3 del archivo adjunto, cuando se subió uno. */
+  storageKey: string;
+  fileName: string;
 }
 
 export type SubmissionData =
@@ -623,6 +791,8 @@ export type SubmissionData =
   | ExternalLinkData
   | FreeformData
   | MediaData
+  | CodeData
+  | NexBookSubmissionData
   | ResourceSelectionData;
 
 /**
@@ -1022,4 +1192,548 @@ export interface CourseResourceRecord
   authorName: string;
   approvedByUid: string | null;
   approvedByName: string;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace de programación (iteración 7)
+//
+// Un sitio donde escribir código que NO es una entrega. Hasta ahora todo el
+// código de UINexus vivía dentro de `stepEvidence[stepId]` de una entrega, lo
+// que significaba que para probar cinco líneas de Python había que tener una
+// actividad abierta con fecha límite.
+//
+// ## Por qué una entidad nueva y no un campo más en la entrega
+//
+// Porque no comparten ciclo de vida. Una entrega pertenece a una actividad,
+// tiene fecha límite, se revisa y se califica; una práctica es de quien la
+// escribió, no caduca y nadie la corrige. Meter las dos en la misma tabla
+// obligaría a que cada lectura preguntara «¿esto es entregable?», que es
+// exactamente el tipo de campo que se acaba interpretando mal.
+//
+// ## Por qué NO se llama `PracticeCode`, `EditorCode` ni similar
+//
+// Un `Workspace` es el concepto general: un espacio con un lenguaje y unos
+// archivos. Su `context` dice de quién depende. Hoy sólo existe el personal, y
+// los otros dos están nombrados para que añadirlos no sea una tabla nueva —la
+// misma razón por la que `ProgrammingLanguage` es un valor y no un booleano—.
+// ---------------------------------------------------------------------------
+
+/**
+ * A qué pertenece un workspace.
+ *
+ * `personal` es una práctica de quien la escribió. Los otros dos están
+ * declarados y NO implementados: una actividad guarda su código en
+ * `stepEvidence` y ahí se queda, porque mover eso sería migrar entregas ya
+ * calificadas para ganar una simetría que nadie ha pedido.
+ */
+export type WorkspaceContext = 'personal' | 'activity' | 'project';
+
+/**
+ * Los archivos de un workspace.
+ *
+ * `code` es la fuente de verdad de un workspace de un solo archivo, que es lo
+ * único que existe hoy, y es un `string` por la misma razón que `CodeData.code`:
+ * ya funciona y ya está probado.
+ *
+ * `files` es la puerta a varios archivos, y está OPCIONAL a propósito. Cuando
+ * llegue, `code` seguirá siendo el archivo de entrada —el que se ejecuta— y
+ * `files` el resto. Un workspace guardado hoy se leerá entonces sin migrar
+ * nada; convertir `code` en `files` de golpe habría obligado a reescribir el
+ * editor, el runner y todas las prácticas existentes a la vez.
+ */
+export interface WorkspaceFiles {
+  code: string;
+  files?: Record<string, string>;
+}
+
+/**
+ * Qué clase de workspace es.
+ *
+ * `code` es el de un solo archivo con un lenguaje, que es lo que existía antes
+ * de los NexBooks. Ausente significa `code`: las prácticas guardadas hasta
+ * ahora se crearon cuando era la única forma, y reinterpretarlas sería
+ * convertir en documento algo que nadie escribió como documento.
+ *
+ * Los dos comparten tabla, índice y dueño porque comparten ciclo de vida
+ * —privados, sin fecha límite, de quien los escribió— y patrón de acceso: «los
+ * míos, el último tocado primero». Un `kind` es más barato que dos tablas que
+ * hay que consultar por separado para pintar UNA lista.
+ */
+export type WorkspaceKind = 'code' | 'nexbook';
+
+export interface Workspace extends WorkspaceFiles {
+  id: string;
+  kind: WorkspaceKind;
+  context: WorkspaceContext;
+  title: string;
+  language: ProgrammingLanguage;
+  /** Materia con la que se relaciona, si nació dentro de una. */
+  courseId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * El workspace tal y como se guarda.
+ *
+ * `ownerUid` no viaja nunca al navegador de otra persona: una práctica es
+ * privada y sólo la lee su dueño, así que la API devuelve `Workspace` y este
+ * registro se queda en el servidor.
+ */
+export interface WorkspaceRecord extends Workspace {
+  ownerUid: string;
+}
+
+// ---------------------------------------------------------------------------
+// NexBook (iteración 8)
+//
+// El documento computacional de UINexus: explicación, código ejecutable y
+// resultados en un mismo sitio reproducible.
+//
+// ## Qué NO es
+//
+// No es un Jupyter Notebook con otro nombre. La diferencia que importa en el
+// modelo es que aquí un OUTPUT NO ES UN BLOQUE: una gráfica que produce el
+// código del alumnado no se convierte en un `ImageBlock` que luego se pueda
+// editar a mano. Los bloques son lo que alguien escribió; los outputs son lo
+// que la máquina contestó. Confundirlos es lo que hace imposible saber, al
+// revisar, qué escribió el estudiante y qué salió de ejecutar.
+//
+// ## Un solo NexBook, no cuatro
+//
+// No hay `PersonalNexBook`, `TeacherNexBook` ni `SubmittedNexBook`. Hay UN
+// documento con un `context` que dice de quién depende y una `visibility` que
+// dice quién lo ve. Cuatro entidades incompatibles habrían obligado a duplicar
+// el editor, el autoguardado y los kernels cuatro veces.
+// ---------------------------------------------------------------------------
+
+/** Versión del esquema del documento. Nunca se confía en que no cambiará. */
+export const NEXBOOK_FORMAT_VERSION = 1;
+
+/**
+ * Un bloque de explicación, en Markdown.
+ *
+ * El Markdown se renderiza SANITIZADO (ver `components/aula/markdown-content.tsx`):
+ * un documento que un docente reparte a treinta personas no puede ejecutar
+ * JavaScript de quien lo escribió.
+ */
+export interface NexBookMarkdownBlock {
+  id: string;
+  type: 'markdown';
+  source: string;
+  /**
+   * Si el alumnado puede tocarlo cuando el documento viene de una plantilla.
+   *
+   * Ausente significa `true`: los bloques de un laboratorio personal son todos
+   * suyos, y sólo una plantilla docente tiene razones para bloquear alguno
+   * —«# Instrucciones» sí, «# Escribe tu conclusión» no—.
+   */
+  editableByStudent?: boolean;
+}
+
+export interface NexBookCodeBlock {
+  id: string;
+  type: 'code';
+  /**
+   * El lenguaje es una PROPIEDAD, no un tipo de bloque.
+   *
+   * No hay `PythonBlock` ni `RBlock` por la misma razón que no hay `REditor`:
+   * duplicar el bloque por lenguaje duplicaría también su ejecución, su
+   * autoguardado y su consola. Qué se puede hacer con cada uno lo dice
+   * `languageCapabilities()`.
+   */
+  language: ProgrammingLanguage;
+  source: string;
+  editableByStudent?: boolean;
+}
+
+/**
+ * Una imagen que forma parte del DOCUMENTO.
+ *
+ * No confundir con `NexBookImageOutput`, que es lo que devolvió una ejecución.
+ * La diferencia no es cosmética: un bloque es lo que alguien decidió poner ahí y
+ * una salida es lo que contestó la máquina. Por eso una gráfica generada por
+ * código NO se convierte sola en un `ImageBlock`: al revisar dejaría de poderse
+ * distinguir qué escribió cada persona y qué salió de ejecutar.
+ *
+ * Los bytes viven en el almacén de assets. El bloque lleva la referencia y lo
+ * que hace falta para pintarlo bien sin haberlo descargado todavía —dimensiones,
+ * para reservar el hueco y no dar un salto de layout—.
+ */
+export interface NexBookImageBlock {
+  id: string;
+  type: 'image';
+  assetId: string;
+  mimeType: NexBookImageMimeType;
+  /**
+   * Texto alternativo. Obligatorio en el tipo, vacío SÓLO si es decorativa.
+   *
+   * Se pide siempre en la interfaz porque una imagen sin alternativa en un
+   * documento académico deja fuera a quien use un lector de pantalla, y el
+   * momento de escribirla es cuando se sabe qué representa.
+   */
+  alt: string;
+  caption?: string;
+  width?: number;
+  height?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Hoja de cálculo
+// ---------------------------------------------------------------------------
+
+/**
+ * Lo que hay en una celda de una hoja.
+ *
+ * Se guarda lo que la persona ESCRIBIÓ (`input`), no lo que se calculó. Guardar
+ * el resultado como si fuera el dato convierte `=SUMA(A1:A3)` en un número
+ * suelto la primera vez que alguien reabre el documento, y entonces la hoja deja
+ * de recalcular. El valor calculado se deriva al abrir y no se persiste.
+ */
+export interface NexBookSheetCell {
+  /** Texto tal cual, incluida la fórmula con su `=` inicial si la hay. */
+  input: string;
+}
+
+/**
+ * Una hoja, DISPERSA.
+ *
+ * Las celdas se indexan por `"fila:columna"` en vez de una matriz completa
+ * porque una hoja de 50 × 20 con seis datos ocuparía 1 000 huecos vacíos en el
+ * JSON. Con el presupuesto de 300 KB del documento eso no es un detalle.
+ */
+export interface NexBookSheetData {
+  rows: number;
+  columns: number;
+  /** Clave `"<fila>:<columna>"`, base 0. Sólo las celdas con contenido. */
+  cells: Record<string, NexBookSheetCell>;
+  /** Nombre de las columnas, si quien hizo la hoja les puso uno. */
+  headers?: string[];
+}
+
+/**
+ * Una hoja de cálculo dentro del documento.
+ *
+ * `name` existe para poder referirse a ella —«Ventas»— desde el puente que
+ * conectará la hoja con Python y R. Ver `lib/spreadsheet/bridge.ts`.
+ */
+export interface NexBookSpreadsheetBlock {
+  id: string;
+  type: 'spreadsheet';
+  name: string;
+  sheet: NexBookSheetData;
+  editableByStudent?: boolean;
+}
+
+/**
+ * Los bloques declarados.
+ *
+ * La unión está discriminada por `type` para que añadir uno sea añadir un
+ * miembro y un `case`. No se declara ninguno antes de existir: un tipo que
+ * ninguna pantalla sabe pintar produce documentos que nadie puede abrir. Por eso
+ * `image` y `spreadsheet` entran en la iteración 9 —con su renderizador, su
+ * almacén y su exportación— y `AIBlock` y `ChartBlock` siguen sin estar aquí:
+ * ver `docs/NEXBOOK.md`.
+ */
+export type NexBookBlock =
+  | NexBookMarkdownBlock
+  | NexBookCodeBlock
+  | NexBookImageBlock
+  | NexBookSpreadsheetBlock;
+
+export type NexBookBlockType = NexBookBlock['type'];
+
+/**
+ * Lo que devolvió una ejecución, en ORDEN.
+ *
+ * `seq` existe porque el orden cronológico es información: un programa que
+ * imprime, falla y vuelve a imprimir cuenta una historia que se pierde si
+ * stdout y stderr se guardan en dos montones separados. Desde la iteración 9 ese
+ * orden es REAL y no reconstruido: ver `NexBookTextOutput`.
+ */
+export type NexBookOutput =
+  | NexBookTextOutput
+  | NexBookTableOutput
+  | NexBookImageOutput
+  | NexBookJsonOutput;
+
+/**
+ * Los flujos de V1, y por qué `stream` sigue siendo el discriminante.
+ *
+ * Los tipos ricos llegaron como valores NUEVOS de este campo y no como una forma
+ * distinta de output, que es exactamente lo que V1 anticipó. La consecuencia
+ * práctica importa: un documento guardado en la iteración 8 —`{ seq, stream:
+ * 'stdout', text }`— sigue validando sin tocar un byte, así que
+ * `NEXBOOK_FORMAT_VERSION` NO sube y no hace falta migración. Un discriminante
+ * nuevo (`type`) habría obligado a reescribir cada `results` almacenado, cada
+ * snapshot de entrega y cada export, a cambio de un nombre más bonito.
+ */
+export type NexBookOutputStream = 'stdout' | 'stderr' | 'error';
+
+/**
+ * Texto, con el flujo del que salió.
+ *
+ * El orden entre stdout y stderr es el REAL desde la iteración 9: Pyodide
+ * entrega sus dos flujos por llamadas según se escriben, y `captureR` devuelve
+ * un array ya ordenado. El motor sólo tenía que dejar de tirar esa información
+ * juntándola en dos cadenas. Ver `code-engines/output-recorder.ts`.
+ */
+export interface NexBookTextOutput {
+  seq: number;
+  stream: NexBookOutputStream;
+  text: string;
+  /** Se marcó porque se alcanzó el límite, no porque el programa acabara. */
+  truncated?: boolean;
+}
+
+/** Un valor de celda. Sólo primitivos: una tabla no anida documentos. */
+export type NexBookCellValue = string | number | boolean | null;
+
+/**
+ * Datos tabulares, ESTRUCTURADOS.
+ *
+ * No es el HTML que imprima pandas ni el texto que imprima R: son columnas y
+ * filas, y quien las pinta es UINexus. Aceptar HTML de la biblioteca habría
+ * significado renderizar marcado que genera el código del alumnado, que es justo
+ * lo que `MarkdownContent` lleva todo el proyecto evitando.
+ */
+export interface NexBookTableOutput {
+  seq: number;
+  stream: 'table';
+  columns: string[];
+  rows: NexBookCellValue[][];
+  /**
+   * Cuántas filas tenía el original.
+   *
+   * Se recorta a `NEXBOOK_LIMITS.maxTableRows` y se dice: una tabla que enseña
+   * 50 de 10 000 filas sin avisar es una mentira sobre los datos.
+   */
+  totalRows: number;
+  truncated?: boolean;
+}
+
+/**
+ * Una imagen, POR REFERENCIA.
+ *
+ * Los bytes viven en el almacén de assets (S3), nunca dentro del documento. Una
+ * gráfica de 30 KB en Base64 son 40 KB de los 300 KB del item de DynamoDB: tres
+ * gráficas y el documento deja de poder guardarse. Ver `docs/NEXBOOK.md`.
+ */
+export interface NexBookImageOutput {
+  seq: number;
+  stream: 'image';
+  assetId: string;
+  mimeType: NexBookImageMimeType;
+  width?: number;
+  height?: number;
+  /** Qué representa, para quien no la ve. Lo pone quien genera la salida. */
+  alt?: string;
+}
+
+/** Los tipos de imagen que UINexus almacena. Sin SVG: ver `docs/SECURITY.md`. */
+export type NexBookImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp';
+
+/** Un valor JSON, para lo que no es ni texto ni tabla ni imagen. */
+export type NexBookJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | NexBookJsonValue[]
+  | { [key: string]: NexBookJsonValue };
+
+export interface NexBookJsonOutput {
+  seq: number;
+  stream: 'json';
+  value: NexBookJsonValue;
+  truncated?: boolean;
+}
+
+/** El resultado de ejecutar UNA celda, tal y como se guarda con el bloque. */
+export interface NexBookCellResult {
+  blockId: string;
+  status: 'ok' | 'failed' | 'timeout' | 'stopped' | 'rejected';
+  outputs: NexBookOutput[];
+  durationMs: number;
+  /** Cuándo se ejecutó. Al revisar importa si la salida es de este código. */
+  ranAt: string;
+}
+
+/**
+ * De qué depende un NexBook.
+ *
+ * `workflow` lleva la actividad Y el paso: un mismo alumno puede tener dos
+ * NexBooks en la misma actividad si son dos pasos distintos, y sin `stepId` no
+ * habría forma de distinguirlos.
+ */
+export type NexBookContext =
+  | { type: 'personal' }
+  | { type: 'workflow'; assignmentId: string; stepId: string; role: 'template' | 'instance' };
+
+/**
+ * Quién puede verlo.
+ *
+ * Sólo `private` está implementado en V1, y por eso es lo único que la interfaz
+ * ofrece. Los otros tres están NOMBRADOS para que activarlos no sea una
+ * migración; enseñarlos antes de que funcionen sería prometer un botón que no
+ * hace nada.
+ */
+export type NexBookVisibility = 'private' | 'class' | 'link' | 'public';
+
+export interface NexBookDocument {
+  formatVersion: number;
+  blocks: NexBookBlock[];
+  /**
+   * Los outputs, indexados por bloque y FUERA de los bloques.
+   *
+   * Separarlos es lo que hace que borrar la salida no toque el código, que un
+   * output enorme no infle el bloque, y que la instantánea de una entrega pueda
+   * llevar el código con o sin resultados según convenga.
+   */
+  results: Record<string, NexBookCellResult>;
+}
+
+export interface NexBook {
+  id: string;
+  title: string;
+  context: NexBookContext;
+  visibility: NexBookVisibility;
+  document: NexBookDocument;
+  /**
+   * Contador de escrituras, para concurrencia optimista.
+   *
+   * Cada guardado exige la revisión que el cliente creía tener. Dos pestañas
+   * abiertas no se pisan en silencio: la segunda recibe un 409 y la interfaz
+   * puede decir qué pasó, en vez de que gane la última en llegar.
+   */
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Como se guarda. `ownerUid` no viaja al navegador de nadie más. */
+export interface NexBookRecord extends NexBook {
+  ownerUid: string;
+}
+
+/**
+ * Una fila de la lista de Prácticas, sea del tipo que sea.
+ *
+ * Es lo MÍNIMO que la lista necesita, y eso es deliberado: sin esto habría que
+ * mandar al navegador el documento entero de cada NexBook —cientos de KB— sólo
+ * para pintar un título y una fecha.
+ */
+export interface WorkspaceSummary {
+  id: string;
+  kind: WorkspaceKind;
+  title: string;
+  /** Sólo con `kind: 'code'`. Un NexBook puede tener varios lenguajes. */
+  language: ProgrammingLanguage | null;
+  /** Sólo con `kind: 'nexbook'`. Cuántos bloques tiene. */
+  blockCount: number | null;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Assets (iteración 9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Un binario que pertenece a un NexBook y NO vive dentro de él.
+ *
+ * ## Por qué no hay tabla de assets
+ *
+ * Porque no hace falta, y una tabla nueva es un recurso de AWS nuevo. Todo lo
+ * que identifica un asset cabe en su CLAVE de S3, que construye el servidor:
+ *
+ * ```
+ * nexbook/<ownerUid>/<nexbookId>/<assetId>.<ext>
+ * ```
+ *
+ * La propiedad es entonces ESTRUCTURAL —la clave se arma con el uid del token,
+ * nunca con lo que mande el cliente— igual que ya ocurre con los archivos
+ * académicos. Y la autorización de lectura no sale del asset sino del DOCUMENTO
+ * que lo referencia: quien puede abrir el NexBook puede ver sus imágenes, y
+ * quien puede abrir una publicación puede ver las suyas. Un asset que ningún
+ * documento menciona no lo lee nadie.
+ */
+export interface NexBookAssetRef {
+  assetId: string;
+  mimeType: NexBookImageMimeType;
+  bytes: number;
+  width?: number;
+  height?: number;
+}
+
+/** De dónde salió un asset. Cambia quién lo borra y cuándo. */
+export type NexBookAssetOrigin = 'upload' | 'output';
+
+// ---------------------------------------------------------------------------
+// Publicación (iteración 9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Un NexBook publicado.
+ *
+ * ## Publicar es CONGELAR, no cambiar un interruptor
+ *
+ * Poner `visibility: 'public'` sobre el documento vivo habría significado que
+ * cada pulsación en el editor se publica al instante: un experimento a medias, un
+ * dato de prueba o un error escrito a la una de la mañana quedan expuestos sin
+ * que nadie lo decida. Aquí publicar produce una COPIA, igual que entregar:
+ *
+ * ```
+ * NexBook vivo  ──Publicar──▶  NexBookPublication (inmutable)
+ *      │                                  ▲
+ *      └──────Actualizar publicación──────┘
+ * ```
+ *
+ * El autor sigue trabajando y lo publicado no se mueve hasta que lo diga.
+ */
+export interface NexBookPublication {
+  /** El identificador que viaja en la URL. No es el id del NexBook vivo. */
+  slug: string;
+  title: string;
+  /** El documento congelado en el momento de publicar. */
+  document: NexBookDocument;
+  visibility: NexBookPublicVisibility;
+  /** De qué revisión del original salió. Para poder decir «hay cambios nuevos». */
+  sourceRevision: number;
+  publishedAt: string;
+  updatedAt: string;
+  /** Nombre para mostrar de quien publica. NUNCA su uid ni su correo. */
+  authorName: string;
+}
+
+/**
+ * Quién puede ver una publicación.
+ *
+ * `private` no aparece: un documento privado sencillamente no se publica, no se
+ * publica «en privado». Los tres valores que quedan son los que de verdad
+ * cambian quién puede leer.
+ */
+export type NexBookPublicVisibility = Exclude<NexBookVisibility, 'private'>;
+
+/** Como se guarda una publicación. `ownerUid` no viaja a ningún navegador. */
+export interface NexBookPublicationRecord extends NexBookPublication {
+  ownerUid: string;
+  /** El NexBook del que salió, para poder actualizarla. Nunca se expone. */
+  sourceNexbookId: string;
+}
+
+/**
+ * Lo que se entregó, congelado.
+ *
+ * Una entrega NO apunta al NexBook vivo: lleva una COPIA. Si apuntara, seguir
+ * trabajando después de entregar cambiaría lo que la docente califica, y no
+ * habría forma de saber qué se entregó de verdad. `revision` dice de qué
+ * versión salió la copia.
+ */
+export interface NexBookSubmissionData {
+  nexbookId: string;
+  revision: number;
+  snapshot: NexBookDocument;
+  submittedAt: string;
+  /** El título en el momento de entregar: renombrarlo después no lo cambia. */
+  title: string;
 }

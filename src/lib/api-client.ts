@@ -24,6 +24,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * El token de la sesión, para quien no pueda usar `apiFetch`.
+ *
+ * Lo necesitan las dos rutas que no hablan JSON —descargar un `.nexbook` y
+ * subirlo—, que construyen su propio `fetch` pero deben autenticarse igual que
+ * todo lo demás.
+ */
+export function currentIdToken(): Promise<string> {
+  return idToken();
+}
+
 async function idToken(): Promise<string> {
   const auth = getClientAuth();
   const user = auth?.currentUser;

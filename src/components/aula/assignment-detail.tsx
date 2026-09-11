@@ -24,6 +24,7 @@ import {
   SubmissionBadge,
   TypeChip,
 } from './aula-ui';
+import { AssignmentMaterials } from './assignment-materials';
 import { CopyButton } from './copy-button';
 import { CollaborativeDocument } from './collaborative-view';
 import { WorkflowProgress } from './workflow-progress';
@@ -150,6 +151,17 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
           </p>
         </section>
       )}
+
+      {/*
+        Los materiales van ANTES de los pasos y del botón de entrega: son lo
+        primero que hace falta abrir para poder empezar, y buscarlos después de
+        haber leído las instrucciones es exactamente el momento equivocado.
+      */}
+      <AssignmentMaterials
+        assignmentId={assignment.id}
+        materials={assignment.materials}
+        canManage={false}
+      />
 
       {assignment.resourceLinks.length > 0 && (
         <section className="mt-8">
@@ -474,6 +486,13 @@ function TeacherView({
         </dl>
       )}
 
+      {/*
+        Los materiales se gestionan también desde aquí, y no sólo desde el
+        editor: adjuntar la plantilla que faltaba no debería obligar a reabrir
+        el formulario entero de la tarea.
+      */}
+      <TeacherMaterials assignmentId={assignment.id} initial={assignment.materials} />
+
       {isWorkflow || isShared ? (
         <>
           {/*
@@ -540,6 +559,33 @@ function TeacherView({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Los materiales, con su propio estado.
+ *
+ * Se siembra de la tarea UNA vez —de ahí la clave por `assignmentId`— y a partir
+ * de ahí manda la lista que devuelve cada llamada. Volver a leer la tarea entera
+ * después de subir un archivo recargaría también las entregas y el progreso, que
+ * no han cambiado.
+ */
+function TeacherMaterials({
+  assignmentId,
+  initial,
+}: {
+  assignmentId: string;
+  initial: AssignmentDetailData['assignment']['materials'];
+}) {
+  const [materials, setMaterials] = useState(initial);
+
+  return (
+    <AssignmentMaterials
+      assignmentId={assignmentId}
+      materials={materials}
+      canManage
+      onChange={setMaterials}
+    />
   );
 }
 

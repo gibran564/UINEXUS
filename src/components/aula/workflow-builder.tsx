@@ -2,12 +2,19 @@
 
 import { useState } from 'react';
 import {
+  DEFAULT_CODE_MODE,
+  DEFAULT_PROGRAMMING_LANGUAGE,
   DELIVERABLE_LABEL,
+  ENABLED_PROGRAMMING_LANGUAGES,
+  languageCapabilities,
+  languageExecutionNote,
   STEP_ACTIONS,
   TOOL_MODE_LABEL,
   WORKFLOW_LIMITS,
+  programmingLanguageLabel,
 } from '@/lib/constants';
 import type {
+  CodeMode,
   DeliverableType,
   ResearchQuestion,
   ResourceRef,
@@ -17,6 +24,7 @@ import type {
 } from '@/lib/types';
 import { useApi, type CourseLibrary, type RosterRow } from '@/lib/aula-client';
 import { Field, Notice } from './aula-ui';
+import { CodeEditor } from './code-editor';
 import { ResourcePicker } from './resource-picker';
 import { StepPromptField } from './step-prompt-field';
 
@@ -44,10 +52,18 @@ const DELIVERABLE_OPTIONS: DeliverableType[] = [
   'file',
   'image',
   'video',
+  'code',
+  'nexbook',
   'ai_worklog',
   'structured',
   'project',
   'resource_reference',
+];
+
+const CODE_MODE_OPTIONS: readonly (readonly [CodeMode, string])[] = [
+  ['editor', 'Editor integrado'],
+  ['upload', 'Subir archivo'],
+  ['either', 'Editor o archivo'],
 ];
 
 export function makeStep(preset: (typeof STEP_ACTIONS)[number]): WorkflowStep {
@@ -63,7 +79,21 @@ export function makeStep(preset: (typeof STEP_ACTIONS)[number]): WorkflowStep {
     // Sin prompt hasta que se escriba uno. «Escribir aquí» es lo que ofrece la
     // interfaz por defecto, pero un paso vacío no declara un prompt vacío.
     prompt: { mode: 'none', title: '', text: '', resourceId: null },
-    deliverables: [{ type: preset.deliverable, required: true, hint: '', questions: [] }],
+    deliverables: [
+      {
+        type: preset.deliverable,
+        required: true,
+        hint: '',
+        questions: [],
+        language: preset.deliverable === 'code' ? DEFAULT_PROGRAMMING_LANGUAGE : null,
+        // Un paso de código NUEVO nace en el editor integrado. `either` es la
+        // lectura de los guardados antes de que existiera la modalidad, no lo
+        // que se ofrece hoy al crear uno.
+        codeMode: preset.deliverable === 'code' ? DEFAULT_CODE_MODE : null,
+        starterCode: '',
+        executionEnabled: false,
+      },
+    ],
     required: true,
     assignedTo: null,
     dependsOnStepIds: [],
@@ -262,10 +292,30 @@ function StepEditor({
     required: true,
     hint: '',
     questions: [] as ResearchQuestion[],
+    language: null as string | null,
+    codeMode: null as CodeMode | null,
+    starterCode: '',
+    executionEnabled: false,
   };
 
-  const patchDeliverable = (changes: Partial<typeof deliverable>) =>
-    onChange({ deliverables: [{ ...deliverable, ...changes }] });
+  const patchDeliverable = (changes: Partial<typeof deliverable>) => {
+    const next = { ...deliverable, ...changes };
+    if (next.type === 'code') {
+      // Un paso que pide programar sin decir en qué, o sin decir cómo se
+      // entrega, no es configurable después: se rellena aquí con lo que hoy
+      // significa «paso de código nuevo».
+      if (!next.language) next.language = DEFAULT_PROGRAMMING_LANGUAGE;
+      if (!next.codeMode) next.codeMode = DEFAULT_CODE_MODE;
+    } else {
+      // Fuera de un paso de código, estos campos no describen nada. Guardarlos
+      // obligaría a interpretarlos en cada lectura.
+      next.language = null;
+      next.codeMode = null;
+      next.starterCode = '';
+      next.executionEnabled = false;
+    }
+    onChange({ deliverables: [next] });
+  };
 
   return (
     <div className="mt-5 space-y-5 border-t border-line pt-5">
@@ -318,6 +368,116 @@ function StepEditor({
           </select>
         </Field>
       </div>
+
+      {/*
+        La configuración de un paso de código. Nada de esto es específico de
+        Investigación de Operaciones: una materia de IO simplemente elegirá
+        «Código», igual que cualquier otra que programe.
+      */}
+      {deliverable.type === 'code' && (
+        <div className="space-y-5 rounded-sm border border-line bg-sunken p-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Lenguaje"
+              hint="En qué lenguaje se resuelve. El alumnado no puede cambiarlo."
+            >
+              <select
+                value={deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE}
+                onChange={(event) => patchDeliverable({ language: event.target.value })}
+                className="field"
+              >
+                {ENABLED_PROGRAMMING_LANGUAGES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+                {/* Un paso guardado con un lenguaje que todavía no se ofrece
+                    sigue apareciendo: el modelo lo admite aunque la interfaz no
+                    lo liste. */}
+                {deliverable.language &&
+                  !ENABLED_PROGRAMMING_LANGUAGES.some(
+                    (option) => option.value === deliverable.language
+                  ) && (
+                    <option value={deliverable.language}>
+                      {programmingLanguageLabel(deliverable.language)}
+                    </option>
+                  )}
+              </select>
+            </Field>
+
+            <Field label="Modalidad" hint="Cómo entrega el fuente el alumnado.">
+              <select
+                value={deliverable.codeMode ?? DEFAULT_CODE_MODE}
+                onChange={(event) =>
+                  patchDeliverable({ codeMode: event.target.value as CodeMode })
+                }
+                className="field"
+              >
+                {CODE_MODE_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          {/*
+            El interruptor sigue existiendo aunque el lenguaje no se ejecute:
+            desaparecerlo haría que cambiar de Python a Java borrase en silencio
+            una decisión ya tomada. Lo que cambia es que se dice la verdad sobre
+            lo que hará —y `languageExecutionNote` explica por qué—.
+          */}
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={deliverable.executionEnabled ?? false}
+              onChange={(event) => patchDeliverable({ executionEnabled: event.target.checked })}
+              className="mt-1"
+            />
+            <span>
+              <span className="block text-sm font-medium">Permitir ejecución</span>
+              <span className="hint">
+                {languageCapabilities(deliverable.language).browserExecution
+                  ? 'Añade un botón para ejecutar el programa dentro del navegador, sin salida a internet y sin instalar paquetes. Tú podrás ejecutarlo al revisar en cualquier caso.'
+                  : `${languageExecutionNote(deliverable.language) ?? ''} El alumnado verá «Ejecución no disponible» y podrá escribir y entregar con normalidad.`}
+              </span>
+            </span>
+          </label>
+
+          {(deliverable.codeMode ?? DEFAULT_CODE_MODE) !== 'upload' && (
+            <div>
+              <p className="label">Código inicial (opcional)</p>
+              <CodeEditor
+                language={deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE}
+                value={deliverable.starterCode ?? ''}
+                onChange={(starterCode) => patchDeliverable({ starterCode })}
+                height={220}
+                ariaLabel="Código inicial de la actividad"
+              />
+              <p className="hint">
+                Con lo que se encuentra el alumnado al abrir el paso por primera vez. Cambiarlo
+                después NO pisa el trabajo de quien ya empezó.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/*
+        Un paso de NexBook no se configura aquí: su plantilla SE EDITA, no se
+        rellena en un formulario. El enlace lleva al paso en la vista del
+        alumnado, donde la docente ve la plantilla real con el mismo Studio que
+        usará el grupo. Un segundo editor «de plantillas» habría sido el mismo
+        editor con otro nombre.
+      */}
+      {deliverable.type === 'nexbook' && (
+        <Notice>
+          Este paso se entrega como NexBook: texto, código y resultados en un documento. Abre el
+          paso desde la actividad publicada para construir la plantilla; cada estudiante recibirá
+          su propia copia la primera vez que entre.
+        </Notice>
+      )}
 
       {deliverable.type !== 'none' && (
         <Field label="Pista para el entregable" hint="Opcional.">

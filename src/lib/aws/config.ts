@@ -37,6 +37,12 @@ export const TABLES = {
   prompts: `${TABLE_PREFIX}-prompts`,
   skills: `${TABLE_PREFIX}-skills`,
   resources: `${TABLE_PREFIX}-resources`,
+  /**
+   * Prácticas de programación (iteración 7). Tabla propia y no una columna en
+   * `submissions`: una práctica no tiene fecha límite, no se revisa y no
+   * pertenece a una actividad. Ver `Workspace` en lib/types.ts.
+   */
+  workspaces: `${TABLE_PREFIX}-workspaces`,
 } as const;
 
 export const INDEXES = {
@@ -51,6 +57,7 @@ export const INDEXES = {
   promptsByCourse: 'byCourse',
   skillsByCourse: 'byCourse',
   resourcesByCourse: 'byCourse',
+  workspacesByOwner: 'byOwner',
 } as const;
 
 /**

@@ -11,6 +11,7 @@ import {
   type RosterRow,
 } from '@/lib/aula-client';
 import type {
+  AssignmentMaterial,
   AssignmentType,
   CollaborationMode,
   ContributionVisibility,
@@ -22,8 +23,10 @@ import type {
 } from '@/lib/types';
 import { composeDueAt, formatDueLabel, splitDueAt } from '@/lib/due-date';
 import { AulaScreen, Crumbs, Field, Notice } from './aula-ui';
+import { MaterialsList } from './assignment-materials';
 import { CollaborationPlanner } from './collaboration-planner';
 import { WorkflowBuilder } from './workflow-builder';
+import { WorkflowTemplatePicker } from './workflow-template-picker';
 import { ResourcePicker } from './resource-picker';
 
 /**
@@ -227,53 +230,89 @@ export function AssignmentEditor({
 
   const multi = draft.shape === 'multi';
 
+  /**
+   * Guarda y devuelve el id de la tarea.
+   *
+   * Separado de `save` porque hay dos cosas que hacer después de guardar y sólo
+   * una es «volver a la materia»: adjuntar archivos necesita que la tarea EXISTA
+   * —los materiales cuelgan de ella— y por eso ese camino se queda dentro del
+   * editor en vez de salir.
+   */
+  async function persist(status: 'draft' | 'published'): Promise<string> {
+    const body = {
+      title: draft.title,
+      description: draft.description,
+      instructions: draft.instructions,
+      // Una actividad de varios pasos se guarda como `workflow`; una de un
+      // paso conserva su tipo de siempre para no cambiar cómo se lee.
+      type: multi ? 'workflow' : draft.type,
+      dueDate: draft.dueDate || null,
+      /**
+       * El instante se compone AQUÍ, en el navegador, porque es aquí donde se
+       * conoce la zona horaria de quien pone la fecha. El servidor guarda el
+       * instante que recibe y no intenta adivinar ninguna zona: eso es lo que
+       * evita el fallo de «pongo 23:59 y cierra seis horas antes».
+       */
+      dueAt: composeDueAt(draft.dueDate, draft.dueTime),
+      resourceLinks: draft.resourceLinks.filter((link) => link.url.trim()),
+      researchQuestions: draft.researchQuestions.filter((question) => question.prompt.trim()),
+      assignedHandles: draft.assignToAll ? null : draft.assignedHandles,
+      status,
+      collaborationMode: draft.collaborationMode,
+      contributionVisibility: draft.contributionVisibility,
+      // El reparto sólo tiene sentido en una investigación colaborativa. En
+      // cualquier otro caso se manda vacío en vez de arrastrar el de una
+      // edición anterior, que reaparecería si se volviera a poner en `shared`.
+      groupAssignments:
+        draft.type === 'research' && draft.collaborationMode === 'shared'
+          ? draft.groupAssignments.filter((entry) => entry.assignedTo.length > 0)
+          : [],
+      resources: draft.resources,
+      workflow: multi
+        ? draft.workflow.map((step, index) => ({
+            ...step,
+            order: index,
+            // El modelo habla en handles; el estado del formulario también.
+            assignedHandles: step.assignedTo,
+          }))
+        : [],
+    };
+
+    if (assignmentId) {
+      await updateAssignment(assignmentId, body);
+      return assignmentId;
+    }
+    const { assignment } = await createAssignment(courseId, body);
+    return assignment.id;
+  }
+
   async function save(status: 'draft' | 'published'): Promise<void> {
     setBusy(true);
     setError(null);
     try {
-      const body = {
-        title: draft.title,
-        description: draft.description,
-        instructions: draft.instructions,
-        // Una actividad de varios pasos se guarda como `workflow`; una de un
-        // paso conserva su tipo de siempre para no cambiar cómo se lee.
-        type: multi ? 'workflow' : draft.type,
-        dueDate: draft.dueDate || null,
-        /**
-         * El instante se compone AQUÍ, en el navegador, porque es aquí donde se
-         * conoce la zona horaria de quien pone la fecha. El servidor guarda el
-         * instante que recibe y no intenta adivinar ninguna zona: eso es lo que
-         * evita el fallo de «pongo 23:59 y cierra seis horas antes».
-         */
-        dueAt: composeDueAt(draft.dueDate, draft.dueTime),
-        resourceLinks: draft.resourceLinks.filter((link) => link.url.trim()),
-        researchQuestions: draft.researchQuestions.filter((question) => question.prompt.trim()),
-        assignedHandles: draft.assignToAll ? null : draft.assignedHandles,
-        status,
-        collaborationMode: draft.collaborationMode,
-        contributionVisibility: draft.contributionVisibility,
-        // El reparto sólo tiene sentido en una investigación colaborativa. En
-        // cualquier otro caso se manda vacío en vez de arrastrar el de una
-        // edición anterior, que reaparecería si se volviera a poner en `shared`.
-        groupAssignments:
-          draft.type === 'research' && draft.collaborationMode === 'shared'
-            ? draft.groupAssignments.filter((entry) => entry.assignedTo.length > 0)
-            : [],
-        resources: draft.resources,
-        workflow: multi
-          ? draft.workflow.map((step, index) => ({
-              ...step,
-              order: index,
-              // El modelo habla en handles; el estado del formulario también.
-              assignedHandles: step.assignedTo,
-            }))
-          : [],
-      };
-
-      if (assignmentId) await updateAssignment(assignmentId, body);
-      else await createAssignment(courseId, body);
-
+      await persist(status);
       router.push(`/aula/${courseId}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo guardar.');
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Guarda como borrador y se queda en el editor para poder adjuntar archivos.
+   *
+   * Es la respuesta a un problema real de orden: los materiales cuelgan de la
+   * tarea, así que no existen antes de que la tarea exista. La alternativa
+   * —guardar los archivos en el navegador y subirlos al publicar— habría hecho
+   * falta un almacén intermedio y habría perdido lo subido ante cualquier
+   * recarga. Guardar un borrador es gratis y no publica nada.
+   */
+  async function saveAndAttach(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      const id = await persist('draft');
+      router.replace(`/aula/${courseId}/tareas/${id}/editar`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo guardar.');
       setBusy(false);
@@ -442,6 +481,20 @@ export function AssignmentEditor({
             <p className="mt-1 text-sm text-muted">
               Cada paso dice qué hacer, con qué herramienta y qué hay que entregar.
             </p>
+
+            <WorkflowTemplatePicker
+              hasSteps={draft.workflow.length > 0}
+              onApply={(template, workflow) =>
+                patch({
+                  workflow,
+                  // El título y el objetivo sólo se rellenan si están vacíos:
+                  // una plantilla no debe pisar lo que ya se escribió.
+                  title: draft.title || template.name,
+                  description: draft.description || template.summary,
+                })
+              }
+            />
+
             <div className="mt-4">
               <WorkflowBuilder
                 courseId={courseId}
@@ -590,6 +643,13 @@ export function AssignmentEditor({
             )}
           </>
         )}
+
+        <MaterialsSection
+          assignmentId={assignmentId}
+          initial={existing.data?.assignment.materials ?? []}
+          busy={busy}
+          onSaveDraft={() => void saveAndAttach()}
+        />
 
         <ResourceEditor
           links={draft.resourceLinks}
@@ -831,6 +891,74 @@ function ResearchBuilder({
             </li>
           ))}
         </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Los archivos que se reparten con la tarea.
+ *
+ * Mientras la tarea no existe no hay dónde colgarlos, así que en vez de fingir
+ * una zona de subida que no puede funcionar se ofrece el atajo honesto: guardar
+ * el borrador —que no publica nada— y seguir en el mismo sitio con la tarea ya
+ * creada. Es un clic y evita inventar un almacén intermedio en el navegador que
+ * se perdería con cualquier recarga.
+ */
+function MaterialsSection({
+  assignmentId,
+  initial,
+  busy,
+  onSaveDraft,
+}: {
+  assignmentId?: string;
+  initial: AssignmentMaterial[];
+  busy: boolean;
+  onSaveDraft: () => void;
+}) {
+  const [materials, setMaterials] = useState<AssignmentMaterial[]>(initial);
+  const [seeded, setSeeded] = useState(false);
+
+  // La tarea se carga después del primer render; sus materiales se siembran una
+  // sola vez para no pisar lo que se acabe de subir.
+  useEffect(() => {
+    if (seeded || initial.length === 0) return;
+    setMaterials(initial);
+    setSeeded(true);
+  }, [initial, seeded]);
+
+  return (
+    <section aria-labelledby="materiales-tarea">
+      <h2 id="materiales-tarea" className="section-mark font-display text-h3">
+        Archivos para los estudiantes
+      </h2>
+      <p className="mt-1 text-sm text-muted">
+        La plantilla del reporte, los datos del ejercicio, el caso de estudio. Se descargan desde
+        la tarea; no son entregas.
+      </p>
+
+      {assignmentId ? (
+        <MaterialsList
+          assignmentId={assignmentId}
+          materials={materials}
+          canManage
+          onChange={setMaterials}
+        />
+      ) : (
+        <div className="mt-4">
+          <Notice>
+            Para adjuntar archivos hace falta que la tarea exista. Guárdala como borrador y sigue
+            aquí mismo: no se publica ni se avisa a nadie.
+          </Notice>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onSaveDraft}
+            className="btn btn-secondary btn-sm mt-3"
+          >
+            {busy ? 'Guardando…' : 'Guardar borrador y adjuntar archivos'}
+          </button>
+        </div>
       )}
     </section>
   );

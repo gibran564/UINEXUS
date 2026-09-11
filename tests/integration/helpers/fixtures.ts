@@ -33,6 +33,18 @@ export const PEOPLE = {
     displayName: 'Student Outsider',
     avatarUrl: null,
   },
+  /**
+   * Alguien con perfil completo cuyo CORREO no es institucional. Existe para
+   * comprobar que la API lo rechaza por la política de identidad y no por
+   * carecer de perfil: sin este matiz, la prueba pasaría por el motivo
+   * equivocado.
+   */
+  outsiderDomain: {
+    uid: 'uid-outsider-domain',
+    handle: 'outsider-domain',
+    displayName: 'Cuenta Ajena',
+    avatarUrl: null,
+  },
 } satisfies Record<string, CourseMemberRecord>;
 
 function profile(person: CourseMemberRecord, role: UserRole) {
@@ -53,6 +65,7 @@ export const USER_FIXTURES = [
   profile(PEOPLE.studentA, 'student'),
   profile(PEOPLE.studentB, 'student'),
   profile(PEOPLE.outsiderStudent, 'student'),
+  profile(PEOPLE.outsiderDomain, 'teacher'),
 ];
 
 export const COURSE_A: CourseRecord = {

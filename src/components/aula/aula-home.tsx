@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { EmptyState } from '@/components/ui/empty-state';
+import { canCreateCourses, shouldOfferFirstCourse } from '@/lib/aula-onboarding';
 import {
   AulaScreen,
   DueDate,
@@ -27,11 +29,25 @@ import { createCourse, joinCourse, useApi, type AulaHome as AulaHomeData } from 
  */
 export function AulaHome() {
   const { user } = useAuth();
+  const params = useSearchParams();
   const { data, state, error, reload } = useApi<AulaHomeData>('/api/aula');
 
   const teaching = data?.courses.filter((card) => card.role === 'teacher') ?? [];
   const studying = data?.courses.filter((card) => card.role === 'student') ?? [];
-  const canCreate = data?.role === 'teacher' || data?.role === 'admin';
+  const canCreate = canCreateCourses(data?.role);
+
+  /**
+   * El formulario de crear materia, abierto desde dos sitios.
+   *
+   * El estado vive AQUÍ y no dentro de `CreateCourse` porque la llamada a la
+   * acción del profesorado nuevo tiene que poder abrirlo. Un botón que sólo
+   * dice «arriba a la derecha hay otro botón» no es una llamada a la acción.
+   */
+  const [creating, setCreating] = useState(params.get('crear') === '1');
+
+  /** Docente sin ningún grupo PROPIO. La regla vive en `aula-onboarding.ts`. */
+  const isNewTeacher =
+    Boolean(data) && shouldOfferFirstCourse({ role: data?.role, courses: data?.courses ?? [] });
 
   return (
     <AulaScreen state={state} error={error} next="/aula">
@@ -44,9 +60,26 @@ export function AulaHome() {
         </div>
         <div className="flex flex-wrap gap-2">
           <JoinByCode onJoined={reload} />
-          {canCreate && <CreateCourse onCreated={reload} />}
+          {canCreate && (
+            <CreateCourse
+              open={creating}
+              onOpenChange={setCreating}
+              onCreated={() => {
+                setCreating(false);
+                reload();
+              }}
+            />
+          )}
         </div>
       </header>
+
+      {isNewTeacher && (
+        <FirstCourseInvitation
+          compact={studying.length > 0}
+          open={creating}
+          onStart={() => setCreating(true)}
+        />
+      )}
 
       {data && data.pending.length > 0 && (
         <section aria-labelledby="pendientes" className="mt-10">
@@ -121,20 +154,80 @@ export function AulaHome() {
         />
       )}
 
-      {data && data.courses.length === 0 && (
+      {/*
+        El estado vacío del alumnado. Al profesorado sin grupos ya le habló la
+        invitación de arriba, así que aquí sólo queda quien no puede crear.
+      */}
+      {data && data.courses.length === 0 && !canCreate && (
         <div className="mt-10">
           <EmptyState
             title="Todavía no estás en ninguna materia"
-            description={
-              canCreate
-                ? 'Crea tu primera materia y comparte su código con el grupo para que se inscriban.'
-                : 'Pide a tu docente el código de la materia y únete con el botón de arriba.'
-            }
+            description="Pide a tu docente el código de la materia y únete con el botón de arriba."
             action={{ href: '/explore', label: 'Explorar proyectos mientras tanto' }}
           />
         </div>
       )}
     </AulaScreen>
+  );
+}
+
+/**
+ * La bienvenida al profesorado que todavía no imparte nada.
+ *
+ * Es un estado vacío inteligente, no un tutorial: una frase, un botón y el
+ * formulario que ya existía. §5 del encargo lo pide con todas las letras —nada
+ * de asistentes de diez pantallas ni de progreso persistido— porque el problema
+ * real no es que falte explicación, es que la primera acción no se ve.
+ *
+ * Cuando la persona ya participa en materias ajenas se encoge a una tarjeta:
+ * tapar sus materias con una bienvenida sería peor que no ponerla.
+ */
+function FirstCourseInvitation({
+  compact,
+  open,
+  onStart,
+}: {
+  compact: boolean;
+  /** Con el formulario abierto la invitación calla: ya cumplió su función. */
+  open: boolean;
+  onStart: () => void;
+}) {
+  if (open) return null;
+
+  if (compact) {
+    return (
+      <section
+        aria-labelledby="primer-grupo"
+        className="panel mt-8 flex flex-wrap items-center gap-4 p-4"
+      >
+        <p className="min-w-56 flex-1">
+          <span id="primer-grupo" className="block font-medium">
+            Todavía no impartes ningún grupo
+          </span>
+          <span className="mt-1 block text-sm text-muted">
+            Crea el tuyo para organizar estudiantes, tareas y recursos.
+          </span>
+        </p>
+        <button type="button" onClick={onStart} className="btn btn-primary btn-sm">
+          Crear mi primer grupo
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-labelledby="primer-grupo" className="panel mt-10 p-8 text-center">
+      <h2 id="primer-grupo" className="font-display text-h2">
+        Parece que eres nuevo por aquí 👋
+      </h2>
+      <p className="mx-auto mt-3 max-w-prose text-muted">
+        Todavía no tienes ningún grupo. Crea tu primer grupo para comenzar a organizar
+        estudiantes, tareas y recursos.
+      </p>
+      <button type="button" onClick={onStart} className="btn btn-primary btn-lg mt-6">
+        Crear mi primer grupo
+      </button>
+    </section>
   );
 }
 
@@ -247,12 +340,39 @@ function JoinByCode({ onJoined }: { onJoined: () => void }) {
   );
 }
 
-function CreateCourse({ onCreated }: { onCreated: () => void }) {
-  const [open, setOpen] = useState(false);
+/**
+ * Alta de una materia.
+ *
+ * `open` viene de fuera porque hay dos puertas al mismo formulario: el botón de
+ * la cabecera y la invitación al profesorado nuevo. Un formulario con su propio
+ * estado interno sólo se puede abrir desde su propio botón, y eso es justo lo
+ * que dejaba a quien acaba de entrar buscando dónde empezar.
+ */
+function CreateCourse({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => void;
+}) {
   const [name, setName] = useState('');
   const [period, setPeriod] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * El foco va al primer campo al abrir.
+   *
+   * `autoFocus` sólo actúa al montar, y este formulario se abre y se cierra sin
+   * desmontar la pantalla. Sin esto, abrirlo desde la invitación dejaba el foco
+   * en un botón que ya no está y obligaba a tabular hasta el campo.
+   */
+  useEffect(() => {
+    if (open) nameRef.current?.focus();
+  }, [open]);
 
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -266,7 +386,6 @@ function CreateCourse({ onCreated }: { onCreated: () => void }) {
         institution: 'Instituto Tecnológico de Durango',
         visibility: 'public',
       });
-      setOpen(false);
       setName('');
       setPeriod('');
       onCreated();
@@ -279,7 +398,7 @@ function CreateCourse({ onCreated }: { onCreated: () => void }) {
 
   if (!open) {
     return (
-      <button type="button" onClick={() => setOpen(true)} className="btn btn-primary">
+      <button type="button" onClick={() => onOpenChange(true)} className="btn btn-primary">
         + Nueva materia
       </button>
     );
@@ -290,10 +409,10 @@ function CreateCourse({ onCreated }: { onCreated: () => void }) {
       <label className="block">
         <span className="label">Nombre de la materia</span>
         <input
-          autoFocus
+          ref={nameRef}
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="Diseño Centrado en el Usuario"
+          placeholder="Investigación de Operaciones"
           className="field w-64"
         />
       </label>
@@ -309,7 +428,7 @@ function CreateCourse({ onCreated }: { onCreated: () => void }) {
       <button type="submit" disabled={busy || name.trim().length < 3} className="btn btn-primary">
         {busy ? 'Creando…' : 'Crear'}
       </button>
-      <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost">
+      <button type="button" onClick={() => onOpenChange(false)} className="btn btn-ghost">
         Cancelar
       </button>
       {error && (

@@ -20,6 +20,10 @@ const config = [
       'functions/lib/**',
       'functions/node_modules/**',
       'next-env.d.ts',
+      // Pyodide y webR copiados desde node_modules por
+      // `scripts/copy-code-runtimes.mjs`. Son artefactos de terceros: no se
+      // editan aquí y linterlos son 60 MB de ruido.
+      'public/runtime/**',
     ],
   },
   ...compat.extends('next/core-web-vitals', 'next/typescript'),

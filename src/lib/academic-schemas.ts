@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { ACADEMIC_LIMITS, WORKFLOW_LIMITS } from './constants';
+import {
+  ACADEMIC_LIMITS,
+  DEFAULT_CODE_MODE,
+  NEXBOOK_LIMITS,
+  WORKFLOW_LIMITS,
+} from './constants';
+import { NEXBOOK_FORMAT_VERSION } from './types';
+import type { NexBookBlock, NexBookDocument, NexBookJsonValue } from './types';
+import { collectAssetIds, documentBytes, emptyDocument } from './nexbook-document';
 import { detectTextFormat } from './ai-worklog';
 import { HANDLE_PATTERN } from './slug';
 import { assertAcyclicWorkflow } from './workflow';
@@ -143,6 +151,38 @@ export const resourceSelectionDataSchema = z.object({
   note: z.string().trim().max(ACADEMIC_LIMITS.answerMax).default(''),
 });
 
+/**
+ * El lenguaje de un paso de código.
+ *
+ * Cadena acotada y NO un enum, por la misma razón que `actionType`: el día que
+ * se habilite Python, una tarea guardada con ese valor tiene que poder leerse
+ * sin desplegar el esquema antes. Qué se OFRECE hoy lo decide
+ * `ENABLED_PROGRAMMING_LANGUAGES` en la interfaz.
+ */
+export const programmingLanguageSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(24)
+  .regex(/^[a-z0-9+#.-]+$/, 'Ese lenguaje no es válido.');
+
+/**
+ * Código entregado en un paso.
+ *
+ * `code` NO lleva `trim`: la sangría es parte del programa. Tampoco se valida
+ * como código ni se interpreta —UINexus no lo ejecuta en ningún momento—, sólo
+ * se acota su tamaño, que es la única propiedad que puede hacer daño aquí.
+ */
+export const codeDataSchema = z.object({
+  language: programmingLanguageSchema.default('r'),
+  code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese archivo de código es demasiado largo.').default(''),
+  explanation: z.string().trim().max(ACADEMIC_LIMITS.answerMax).default(''),
+  storageKey: z
+    .union([z.literal(''), z.string().trim().regex(/^academic\/[\w./-]{10,300}$/)])
+    .default(''),
+  fileName: z.string().trim().max(200).default(''),
+});
+
 export const deliverableTypeSchema = z.enum([
   'none',
   'text',
@@ -153,6 +193,8 @@ export const deliverableTypeSchema = z.enum([
   'ai_worklog',
   'structured',
   'project',
+  'code',
+  'nexbook',
   'resource_reference',
 ]);
 
@@ -178,6 +220,10 @@ export function deliverableSchemaFor(type: z.infer<typeof deliverableTypeSchema>
     case 'image':
     case 'video':
       return mediaDataSchema;
+    case 'code':
+      return codeDataSchema;
+    case 'nexbook':
+      return nexBookSubmissionDataSchema;
     case 'resource_reference':
       return resourceSelectionDataSchema;
     case 'none':
@@ -187,15 +233,32 @@ export function deliverableSchemaFor(type: z.infer<typeof deliverableTypeSchema>
   }
 }
 
-export const stepDeliverableSchema = z.object({
-  type: deliverableTypeSchema,
-  required: z.boolean().default(true),
-  hint: z.string().trim().max(400).default(''),
-  questions: z
-    .array(researchQuestionSchema)
-    .max(ACADEMIC_LIMITS.maxResearchQuestions)
-    .default([]),
-});
+export const stepDeliverableSchema = z
+  .object({
+    type: deliverableTypeSchema,
+    required: z.boolean().default(true),
+    hint: z.string().trim().max(400).default(''),
+    questions: z
+      .array(researchQuestionSchema)
+      .max(ACADEMIC_LIMITS.maxResearchQuestions)
+      .default([]),
+    /**
+     * En qué lenguaje se pide la solución. Sólo significa algo con
+     * `type === 'code'`; ausente en cualquier otro caso, que es lo que traen los
+     * pasos guardados antes de que existiera el entregable de código.
+     */
+    language: programmingLanguageSchema.nullish(),
+    codeMode: z.enum(['editor', 'upload', 'either']).nullish(),
+    // Sin trim: la sangría y los saltos son parte del programa inicial.
+    starterCode: z.string().max(ACADEMIC_LIMITS.codeMax).default(''),
+    executionEnabled: z.boolean().default(false),
+  })
+  .transform((deliverable) => ({
+    ...deliverable,
+    codeMode: deliverable.type === 'code' ? (deliverable.codeMode ?? DEFAULT_CODE_MODE) : null,
+    starterCode: deliverable.type === 'code' ? deliverable.starterCode : '',
+    executionEnabled: deliverable.type === 'code' ? deliverable.executionEnabled : false,
+  }));
 
 export const toolChoiceSchema = z.object({
   mode: z.enum(['none', 'required', 'choice', 'free']).default('none'),
@@ -312,6 +375,47 @@ export const stepEvidenceInputSchema = z.object({
 export const workflowSubmissionInputSchema = z.object({
   intent: z.enum(['draft', 'submit']),
   steps: z.array(stepEvidenceInputSchema).max(WORKFLOW_LIMITS.maxSteps).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// Materiales de la tarea
+// ---------------------------------------------------------------------------
+
+export const assignmentMaterialKindSchema = z.enum(['template', 'resource']);
+
+/** Paso 1: pedir permiso para subir. Todavía no se guarda nada. */
+export const materialUploadRequestSchema = z.object({
+  fileName: z.string().trim().min(1, 'Falta el nombre del archivo.').max(200),
+  /** Lo que dice el navegador. El servidor decide el tipo real por extensión. */
+  contentType: z.string().trim().max(160).default(''),
+  sizeBytes: z.number().int().positive(),
+});
+
+/**
+ * Paso 2: registrar el archivo ya subido.
+ *
+ * La clave se acota al espacio de materiales con el patrón, y la ruta comprueba
+ * ADEMÁS que sea de ESTA tarea (`isAssignmentMaterialKeyFor`). Lo primero
+ * impide citar cualquier objeto del bucket; lo segundo, el material de otra
+ * materia. El `contentType` y el tamaño que lleguen aquí son etiquetas para
+ * mostrar: el servidor los vuelve a derivar del nombre y del límite de la clase.
+ */
+export const materialConfirmSchema = z.object({
+  storageKey: z
+    .string()
+    .trim()
+    .regex(/^academic\/materials\/[\w./-]{10,300}$/, 'Esa referencia no es un material válido.'),
+  fileName: z.string().trim().min(1, 'Falta el nombre del archivo.').max(200),
+  displayName: z.string().trim().max(160).default(''),
+  kind: assignmentMaterialKindSchema.default('resource'),
+  sizeBytes: z.number().int().nonnegative().default(0),
+});
+
+/** Cambiar el nombre visible o la clase de un material ya subido. */
+export const materialPatchSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  displayName: z.string().trim().max(160).optional(),
+  kind: assignmentMaterialKindSchema.optional(),
 });
 
 export const toolInputSchema = z.object({
@@ -640,4 +744,401 @@ export const courseResourceInputSchema = z.object({
  */
 export const moderationInputSchema = z.object({
   action: z.enum(['approve', 'reject', 'archive', 'feature', 'unfeature']),
+});
+
+// ---------------------------------------------------------------------------
+// Workspace de programación (iteración 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lo que se acepta al crear o guardar una práctica.
+ *
+ * Lo que NO está aquí es tan importante como lo que está: no hay `ownerUid`, no
+ * hay `id`, no hay `createdAt` y no hay `context`. El dueño sale del token
+ * verificado, el id lo genera el servidor y `context` es `personal` porque es lo
+ * único que existe. Si el dueño llegara en el cuerpo, «guardar la práctica de
+ * otro» sería algo que se puede expresar, y por eso no está.
+ *
+ * `code` comparte el tope de `CodeData.code`: una práctica y una entrega son el
+ * mismo tipo de texto y no tiene sentido que quepan cosas distintas.
+ */
+export const workspaceInputSchema = z.object({
+  title: z.string().trim().min(1, 'Ponle un nombre a tu práctica.').max(120),
+  language: programmingLanguageSchema.default('python'),
+  code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese código es demasiado largo.').default(''),
+  /** Se relaciona con una materia sólo si se dice; una práctica suelta no la tiene. */
+  courseId: z
+    .union([z.literal(''), z.string().trim().max(120)])
+    .nullish()
+    .transform((value) => (value ? value : null)),
+});
+
+/**
+ * Un guardado parcial: title y/o code, sin obligar a reenviar todo.
+ *
+ * Es lo que usa el autoguardado. `partial()` sobre el esquema completo dejaría
+ * pasar `language: undefined`, que al escribir borraría el lenguaje de la
+ * práctica; aquí cada campo es opcional pero, si viene, viene válido.
+ */
+export const workspacePatchSchema = z
+  .object({
+    title: z.string().trim().min(1).max(120).optional(),
+    code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese código es demasiado largo.').optional(),
+    language: programmingLanguageSchema.optional(),
+  })
+  .refine(
+    (value) => value.title !== undefined || value.code !== undefined || value.language !== undefined,
+    'No hay nada que guardar.'
+  );
+
+// ---------------------------------------------------------------------------
+// NexBook (iteración 8)
+// ---------------------------------------------------------------------------
+
+
+const nexBookBlockIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, 'Ese identificador de bloque no es válido.');
+
+/**
+ * Un bloque de Markdown.
+ *
+ * Sin `trim` en `source`: en Markdown la sangría de una lista anidada y las
+ * líneas en blanco entre párrafos son significativas.
+ */
+const markdownBlockSchema = z.object({
+  id: nexBookBlockIdSchema,
+  type: z.literal('markdown'),
+  source: z.string().max(NEXBOOK_LIMITS.maxMarkdownChars, 'Ese bloque de texto es demasiado largo.'),
+  editableByStudent: z.boolean().optional(),
+});
+
+const codeBlockSchema = z.object({
+  id: nexBookBlockIdSchema,
+  type: z.literal('code'),
+  language: programmingLanguageSchema.default('python'),
+  source: z.string().max(NEXBOOK_LIMITS.maxCodeChars, 'Ese bloque de código es demasiado largo.'),
+  editableByStudent: z.boolean().optional(),
+});
+
+/**
+ * El identificador de un asset.
+ *
+ * Es un UUID que genera el SERVIDOR. Se valida la forma aquí porque este id
+ * acaba formando parte de una clave de S3, y una cadena arbitraria del cliente
+ * dentro de una ruta es la forma clásica de escribir donde no se debe. Con esta
+ * expresión, `../` no es un id válido.
+ */
+export const nexBookAssetIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'Ese asset no es válido.');
+
+export const nexBookImageMimeSchema = z.enum(['image/png', 'image/jpeg', 'image/webp']);
+
+const imageBlockSchema = z.object({
+  id: nexBookBlockIdSchema,
+  type: z.literal('image'),
+  assetId: nexBookAssetIdSchema,
+  mimeType: nexBookImageMimeSchema,
+  /**
+   * `alt` se acepta vacío, y eso NO es un descuido.
+   *
+   * Una imagen decorativa debe llevar `alt=""` para que un lector de pantalla la
+   * salte, y obligar a escribir algo llevaría a rellenarlo con «imagen», que es
+   * peor que nada. Quien decide es la interfaz, que lo pide y ofrece marcarla
+   * como decorativa.
+   */
+  alt: z.string().trim().max(400).default(''),
+  caption: z.string().trim().max(400).optional(),
+  width: z.number().int().min(1).max(20_000).optional(),
+  height: z.number().int().min(1).max(20_000).optional(),
+});
+
+/**
+ * Una celda de la hoja.
+ *
+ * Se guarda lo ESCRITO, no lo calculado: ver `NexBookSheetCell`. El tope por
+ * celda es el de una celda de tabla, porque el problema es el mismo —una celda
+ * no es donde se vuelca un texto largo— y tener dos números distintos para la
+ * misma idea sólo garantiza que uno se quede obsoleto.
+ */
+const sheetCellSchema = z.object({
+  input: z.string().max(NEXBOOK_LIMITS.maxTableCellChars),
+});
+
+const sheetDataSchema = z
+  .object({
+    rows: z.number().int().min(1).max(NEXBOOK_LIMITS.maxSheetRows),
+    columns: z.number().int().min(1).max(NEXBOOK_LIMITS.maxSheetColumns),
+    cells: z.record(z.string().regex(/^\d+:\d+$/), sheetCellSchema).default({}),
+    headers: z.array(z.string().max(120)).max(NEXBOOK_LIMITS.maxSheetColumns).optional(),
+  })
+  .superRefine((sheet, ctx) => {
+    if (Object.keys(sheet.cells).length > NEXBOOK_LIMITS.maxSheetCells) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Una hoja admite hasta ${NEXBOOK_LIMITS.maxSheetCells} celdas con contenido.`,
+      });
+      return;
+    }
+
+    /**
+     * Una celda fuera de la rejilla se rechaza.
+     *
+     * Sin esto, `"999:999"` en una hoja de 10 × 5 se guardaría sin aparecer en
+     * ninguna pantalla: espacio ocupado para siempre por algo que nadie puede
+     * ver ni borrar. Y si la hoja creciera después, reaparecería.
+     */
+    for (const key of Object.keys(sheet.cells)) {
+      const [row = '', column = ''] = key.split(':');
+      if (Number(row) >= sheet.rows || Number(column) >= sheet.columns) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Hay celdas fuera de la hoja.',
+        });
+        return;
+      }
+    }
+  });
+
+const spreadsheetBlockSchema = z.object({
+  id: nexBookBlockIdSchema,
+  type: z.literal('spreadsheet'),
+  name: z.string().trim().min(1).max(NEXBOOK_LIMITS.maxSheetNameChars).default('Hoja'),
+  sheet: sheetDataSchema,
+  editableByStudent: z.boolean().optional(),
+});
+
+export const nexBookBlockSchema = z.discriminatedUnion('type', [
+  markdownBlockSchema,
+  codeBlockSchema,
+  imageBlockSchema,
+  spreadsheetBlockSchema,
+]);
+
+/**
+ * Un trozo de salida.
+ *
+ * Discriminado por `stream`, que es el campo que ya existía en V1: un documento
+ * guardado en la iteración 8 —sólo `stdout`, `stderr` y `error`— sigue validando
+ * con esto sin tocar un byte. Ver `NexBookOutputStream` en `lib/types.ts`.
+ */
+const textOutputSchema = z.object({
+  seq: z.number().int().min(0).max(100_000),
+  stream: z.enum(['stdout', 'stderr', 'error']),
+  text: z.string().max(NEXBOOK_LIMITS.maxOutputChars),
+  truncated: z.boolean().optional(),
+});
+
+/** Sólo primitivos. Una celda de tabla no anida un documento. */
+const tableCellSchema = z.union([
+  z.string().max(NEXBOOK_LIMITS.maxTableCellChars),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
+
+const tableOutputSchema = z.object({
+  seq: z.number().int().min(0).max(100_000),
+  stream: z.literal('table'),
+  columns: z.array(z.string().max(NEXBOOK_LIMITS.maxTableCellChars)).max(
+    NEXBOOK_LIMITS.maxTableColumns
+  ),
+  rows: z
+    .array(z.array(tableCellSchema).max(NEXBOOK_LIMITS.maxTableColumns))
+    .max(NEXBOOK_LIMITS.maxTableRows),
+  /** Cuántas filas tenía el original. Puede ser mayor que `rows.length`. */
+  totalRows: z.number().int().min(0).max(1_000_000_000).default(0),
+  truncated: z.boolean().optional(),
+});
+
+/**
+ * Una imagen de salida: una REFERENCIA, nunca los bytes.
+ *
+ * Si esto aceptara Base64, una sesión con cinco gráficas llenaría el
+ * presupuesto del documento y el guardado empezaría a fallar sin que nadie
+ * entendiera por qué. Los bytes viven en S3 y aquí va el identificador.
+ */
+const imageOutputSchema = z.object({
+  seq: z.number().int().min(0).max(100_000),
+  stream: z.literal('image'),
+  assetId: nexBookAssetIdSchema,
+  mimeType: nexBookImageMimeSchema,
+  width: z.number().int().min(1).max(20_000).optional(),
+  height: z.number().int().min(1).max(20_000).optional(),
+  alt: z.string().trim().max(400).optional(),
+});
+
+/**
+ * Un valor JSON, con PROFUNDIDAD ACOTADA.
+ *
+ * Un `z.lazy` sin fondo acepta una estructura de diez mil niveles, y entonces
+ * el que se queda sin pila no es quien la escribió sino el servidor que la
+ * valida. Cinco niveles cubren cualquier cosa que valga la pena enseñar como
+ * resultado; lo más profundo se queda en texto.
+ */
+const jsonValueSchema: z.ZodType<NexBookJsonValue> = z.lazy(() => jsonAtDepth(5));
+
+function jsonAtDepth(depth: number): z.ZodType<NexBookJsonValue> {
+  const leaf = z.union([z.string().max(4_000), z.number(), z.boolean(), z.null()]);
+  if (depth <= 0) return leaf;
+  const inner = jsonAtDepth(depth - 1);
+  return z.union([
+    leaf,
+    z.array(inner).max(500),
+    z.record(z.string().max(200), inner),
+  ]) as z.ZodType<NexBookJsonValue>;
+}
+
+const jsonOutputSchema = z.object({
+  seq: z.number().int().min(0).max(100_000),
+  stream: z.literal('json'),
+  value: jsonValueSchema,
+  truncated: z.boolean().optional(),
+});
+
+const nexBookOutputSchema = z.discriminatedUnion('stream', [
+  textOutputSchema,
+  tableOutputSchema,
+  imageOutputSchema,
+  jsonOutputSchema,
+]);
+
+const nexBookCellResultSchema = z.object({
+  blockId: nexBookBlockIdSchema,
+  status: z.enum(['ok', 'failed', 'timeout', 'stopped', 'rejected']),
+  outputs: z.array(nexBookOutputSchema).max(NEXBOOK_LIMITS.maxOutputsPerCell).default([]),
+  durationMs: z.number().int().min(0).max(3_600_000).default(0),
+  ranAt: z.string().trim().max(40).default(''),
+});
+
+/**
+ * El documento entero.
+ *
+ * Tres comprobaciones que NO son redundantes entre sí:
+ *
+ *  1. `maxBlocks`, para fallar con un mensaje legible antes de que el item de
+ *     DynamoDB se vuelva ingestionable.
+ *  2. Ids únicos. Dos bloques con el mismo id harían que sus outputs se
+ *     mezclaran —`results` se indexa por `blockId`— y que mover uno moviera el
+ *     otro. Es el tipo de fallo que sólo se nota tres semanas después.
+ *  3. `documentBytes` sobre el JSON YA serializado, que es lo único que se
+ *     corresponde con lo que DynamoDB va a medir. Sumar longitudes de campos
+ *     daría un número parecido y equivocado.
+ */
+export const nexBookDocumentSchema = z
+  .object({
+    formatVersion: z.number().int().min(1).max(NEXBOOK_FORMAT_VERSION).default(NEXBOOK_FORMAT_VERSION),
+    blocks: z
+      .array(nexBookBlockSchema)
+      .max(NEXBOOK_LIMITS.maxBlocks, `Un NexBook admite hasta ${NEXBOOK_LIMITS.maxBlocks} bloques.`)
+      .default([]),
+    results: z.record(z.string(), nexBookCellResultSchema).default({}),
+  })
+  .superRefine((document, ctx) => {
+    const ids = new Set<string>();
+    for (const block of document.blocks) {
+      if (ids.has(block.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Hay dos bloques con el mismo identificador.',
+        });
+        return;
+      }
+      ids.add(block.id);
+    }
+
+    /**
+     * Los resultados de un bloque que ya no existe se consideran un error y no
+     * se limpian en silencio: significa que quien escribió esto perdió la
+     * correspondencia entre código y salida, y aceptarlo dejaría outputs
+     * huérfanos creciendo en el item para siempre.
+     */
+    for (const blockId of Object.keys(document.results)) {
+      if (!ids.has(blockId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Hay resultados de un bloque que ya no existe.',
+        });
+        return;
+      }
+    }
+
+    /**
+     * Cuántos assets distintos referencia.
+     *
+     * Acota lo que puede costar exportar o publicar un documento: cada asset es
+     * una descarga de S3 al hacer el ZIP. Sin tope, un documento de 300 KB podría
+     * arrastrar cien imágenes de cuatro megas cada una.
+     */
+    if (collectAssetIds(document as NexBookDocument).length > NEXBOOK_LIMITS.maxAssetsPerNexBook) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Un NexBook admite hasta ${NEXBOOK_LIMITS.maxAssetsPerNexBook} imágenes.`,
+      });
+      return;
+    }
+
+    if (documentBytes(document as NexBookDocument) > NEXBOOK_LIMITS.documentBytes) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Este NexBook es demasiado grande. Borra salidas antiguas o divide el documento.',
+      });
+    }
+  });
+
+export { documentBytes as nexBookDocumentBytes };
+
+export const nexBookTitleSchema = z
+  .string()
+  .trim()
+  .min(1, 'Ponle un nombre a tu NexBook.')
+  .max(NEXBOOK_LIMITS.maxTitleChars);
+
+/**
+ * Lo que se acepta al guardar.
+ *
+ * `revision` es OBLIGATORIA: es la que el cliente creía tener, y el servidor
+ * escribe sólo si sigue siendo esa. Hacerla opcional habría convertido la
+ * concurrencia optimista en «gana el último», que es justo lo que evita.
+ *
+ * Ni `ownerUid`, ni `id`, ni `context`, ni `createdAt`. El dueño sale del token.
+ */
+export const nexBookPatchSchema = z
+  .object({
+    revision: z.number().int().min(0),
+    title: nexBookTitleSchema.optional(),
+    document: nexBookDocumentSchema.optional(),
+  })
+  .refine(
+    (value) => value.title !== undefined || value.document !== undefined,
+    'No hay nada que guardar.'
+  );
+
+/** Un documento vacío pero VÁLIDO, para que crear no pase por un estado roto. */
+export function emptyNexBookDocument(blocks: NexBookBlock[] = []): NexBookDocument {
+  return emptyDocument(blocks);
+}
+
+/**
+ * La entrega de un NexBook: una COPIA congelada, no un puntero.
+ *
+ * Si la evidencia guardara sólo el id, seguir trabajando después de entregar
+ * cambiaría lo que la docente califica y no habría forma de saber qué se
+ * entregó. Por eso `snapshot` lleva el documento entero y `revision` dice de qué
+ * versión salió.
+ *
+ * `nexbookId` se conserva para poder decir «esto salió de aquel documento», no
+ * para leerlo: la revisión ya no existe en el original en cuanto se toca.
+ */
+export const nexBookSubmissionDataSchema = z.object({
+  nexbookId: z.string().trim().max(64).default(''),
+  revision: z.number().int().min(0).default(0),
+  title: nexBookTitleSchema.or(z.literal('')).default(''),
+  snapshot: nexBookDocumentSchema,
+  submittedAt: z.string().trim().max(40).default(''),
 });

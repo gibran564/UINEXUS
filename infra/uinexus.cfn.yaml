@@ -257,6 +257,28 @@ Resources:
             - { AttributeName: createdAt, KeyType: RANGE }
           Projection: { ProjectionType: ALL }
 
+  # Practicas de programacion. Tabla propia y no una columna en submissions:
+  # una practica no tiene fecha limite, no se revisa y no pertenece a una
+  # actividad. El indice ordena por updatedAt porque la lista se lee "lo ultimo
+  # que toque primero". Ver Workspace en src/lib/types.ts.
+  WorkspacesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Prefix}-workspaces'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: ownerUid, AttributeType: S }
+        - { AttributeName: updatedAt, AttributeType: S }
+      KeySchema:
+        - { AttributeName: id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byOwner
+          KeySchema:
+            - { AttributeName: ownerUid, KeyType: HASH }
+            - { AttributeName: updatedAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
   # ---------------------------------------------------------------------------
   # S3
   # ---------------------------------------------------------------------------

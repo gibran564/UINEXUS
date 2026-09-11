@@ -35,9 +35,15 @@ import type { MediaData } from '@/lib/types';
 
 const uploadSchema = z.object({
   stepId: z.string().trim().min(1).max(40),
-  contentType: z.string().trim().min(3).max(120),
+  /**
+   * Lo que dice el navegador, y puede venir VACÍO: para un `.R` no manda
+   * ninguno. Quien decide el tipo real es el servidor, cruzando la extensión
+   * con la lista blanca de la clase (`resolveAcademicUpload`), así que exigirlo
+   * aquí sólo dejaría fuera archivos perfectamente admisibles.
+   */
+  contentType: z.string().trim().max(120).default(''),
   sizeBytes: z.number().int().positive(),
-  /** Sólo para mostrarlo. No entra en la ruta. */
+  /** Sólo se le lee la extensión y se guarda como etiqueta. No entra en la ruta. */
   fileName: z.string().trim().max(200).default(''),
 });
 
@@ -70,11 +76,12 @@ export async function POST(
 
     /**
      * La clase de límite la dicta el ENTREGABLE DEL PASO, no el cuerpo. Pedir
-     * subir un video a un paso que pide una imagen no da el límite de video.
+     * subir un video a un paso que pide una imagen no da el límite de video, y
+     * un paso de código sólo admite fuentes.
      */
     const deliverable = primaryDeliverable(step);
     const fileClass = FILE_CLASS_BY_DELIVERABLE[
-      deliverable.type as 'file' | 'image' | 'video'
+      deliverable.type as 'file' | 'image' | 'video' | 'code'
     ];
     if (!fileClass) {
       throw new HttpError(409, 'Este paso no pide un archivo.');
@@ -88,6 +95,9 @@ export async function POST(
       fileClass,
       contentType: input.contentType,
       sizeBytes: input.sizeBytes,
+      // Sólo para leerle la extensión: un `.R` llega sin `Content-Type` fiable.
+      // El nombre NO entra en la ruta (ver `academicFileKey`).
+      fileName: input.fileName,
     });
 
     return Response.json({ upload: post, storageKey: key, fileName: input.fileName });
@@ -158,7 +168,9 @@ function evidenceCites(
   evidence: Record<string, { data: unknown }>,
   key: string
 ): boolean {
+  // `MediaData` y `CodeData` guardan la clave con el mismo nombre, así que la
+  // misma comprobación vale para un PDF entregado y para un `.R` adjunto.
   return Object.values(evidence).some(
-    (entry) => (entry.data as MediaData | undefined)?.storageKey === key
+    (entry) => (entry.data as Partial<MediaData> | undefined)?.storageKey === key
   );
 }

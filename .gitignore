@@ -16,3 +16,6 @@ firebase-export-*/
 .vercel
 .env*
 !.env.example
+
+# Runtimes de Python y R copiados desde node_modules (scripts/copy-code-runtimes.mjs).
+public/runtime/

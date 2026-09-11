@@ -100,6 +100,30 @@ const TABLES = [
       ],
     },
   },
+  {
+    name: `${PREFIX}-workspaces`,
+    spec: {
+      BillingMode: 'PAY_PER_REQUEST',
+      AttributeDefinitions: [
+        { AttributeName: 'id', AttributeType: 'S' },
+        { AttributeName: 'ownerUid', AttributeType: 'S' },
+        { AttributeName: 'updatedAt', AttributeType: 'S' },
+      ],
+      KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+      GlobalSecondaryIndexes: [
+        {
+          // Ordenado por `updatedAt`: la lista de prácticas se lee «lo último
+          // que toqué primero», que es como la usa quien está practicando.
+          IndexName: 'byOwner',
+          KeySchema: [
+            { AttributeName: 'ownerUid', KeyType: 'HASH' },
+            { AttributeName: 'updatedAt', KeyType: 'RANGE' },
+          ],
+          Projection: { ProjectionType: 'ALL' },
+        },
+      ],
+    },
+  },
 ];
 
 async function exists(name) {

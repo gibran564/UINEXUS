@@ -1,9 +1,14 @@
 import type {
+  AcademicFileClass,
   AIProvider,
+  AssignmentMaterialKind,
   AssignmentStatus,
   AssignmentType,
+  CodeMode,
+  LanguageCapabilities,
   ProjectStatus,
   DeliverableType,
+  ProgrammingLanguage,
   ProjectType,
   SortOption,
   StepActionType,
@@ -117,17 +122,100 @@ export const PROJECT_TYPE_LABEL: Readonly<Record<ProjectType, string>> = {
   build: 'Proyecto compilado',
 };
 
+/**
+ * La identidad del producto, en un solo sitio.
+ *
+ * De aquí salen el `<title>`, la descripción de los buscadores y las tarjetas de
+ * Open Graph. Decía «Galería y hosting de proyectos web», que describía a
+ * UINexus cuando sólo se podía subir un `index.html`; hoy se puede programar,
+ * ejecutar, guardar y entregar aquí dentro, y dejarlo así habría hecho que cada
+ * enlace compartido siguiera vendiendo un hosting.
+ */
 export const SITE = {
   name: 'UINexus',
-  tagline: 'Diseña. Publica. Comparte.',
+  tagline: 'Aprende construyendo.',
   description:
-    'Galería y hosting de proyectos web para clases de diseño centrado en el usuario. ' +
-    'Publica tu página, obtén un enlace y compártelo.',
+    'Plataforma académica para crear, programar, practicar, entregar y publicar proyectos ' +
+    'dentro de tus materias. Código, proyectos y clases en un solo espacio.',
 } as const;
 
 // ---------------------------------------------------------------------------
 // Capa académica (iteración 2)
 // ---------------------------------------------------------------------------
+
+/**
+ * Los topes de un NexBook, todos en un sitio.
+ *
+ * Existen por una razón muy concreta: un item de DynamoDB no puede pasar de
+ * 400 KB, y un NexBook se guarda como UN item para que la concurrencia
+ * optimista funcione con una escritura condicional. Si los bloques vivieran en
+ * S3 no habría forma de exigir «guarda sólo si la revisión sigue siendo la que
+ * yo creía» sin inventar un segundo mecanismo de bloqueo.
+ *
+ * `documentBytes` es el presupuesto real y se comprueba sobre el JSON
+ * serializado, no sumando campos: es lo único que se corresponde con lo que
+ * DynamoDB va a medir. Deja margen sobrado para el resto del item —id, título,
+ * contexto, fechas— y para la sobrecarga de la codificación.
+ *
+ * Los demás topes están para que se falle TEMPRANO y con un mensaje que se
+ * entiende, en vez de con «item too large» cuando ya hay 90 bloques escritos.
+ */
+export const NEXBOOK_LIMITS = {
+  maxBlocks: 100,
+  /** Por bloque de código. El mismo que un entregable de código. */
+  maxCodeChars: 60_000,
+  maxMarkdownChars: 40_000,
+  /** Por celda: lo que se guarda de su salida. */
+  maxOutputChars: 8_000,
+  /** Presupuesto del documento entero, ya serializado. */
+  documentBytes: 300_000,
+  maxTitleChars: 120,
+
+  // -- Salidas ricas (iteración 9) ------------------------------------------
+
+  /** Trozos de salida que se guardan de UNA celda. */
+  maxOutputsPerCell: 200,
+  /**
+   * Filas de una tabla que se GUARDAN.
+   *
+   * Un `df` de diez mil filas no cabe en el documento y tampoco lo lee nadie
+   * desplazándose. Se recortan y se dice cuántas había: `totalRows`.
+   */
+  maxTableRows: 50,
+  maxTableColumns: 40,
+  /** Por celda de tabla. Una celda no es un sitio donde volcar un texto largo. */
+  maxTableCellChars: 300,
+
+  // -- Assets ----------------------------------------------------------------
+
+  /**
+   * Por imagen. Cabe una captura de pantalla o una gráfica con holgura, y no
+   * cabe un RAW de cámara que nadie va a mirar dentro de un documento.
+   */
+  maxAssetBytes: 4 * 1024 * 1024,
+  /** Por NexBook. Acota lo que puede costar exportarlo o publicarlo. */
+  maxAssetsPerNexBook: 100,
+
+  // -- Hoja de cálculo -------------------------------------------------------
+
+  maxSheetRows: 200,
+  maxSheetColumns: 40,
+  /**
+   * Celdas CON CONTENIDO en una hoja.
+   *
+   * El tope real es el presupuesto del documento; éste existe para fallar con un
+   * mensaje que se entiende antes de llegar a «este NexBook es demasiado
+   * grande», que no dice qué bloque tiene la culpa.
+   */
+  maxSheetCells: 2_000,
+  maxSheetNameChars: 60,
+
+  // -- Archivo .nexbook ------------------------------------------------------
+
+  /** Lo que se acepta IMPORTAR, ya descomprimido. Ver `lib/nexbook-archive.ts`. */
+  maxArchiveBytes: 24 * 1024 * 1024,
+  maxArchiveEntries: 200,
+} as const;
 
 export const ACADEMIC_LIMITS = {
   maxAssignmentsPerCourse: 200,
@@ -144,6 +232,10 @@ export const ACADEMIC_LIMITS = {
   maxInstallSteps: 20,
   maxPromptsPerCourse: 100,
   maxSkillsPerCourse: 100,
+  /** Archivos que el profesorado puede repartir en UNA tarea. */
+  maxMaterialsPerAssignment: 20,
+  /** Un fuente pegado en un paso de código. Suficiente para un modelo entero. */
+  codeMax: 60000,
 } as const;
 
 export interface AssignmentTypeOption {
@@ -356,6 +448,13 @@ export const STEP_ACTIONS: readonly StepActionOption[] = [
     toolMode: 'none',
   },
   {
+    value: 'code',
+    label: 'Desarrollo con código',
+    helper: 'Se resuelve programando. Se pega el código y, si quieres, se adjunta el archivo.',
+    deliverable: 'code',
+    toolMode: 'none',
+  },
+  {
     value: 'reflection',
     label: 'Reflexión',
     helper: '¿Qué cambiaste respecto a lo que propuso la IA?',
@@ -384,14 +483,216 @@ export const DELIVERABLE_LABEL: Readonly<Record<DeliverableType, string>> = {
   none: 'Sin entrega',
   text: 'Texto',
   url: 'Enlace',
-  file: 'Archivo',
+  file: 'Documento',
   image: 'Imagen',
   video: 'Video',
   ai_worklog: 'AI Worklog',
   structured: 'Respuesta estructurada',
   project: 'Proyecto de UINexus',
+  code: 'Código',
+  nexbook: 'NexBook',
   resource_reference: 'Recursos de la materia',
 };
+
+// ---------------------------------------------------------------------------
+// Programación
+// ---------------------------------------------------------------------------
+
+export interface ProgrammingLanguageOption {
+  value: ProgrammingLanguage;
+  label: string;
+  /** Extensión canónica del fuente. Decide qué acepta el selector de archivo. */
+  extension: string;
+  /** Identificador del lenguaje que espera Monaco Editor. */
+  monacoLanguage: string;
+  /** Qué se puede hacer con él. Ver `LanguageCapabilities`. */
+  capabilities: LanguageCapabilities;
+  /**
+   * Por qué no se puede ejecutar, cuando no se puede.
+   *
+   * Se enseña TAL CUAL en la interfaz. Un «no disponible» sin explicación
+   * parece una avería; con el motivo es una decisión que se entiende.
+   */
+  executionNote?: string;
+}
+
+const RUNS_IN_BROWSER: LanguageCapabilities = {
+  editor: true,
+  execution: true,
+  browserExecution: true,
+  remoteExecution: false,
+  projects: false,
+};
+
+/**
+ * Se edita, pero no se ejecuta: haría falta un compilador fuera de UINexus.
+ *
+ * No es una limitación temporal disfrazada. Compilar Java o C exige un proceso
+ * de verdad, y ejecutarlo en el host de Next.js —el mismo que firma las subidas
+ * a S3— es exactamente lo que este proyecto no hace. Hasta que exista un
+ * sandbox remoto, la interfaz lo dice en voz alta.
+ */
+const NEEDS_REMOTE_SANDBOX: LanguageCapabilities = {
+  editor: true,
+  execution: false,
+  browserExecution: false,
+  remoteExecution: true,
+  projects: false,
+};
+
+/** Se edita y alimenta proyectos web; no se «ejecuta» en una consola. */
+const WEB_PROJECT_LANGUAGE: LanguageCapabilities = {
+  editor: true,
+  execution: false,
+  browserExecution: false,
+  remoteExecution: false,
+  projects: true,
+};
+
+const EDITOR_ONLY: LanguageCapabilities = {
+  editor: true,
+  execution: false,
+  browserExecution: false,
+  remoteExecution: false,
+  projects: false,
+};
+
+/**
+ * El catálogo, y la razón de que cada lenguaje esté donde está.
+ *
+ * Lo que decide qué se OFRECE ya no es un booleano `enabled` sino qué sabe
+ * hacer cada lenguaje. Es lo que permite que Java aparezca en el selector con
+ * su resaltado y su `.java`, y que a la vez el botón de ejecutar diga la verdad
+ * en lugar de fingir.
+ */
+export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
+  { value: 'python', label: 'Python', extension: 'py', monacoLanguage: 'python', capabilities: RUNS_IN_BROWSER },
+  { value: 'r', label: 'R', extension: 'r', monacoLanguage: 'r', capabilities: RUNS_IN_BROWSER },
+  {
+    value: 'java',
+    label: 'Java',
+    extension: 'java',
+    monacoLanguage: 'java',
+    capabilities: NEEDS_REMOTE_SANDBOX,
+    executionNote: 'Java necesita compilarse fuera del navegador. Puedes escribirlo y entregarlo.',
+  },
+  {
+    value: 'c',
+    label: 'C',
+    extension: 'c',
+    monacoLanguage: 'c',
+    capabilities: NEEDS_REMOTE_SANDBOX,
+    executionNote: 'C necesita compilarse fuera del navegador. Puedes escribirlo y entregarlo.',
+  },
+  {
+    value: 'cpp',
+    label: 'C++',
+    extension: 'cpp',
+    monacoLanguage: 'cpp',
+    capabilities: NEEDS_REMOTE_SANDBOX,
+    executionNote: 'C++ necesita compilarse fuera del navegador. Puedes escribirlo y entregarlo.',
+  },
+  {
+    value: 'javascript',
+    label: 'JavaScript',
+    extension: 'js',
+    monacoLanguage: 'javascript',
+    capabilities: WEB_PROJECT_LANGUAGE,
+    executionNote: 'El JavaScript de un proyecto se ejecuta al publicarlo, en el origen aislado.',
+  },
+  {
+    value: 'html',
+    label: 'HTML',
+    extension: 'html',
+    monacoLanguage: 'html',
+    capabilities: WEB_PROJECT_LANGUAGE,
+    executionNote: 'El HTML se ve al publicar el proyecto, en el origen aislado.',
+  },
+  {
+    value: 'css',
+    label: 'CSS',
+    extension: 'css',
+    monacoLanguage: 'css',
+    capabilities: WEB_PROJECT_LANGUAGE,
+    executionNote: 'El CSS se ve al publicar el proyecto, en el origen aislado.',
+  },
+  {
+    value: 'sql',
+    label: 'SQL',
+    extension: 'sql',
+    monacoLanguage: 'sql',
+    capabilities: EDITOR_ONLY,
+    executionNote: 'SQL se escribe y se entrega; UINexus no tiene una base de datos que consultar.',
+  },
+];
+
+function languageOption(
+  language: ProgrammingLanguage | null | undefined
+): ProgrammingLanguageOption | undefined {
+  if (!language) return undefined;
+  return PROGRAMMING_LANGUAGES.find((option) => option.value === language);
+}
+
+/**
+ * Las capacidades de un lenguaje, incluso de uno que el catálogo no conoce.
+ *
+ * Un valor desconocido —una tarea guardada por una versión futura— se lee como
+ * «se puede escribir, no se puede ejecutar». Es lo prudente: editar no rompe
+ * nada, ejecutar sí.
+ */
+export function languageCapabilities(
+  language: ProgrammingLanguage | null | undefined
+): LanguageCapabilities {
+  return languageOption(language)?.capabilities ?? EDITOR_ONLY;
+}
+
+export function languageExecutionNote(
+  language: ProgrammingLanguage | null | undefined
+): string | null {
+  return languageOption(language)?.executionNote ?? null;
+}
+
+/** Los que se pueden elegir al configurar un paso de código. */
+export const ENABLED_PROGRAMMING_LANGUAGES = PROGRAMMING_LANGUAGES.filter(
+  (language) => language.capabilities.editor
+);
+
+/** Los que además se ejecutan, hoy, dentro del navegador. */
+export const EXECUTABLE_PROGRAMMING_LANGUAGES = PROGRAMMING_LANGUAGES.filter(
+  (language) => language.capabilities.browserExecution
+);
+
+/**
+ * El lenguaje con el que nace un paso de código NUEVO.
+ *
+ * Python y no R: es el que más materias comparten y el que menos explicación
+ * necesita cuando alguien abre el selector por primera vez.
+ */
+export const DEFAULT_PROGRAMMING_LANGUAGE: ProgrammingLanguage = 'python';
+
+/**
+ * Qué significa un paso de código guardado SIN lenguaje.
+ *
+ * Sigue siendo R, y tiene que seguir siéndolo: esos pasos se crearon cuando R
+ * era el único lenguaje ofrecido. Leerlos con el nuevo valor por defecto
+ * convertiría en Python, de golpe y en silencio, actividades de R que ya
+ * estaban entregadas. Es exactamente la misma distinción que hay entre
+ * `DEFAULT_CODE_MODE` y `LEGACY_CODE_MODE`, y por la misma razón.
+ */
+export const LEGACY_CODE_LANGUAGE: ProgrammingLanguage = 'r';
+
+/** Las actividades nuevas de programación nacen en el editor integrado. */
+export const DEFAULT_CODE_MODE: CodeMode = 'editor';
+
+/** Los pasos guardados sin modalidad conservan el comportamiento anterior. */
+export const LEGACY_CODE_MODE: CodeMode = 'either';
+
+export function programmingLanguageLabel(language: ProgrammingLanguage | null | undefined): string {
+  if (!language) return 'Sin lenguaje';
+  return (
+    PROGRAMMING_LANGUAGES.find((option) => option.value === language)?.label ?? String(language)
+  );
+}
 
 export const TOOL_MODE_LABEL: Readonly<Record<ToolChoiceMode, string>> = {
   none: 'Sin herramienta',
@@ -444,20 +745,117 @@ export const TOOL_CATEGORIES = [
  * aplica en la condición `content-length-range` del POST firmado, que es el
  * único sitio donde un límite es real.
  */
-export const ACADEMIC_FILE_LIMITS = {
+export const ACADEMIC_FILE_LIMITS: Readonly<Record<AcademicFileClass, number>> = {
   image: 8 * 1024 * 1024,
   document: 25 * 1024 * 1024,
   video: 200 * 1024 * 1024,
-} as const;
+  /** Un fuente no pesa: un límite generoso aquí sólo invita a subir un binario. */
+  code: 2 * 1024 * 1024,
+  /** Material del profesorado: un caso de estudio o un dataset, no un video. */
+  material: 25 * 1024 * 1024,
+};
 
 /**
- * Tipos MIME admitidos por clase de entregable.
+ * Extensiones admitidas por clase, con el `Content-Type` que les corresponde.
  *
- * Lista blanca y no lista negra: lo que no está, no entra. El `Content-Type` se
- * fija además en la condición del POST firmado, así que el objeto guardado no
- * puede acabar con un tipo distinto del que se autorizó.
+ * ## Por qué manda la EXTENSIÓN y no lo que declare el navegador
+ *
+ * El `Content-Type` que manda el navegador no es un dato fiable: para un `.R`
+ * suele llegar vacío o `application/octet-stream`, y para un `.docx` depende del
+ * sistema. Decidir por extensión —igual que hace `presignProjectUpload` con los
+ * proyectos— es lo que permite admitir un fuente de R sin abrir la puerta a
+ * cualquier binario, porque el tipo del objeto lo FIJA el servidor en la
+ * condición del POST firmado a partir de esta tabla.
+ *
+ * Lo que no está, no entra. No hay `.exe`, `.bat`, `.sh`, `.js`, `.html` ni
+ * `.svg`: los tres primeros son ejecutables, y los dos últimos se sirven como
+ * contenido activo (un SVG puede llevar script dentro).
  */
-export const ACADEMIC_FILE_TYPES: Readonly<Record<'image' | 'document' | 'video', Readonly<Record<string, string>>>> = {
+export const ACADEMIC_FILE_EXTENSIONS: Readonly<
+  Record<AcademicFileClass, Readonly<Record<string, string>>>
+> = {
+  image: {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    avif: 'image/avif',
+    gif: 'image/gif',
+  },
+  document: {
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    csv: 'text/csv',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    // Un fuente de R entregado como archivo. Se guarda y se sirve como texto:
+    // UINexus no lo ejecuta nunca (ver docs/SECURITY.md).
+    r: 'text/plain',
+    /**
+     * Imágenes en un entregable de DOCUMENTO, y no es un descuido.
+     *
+     * Media Investigación de Operaciones se resuelve a mano: las iteraciones de
+     * un Simplex, una matriz de transporte o un diagrama de red se entregan como
+     * la foto de la hoja. Obligar a convertirla a PDF antes de subirla sólo
+     * conseguiría que se entregue peor, o por WhatsApp.
+     */
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+  },
+  video: {
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    mov: 'video/quicktime',
+  },
+  /**
+   * Los fuentes que se admiten adjuntos en un paso de código.
+   *
+   * Todos se guardan y se sirven como `text/plain` desde el bucket privado y
+   * otro origen: es texto que se muestra, nunca un programa que corra. Por eso
+   * puede estar `.html` aquí sin que eso tenga nada que ver con publicar un
+   * proyecto —publicar pasa por `projects/`, otro prefijo y otro dominio—.
+   */
+  code: {
+    py: 'text/plain',
+    r: 'text/plain',
+    java: 'text/plain',
+    c: 'text/plain',
+    cpp: 'text/plain',
+    js: 'text/plain',
+    html: 'text/plain',
+    css: 'text/plain',
+    sql: 'text/plain',
+  },
+  material: {
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    csv: 'text/csv',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    r: 'text/plain',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+  },
+};
+
+/**
+ * Tipos MIME admitidos por clase.
+ *
+ * Segunda mitad de la lista blanca: se usa cuando el nombre del archivo no trae
+ * una extensión reconocible, y para desmentir un tipo declarado que no
+ * corresponde a la clase. Sigue siendo lista blanca: lo que no está, no entra.
+ */
+export const ACADEMIC_FILE_TYPES: Readonly<
+  Record<AcademicFileClass, Readonly<Record<string, string>>>
+> = {
   image: {
     'image/png': 'png',
     'image/jpeg': 'jpg',
@@ -470,19 +868,84 @@ export const ACADEMIC_FILE_TYPES: Readonly<Record<'image' | 'document' | 'video'
     'text/plain': 'txt',
     'text/markdown': 'md',
     'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
   },
   video: {
     'video/mp4': 'mp4',
     'video/webm': 'webm',
     'video/quicktime': 'mov',
   },
+  /**
+   * Sólo se consulta cuando NO hay nombre de archivo.
+   *
+   * `text/plain` conserva el fallback histórico de R: un `.R` llega casi
+   * siempre con el tipo vacío o genérico, y ése era el único lenguaje cuando se
+   * escribió esta tabla. Los demás sólo se reconocen aquí si el navegador manda
+   * un MIME que no deja dudas; en la práctica gana la extensión.
+   */
+  code: {
+    'text/plain': 'r',
+    'text/x-r': 'r',
+    'text/x-r-source': 'r',
+    'text/x-python': 'py',
+    'application/x-python-code': 'py',
+    'text/x-java-source': 'java',
+    'text/x-c': 'c',
+    'text/x-csrc': 'c',
+    'text/x-c++src': 'cpp',
+    'text/javascript': 'js',
+    'application/javascript': 'js',
+    'text/html': 'html',
+    'text/css': 'css',
+  },
+  material: {
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'text/markdown': 'md',
+    'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+  },
 };
 
 /** A qué clase de límite corresponde cada entregable de archivo. */
 export const FILE_CLASS_BY_DELIVERABLE: Readonly<
-  Record<'file' | 'image' | 'video', 'image' | 'document' | 'video'>
+  Record<'file' | 'image' | 'video' | 'code', AcademicFileClass>
 > = {
   image: 'image',
   video: 'video',
   file: 'document',
+  code: 'code',
 };
+
+/** Cómo se llama cada clase de material en la pantalla del alumnado. */
+export const MATERIAL_KIND_LABEL: Readonly<Record<AssignmentMaterialKind, string>> = {
+  template: 'Plantilla',
+  resource: 'Material',
+};
+
+export const MATERIAL_KIND_HELP: Readonly<Record<AssignmentMaterialKind, string>> = {
+  template: 'Se rellena y se entrega.',
+  resource: 'Se consulta para hacer la tarea.',
+};
+
+/** Lo que ofrece el selector de archivo, por clase. Es una ayuda, no la regla. */
+export function acceptAttributeFor(fileClass: AcademicFileClass): string {
+  return Object.keys(ACADEMIC_FILE_EXTENSIONS[fileClass])
+    .map((extension) => `.${extension}`)
+    .join(',');
+}
+
+/** El límite en megas, redondeado, para poder decirlo antes de intentar subir. */
+export function fileLimitLabel(fileClass: AcademicFileClass): string {
+  return `${Math.round(ACADEMIC_FILE_LIMITS[fileClass] / (1024 * 1024))} MB`;
+}

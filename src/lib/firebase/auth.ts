@@ -1,8 +1,7 @@
 'use client';
 
-import type { ConfirmationResult, User } from 'firebase/auth';
+import type { User } from 'firebase/auth';
 import { getClientAuth } from './client';
-import { useEmulators } from './config';
 import { DomainNotAllowedError, isInstitutionalEmail } from '../identity';
 
 /**
@@ -12,8 +11,9 @@ import { DomainNotAllowedError, isInstitutionalEmail } from '../identity';
  * importen `firebase/auth` directamente: así el bundle sólo lo carga quien
  * realmente inicia sesión, y hay un único sitio donde traducir los errores.
  *
- * Ningún dato sensible se registra: los códigos OTP no se guardan y el número
- * de teléfono no se escribe en logs ni en Firestore.
+ * Ningún dato sensible se registra: ni el correo ni la contraseña se escriben
+ * en logs. La regla de quién puede entrar NO se define aquí: se importa de
+ * `lib/identity.ts`, que es su único sitio.
  */
 
 export class AuthUnavailableError extends Error {
@@ -58,19 +58,6 @@ export function humanizeAuthError(code: string): string {
       return 'No hay conexión. Inténtalo otra vez cuando vuelva.';
     case 'auth/too-many-requests':
       return 'Demasiados intentos seguidos. Espera un momento.';
-    case 'auth/invalid-phone-number':
-      return 'Ese número no parece válido. Escríbelo con código de país, por ejemplo +52 55 1234 5678.';
-    case 'auth/missing-phone-number':
-      return 'Escribe tu número de teléfono.';
-    case 'auth/quota-exceeded':
-      return 'Se agotó el envío de SMS por hoy. Entra con correo o con Google.';
-    case 'auth/invalid-verification-code':
-      return 'Ese código no es correcto. Revísalo o pide uno nuevo.';
-    case 'auth/code-expired':
-      return 'El código caducó. Pide uno nuevo.';
-    case 'auth/captcha-check-failed':
-    case 'auth/missing-app-credential':
-      return 'No se pudo verificar que eres una persona. Recarga la página e inténtalo otra vez.';
     case 'auth/operation-not-allowed':
       return 'Ese método de acceso no está habilitado todavía.';
     case 'auth/requires-recent-login':
@@ -192,68 +179,18 @@ export async function signInWithGoogle(): Promise<User> {
 }
 
 // ---------------------------------------------------------------------------
-// Teléfono (SMS)
-// ---------------------------------------------------------------------------
-
-/**
- * Firebase exige un verificador anti-abuso (reCAPTCHA) antes de enviar un SMS.
- * No hay forma soportada de saltárselo, ni debe haberla: cada mensaje cuesta
- * dinero y es un vector de abuso. Se usa el modo invisible para no añadir un
- * paso más a quien sí es una persona.
- */
-export interface PhoneChallenge {
-  confirm: (code: string) => Promise<User>;
-  /** Libera el widget de reCAPTCHA. Llamar siempre al terminar o cancelar. */
-  dispose: () => void;
-}
-
-export async function startPhoneSignIn(
-  phoneNumber: string,
-  recaptchaContainerId: string
-): Promise<PhoneChallenge> {
-  const auth = requireAuth();
-  const { RecaptchaVerifier, signInWithPhoneNumber } = await import('firebase/auth');
-
-  // Con el emulador de Auth no hay reCAPTCHA real ni se envían SMS: el código
-  // aparece en la consola del emulador.
-  if (useEmulators) auth.settings.appVerificationDisabledForTesting = true;
-
-  const verifier = new RecaptchaVerifier(auth, recaptchaContainerId, { size: 'invisible' });
-
-  let confirmation: ConfirmationResult;
-  try {
-    confirmation = await signInWithPhoneNumber(auth, phoneNumber, verifier);
-  } catch (error) {
-    verifier.clear();
-    throw error;
-  }
-
-  return {
-    confirm: async (code: string) => {
-      const credential = await confirmation.confirm(code.trim());
-      return credential.user;
-    },
-    dispose: () => {
-      try {
-        verifier.clear();
-      } catch {
-        /* el widget ya no existe */
-      }
-    },
-  };
-}
-
-/** Normaliza a E.164 asumiendo México cuando no se escribe el prefijo. */
-export function normalizePhoneNumber(raw: string, defaultCountryCode = '+52'): string {
-  const trimmed = raw.replace(/[\s()-]/g, '');
-  if (trimmed.startsWith('+')) return trimmed;
-  return `${defaultCountryCode}${trimmed.replace(/^0+/, '')}`;
-}
-
-export function isValidPhoneNumber(value: string): boolean {
-  return /^\+[1-9]\d{7,14}$/.test(value);
-}
-
+// Teléfono (SMS): retirado a propósito
+//
+// Existía un inicio de sesión por SMS y se ha retirado, no deshabilitado a
+// medias. La razón es de fondo: UINexus autoriza sobre el CORREO institucional
+// —`isInstitutionalEmail`, con su allowlist docente—, y un número de teléfono
+// no demuestra pertenencia a `@itdurango.edu.mx`. Una sesión creada por SMS
+// llegaba sin correo, así que era exactamente el caso que la política no puede
+// evaluar; dejarla habilitada era una puerta lateral a la regla.
+//
+// El día que vuelva, vuelve como SEGUNDO factor de una cuenta institucional ya
+// verificada (`linkWithPhoneNumber` sobre el usuario actual), no como forma de
+// entrar. Está anotado en CHECKPOINTS.md.
 // ---------------------------------------------------------------------------
 
 export async function signOut(): Promise<void> {

@@ -395,3 +395,499 @@ Prompts, Skills y recursos generales viven en tres tablas —sus formas son
 distintas y dos ya existían— y se presentan juntos en una sola pestaña. El
 alumnado propone, el profesorado aprueba, y la autoría se conserva siempre: una
 Skill aprobada sigue diciendo quién la aportó.
+
+## 12. Materiales, plantillas de materia y código (iteración 5)
+
+### Tres conceptos de archivo, no uno
+
+```
+Proyecto        projects/{owner}/{id}/v{n}/…          código que se EJECUTA en el origen aislado
+Entrega         academic/{materia}/{uid}/{tarea}/…    trabajo de UNA persona, con fecha límite y revisión
+Material        academic/materials/{materia}/{tarea}/ lo que REPARTE la docente, lo lee todo el grupo
+```
+
+Los materiales cuelgan de la tarea (`Assignment.materials`) y **no viajan en el
+cuerpo de la tarea**: se gestionan por su propia ruta. Es lo que hace que
+corregir el enunciado no pueda llevarse por delante la plantilla del reporte, y
+que subir un archivo mientras alguien edita el título no revierta el título. La
+escritura es un `UpdateCommand` sobre un solo atributo, no un `Put` del registro
+entero.
+
+Compatibilidad: una tarea sin el campo se lee con `materials: []`. Es la misma
+estrategia de siempre —normalizar al leer, migrar al escribir— y por eso no hay
+script de migración.
+
+### Las plantillas de materia son DATOS
+
+`lib/workflow-templates.ts` describe procesos —las cinco de Investigación de
+Operaciones— como listas de pasos que `templateWorkflowSteps()` convierte en
+`WorkflowStep[]` normales. **Nada** en el runner, el constructor o la API sabe
+qué es «Investigación de Operaciones»: para todos ellos una tarea creada desde
+una plantilla es una tarea de varios pasos como cualquier otra.
+
+Entran en una tarea por un único camino, `instantiateWorkflowTemplate()`, que
+delega en el mismo `cloneWorkflowSteps` que las plantillas guardadas en la
+biblioteca. De ahí hereda la garantía que importa: **identificadores nuevos**.
+`Submission.stepEvidence` se indexa por `stepId`, así que dos tareas que
+compartieran ids compartirían la evidencia de sus estudiantes.
+
+Añadir teoría de colas, inventarios o simulación es añadir una entrada a ese
+archivo. No hay nada más que tocar.
+
+### El lenguaje de programación es un valor, no un booleano
+
+`StepDeliverable.language` guarda `'r'`, `'python'`, … sobre una unión abierta,
+y `PROGRAMMING_LANGUAGES` decide cuál se OFRECE hoy (sólo R). Habilitar el
+segundo lenguaje es cambiar un `enabled` y añadir su extensión a
+`ACADEMIC_FILE_EXTENSIONS.code`; las entregas ya guardadas no se tocan. Un
+`isR` habría obligado a rehacerlas.
+
+`CodeData` guarda el fuente pegado **y** la clave del archivo adjunto, y las dos
+conviven: pegarlo es lo que permite revisar sin descargar nada —que es como se
+corrigen veinte entregas—, adjuntarlo es lo que permite ejecutarlo. Cada una
+resuelve un uso distinto. UINexus no ejecuta ninguna de las dos (ver
+docs/SECURITY.md).
+
+### La política institucional, en un solo sitio
+
+`lib/identity.ts` es la única definición de quién pertenece a la comunidad.
+`lib/auth-session.ts` la aplica al restaurar la sesión del navegador —antes de
+crear el perfil— y `lib/server/session.ts` la aplica sobre `decoded.email` en
+`requireIdentity`, que es el punto por el que pasan todas las rutas. El módulo
+de identidad sigue sin declarar lado (ni `'use client'` ni `server-only`) por la
+misma razón de siempre: una regla que ambos lados comparten no puede vivir en un
+módulo que declara uno.
+
+## 13. Monaco y ejecución de R y Python (iteración 6)
+
+### La decisión de fondo: el navegador, no el servidor
+
+El código del alumnado se ejecuta **en su propio navegador**, con
+[Pyodide](https://pyodide.org) para Python y [webR](https://docs.r-wasm.org/webr/)
+para R, cada uno dentro de un Web Worker.
+
+Es la única opción que no obliga a elegir entre dos malas. Ejecutarlo en el host
+de Next.js —el mismo proceso que firma las subidas a S3 y lee DynamoDB— es
+regalar la plataforma al primer `system()` bien puesto. Levantar un servicio de
+sandboxes es infraestructura, coste y guardia permanente para una funcionalidad
+de clase. En el navegador, el peor programa que alguien pueda escribir sólo
+puede estropear **su propia pestaña**, y esa pestaña ya es suya.
+
+El corolario, que conviene tener presente: la ejecución **no es una corrección
+automática**. Cada estudiante ejecuta en su máquina, con su CPU y su memoria. La
+salida no se guarda ni se compara con nada.
+
+### Un contrato, dos motores, ninguna arquitectura duplicada
+
+```
+CodeEditor (UI)                      ← no sabe qué es Pyodide ni webR
+  └── browser-code-runner.ts         ← reloj, terminación, estados
+        └── Worker (módulo ESM)
+              └── worker-bridge.ts   ← traduce mensajes
+                    └── python-engine.ts  → Pyodide
+                        r-engine.ts       → webR
+```
+
+La UI pide `runner.run({ language, source })` y recibe `stdout`, `stderr`,
+`status` y una duración. No hay `REditor` ni `PythonEditor`, y no los habrá: el
+lenguaje es un **parámetro**, igual que `StepDeliverable.language`. Duplicar el
+componente habría duplicado también el autoguardado, el tema, la consola y el
+atajo de ejecutar.
+
+`code-runner-contract.ts` es compartido y puro: límites, validación previa y
+recorte de salida. Lo usan tanto el ejecutor del navegador como el adaptador de
+servidor hacia un sandbox externo (`lib/code-runner.ts`), que sigue sin nadie
+detrás y sigue siendo la puerta por si algún día hace falta.
+
+### Por qué el reloj está fuera del Worker
+
+`while True: pass` no atiende mensajes. No existe ningún «cancelar» cooperativo
+que funcione en el caso que importa, así que el tiempo límite lo lleva el hilo
+principal y su forma de aplicarlo es `worker.terminate()`.
+
+Eso se lleva el runtime entero por delante, y es deliberado: el siguiente
+intento paga otro arranque y a cambio empieza en un estado conocido. Con R
+además funciona en cascada —webR corre su propio Worker hijo dentro del
+nuestro—, que es justo lo que hace terminable un bucle infinito de R.
+
+Límites: fuente ≤ `ACADEMIC_LIMITS.codeMax` (60 KB), salida ≤ 20 000 caracteres,
+ejecución ≤ 10 s, arranque ≤ 120 s. El de arranque es aparte porque Pyodide y
+webR tardan más en despertar que cualquier programa de clase.
+
+### Los runtimes se sirven desde el propio origen
+
+`scripts/copy-code-runtimes.mjs` copia Pyodide y webR de `node_modules` a
+`public/runtime/` antes de `dev` y de `build`, y compila los dos Workers con
+esbuild a `public/runtime/workers/`. Son ~60 MB que **no** están en git: la
+fuente de verdad ya es `package-lock.json`.
+
+Dos cosas que se descubrieron construyéndolo y que explican esa forma:
+
+- **Los Workers no pasan por webpack.** Next acepta
+  `new Worker(new URL(…), { type: 'module' })` y luego lo carga como Worker
+  **clásico**, porque emitir módulos exige `output.module` en toda la
+  compilación. Pyodide detecta ese caso y se niega a arrancar, con razón: en un
+  Worker clásico no hay `import()` dinámico, que es como se cargan los dos
+  WebAssembly.
+- **De webR hay que cargar `webr.js`, no `webr.mjs`.** La segunda es su
+  compilación para Node y conserva un `require` de `"module"` que el navegador
+  no resuelve.
+
+El precio de compilar los Workers aparte: editar `src/workers/**` o
+`src/lib/code-engines/**` **no** se recarga solo en `next dev`. Hay que volver a
+ejecutar `npm run runtimes`.
+
+### El fuente vive en la evidencia de SU paso
+
+Nada nuevo en el modelo: `CodeData.code` dentro de
+`Submission.stepEvidence[stepId]`, que es donde ya vivía. Lo que se añadió es el
+autoguardado, y lo que lo hace seguro es que la ruta **fusiona por paso** sobre
+lo ya guardado: el editor manda sólo el paso que cambió, así que dos pasos de
+código no pueden pisarse.
+
+Se guarda con 800 ms de espera tras la última tecla, y **siempre** antes de
+ejecutar, de cambiar de paso y de entregar. Ese número decide la frecuencia, no
+si se pierde algo.
+
+`StepDeliverable` creció tres campos, todos opcionales y todos normalizados al
+leer:
+
+| Campo              | Paso nuevo | Paso guardado antes |
+| ------------------ | ---------- | ------------------- |
+| `codeMode`         | `editor`   | `either` (lo que ofrecía: fuente pegado + archivo) |
+| `starterCode`      | `''`       | `''`                |
+| `executionEnabled` | `false`    | `false`             |
+
+El código inicial viaja en el **paso**, no en la entrega. Por eso cambiar la
+plantilla no puede pisar el trabajo de quien ya empezó: son dos sitios
+distintos, y la copia del alumnado se siembra una sola vez.
+
+## 14. Prácticas, capacidades por lenguaje y reposicionamiento (iteración 7)
+
+### Editar y ejecutar dejan de ser el mismo booleano
+
+Hasta esta iteración el catálogo de lenguajes tenía un solo interruptor,
+`enabled`, y era un error de diseño: mezclaba «se puede escribir» con «se puede
+ejecutar». Con un único booleano, ofrecer Java en el editor equivalía a prometer
+que Java corre, y no corre.
+
+Ahora cada lenguaje declara sus capacidades:
+
+```ts
+interface LanguageCapabilities {
+  editor: boolean;            // se escribe en Monaco, con su resaltado
+  execution: boolean;         // se ejecuta en alguna parte
+  browserExecution: boolean;  // ...y esa parte es el navegador (Pyodide, webR)
+  remoteExecution: boolean;   // ...o un sandbox remoto que aún no existe
+  projects: boolean;          // alimenta un proyecto web publicable
+}
+```
+
+| Lenguaje | Edición | Ejecución | Runtime | Estado |
+| --- | --- | --- | --- | --- |
+| Python | ✅ | ✅ | Pyodide, en el navegador | Soportado |
+| R | ✅ | ✅ | webR, en el navegador | Soportado |
+| Java | ✅ | ❌ | Necesita sandbox remoto | Planeado |
+| C, C++ | ✅ | ❌ | Necesita sandbox remoto | Planeado |
+| JavaScript, HTML, CSS | ✅ | ❌ | Se ven al publicar el proyecto | Soportado (vía publicación) |
+| SQL | ✅ | ❌ | No hay base de datos | Sólo edición |
+
+`languageCapabilities()` devuelve `EDITOR_ONLY` para un valor desconocido. Es lo
+prudente ante una tarea guardada por una versión futura: escribir no rompe nada,
+ejecutar sí.
+
+**La interfaz dice la verdad.** Cuando una actividad pide ejecución y el lenguaje
+no la tiene, el editor muestra «Ejecución no disponible» con el motivo concreto y
+**no pinta el botón**. Un botón que no funciona es peor que ningún botón, y una
+promesa muda parece una avería.
+
+**La portada se genera desde el catálogo** (`components/home/language-support.tsx`).
+Una lista escrita a mano en el landing es una promesa que envejece sola; así, si
+alguien apaga la ejecución de R, la portada deja de anunciarla el mismo día.
+
+### El default nuevo no reinterpreta lo viejo
+
+`DEFAULT_PROGRAMMING_LANGUAGE` pasó de `r` a `python`, y por eso hizo falta
+`LEGACY_CODE_LANGUAGE = 'r'`: los pasos guardados **sin** lenguaje se crearon
+cuando R era el único ofrecido, y leerlos con el nuevo default habría convertido
+en Python, de golpe y en silencio, actividades de R ya entregadas. Los caminos de
+LECTURA usan el legacy; los de CREACIÓN, el default. Es la misma distinción que
+`DEFAULT_CODE_MODE` / `LEGACY_CODE_MODE`.
+
+### Workspace: dónde vive el código que no es una entrega
+
+Hasta ahora todo el código vivía en `stepEvidence[stepId]` de una entrega, lo que
+significaba que para probar cinco líneas de Python había que tener una actividad
+abierta con fecha límite.
+
+```
+Workspace                       tabla propia: uinexus-workspaces
+├── ownerUid                    del token verificado, nunca del cuerpo
+├── context   personal          activity | project están NOMBRADOS, no implementados
+├── language
+├── code                        fuente de verdad de un solo archivo
+├── files?                      la puerta a varios, opcional
+├── courseId                    null si nació suelta
+└── createdAt / updatedAt       el índice byOwner ordena por updatedAt
+```
+
+**Tabla propia y no una columna en `submissions`** porque no comparten ciclo de
+vida: una entrega pertenece a una actividad, tiene fecha límite, se revisa y se
+califica; una práctica es de quien la escribió, no caduca y nadie la corrige.
+Meterlas juntas obligaría a que cada lectura preguntara «¿esto es entregable?».
+
+**Y no cinco tablas** —`practiceCode`, `editorCode`, `projectCode`…— porque el
+concepto general es el mismo: un espacio con un lenguaje y unos archivos. Lo que
+cambia es `context`, y hoy sólo existe `personal`. Las actividades siguen
+guardando en `stepEvidence` y ahí se quedan: mover eso sería migrar entregas ya
+calificadas para ganar una simetría que nadie ha pedido.
+
+### Multi-archivo sin romper nada
+
+`code: string` sigue siendo la fuente de verdad y `files` es **opcional**. Cuando
+llegue, `code` será el archivo de entrada —el que se ejecuta— y `files` el resto.
+`normalizeWorkspace` **no** inventa `files: {}` al leer: «nunca tuvo varios» y
+«los tenía y los borró» son estados distintos, y aplanarlos ahora costaría la
+diferencia después.
+
+El esquema de entrada todavía **no** acepta `files`: aceptarlo antes de que el
+editor sepa escribirlos crearía registros que ninguna pantalla puede abrir.
+
+### Autoguardado: dos sitios, un contrato
+
+| | Actividad | Práctica |
+| --- | --- | --- |
+| Dónde | `PUT /api/assignments/:id/submission` | `PATCH /api/workspaces/:id` |
+| Granularidad | sólo el paso que cambió | sólo los campos que cambiaron |
+| Espera | 800 ms | 800 ms |
+| Forzado antes de | ejecutar, cambiar de paso, entregar | ejecutar |
+
+Los dos escriben parcialmente por la misma razón: un `Put` completo desde el
+autoguardado sobrescribiría lo que otra pestaña acababa de escribir, y en el caso
+del workspace también `createdAt` y `ownerUid`. `updateOwnWorkspace` usa
+`UpdateCommand` con `ConditionExpression: ownerUid = :owner`, así que una
+práctica ajena no se puede escribir ni por error de programación.
+
+### Proyectos con frameworks: qué se decidió y qué no
+
+Nada. Y es deliberado.
+
+Se evaluaron WebContainers (StackBlitz) y Sandpack (CodeSandbox) para React, Vue
+o Vite en el navegador. Las dos funcionan y las dos traen consecuencias que esta
+iteración no puede pagar honestamente:
+
+- **WebContainers** ejecuta Node dentro del navegador, pero exige aislamiento por
+  origen (COOP/COEP) en toda la página. Eso rompería Firebase Auth, que abre una
+  ventana emergente, y el `<iframe>` de la vista previa de proyectos.
+- **Sandpack** es más ligero pero empaqueta en un servicio de terceros por
+  defecto, o exige alojar el empaquetador propio; lo primero manda el código del
+  alumnado a un tercero, lo segundo es infraestructura nueva.
+- **Build remoto** es la opción limpia y es exactamente el mismo sandbox remoto
+  que necesitan Java y C. Tiene sentido resolverlo **una vez**, no dos.
+
+Conclusión: `RemoteRunner` es la pieza que desbloquea Java, C y los frameworks a
+la vez. El contrato ya existe (`CodeRunner` en `code-runner-contract.ts`) y la UI
+ya no conoce a su proveedor. Clasificación honesta hoy: **Planeado**, no
+«Experimental», porque no hay nada que probar todavía.
+
+## 15. NexBook y UINexus Studio (iteración 8)
+
+La documentación completa está en [`docs/NEXBOOK.md`](NEXBOOK.md). Aquí queda lo
+que afecta a la arquitectura general.
+
+### Dónde encaja
+
+```
+UINexus Studio
+├── NexBook Workspace     ← implementado
+└── Project Workspace     ← previsto, no implementado
+```
+
+Un NexBook es un `kind` de workspace, no una entidad paralela. Comparte tabla,
+índice y patrón de acceso con las prácticas de un solo archivo:
+
+```
+uinexus-workspaces (GSI byOwner: ownerUid + updatedAt)
+├── kind: 'code'      → title, language, code, files?
+└── kind: 'nexbook'   → title, document { blocks, results }, revision, visibility
+```
+
+**Una tabla y no dos** porque Prácticas enseña los dos tipos en UNA lista
+ordenada por fecha: con dos tablas habría que fusionar y reordenar en memoria y la
+paginación dejaría de ser correcta. `kind` ausente se lee como `'code'`, así que
+las prácticas guardadas antes siguen abriéndose sin migrar nada.
+
+### El eje nuevo: ejecución con estado
+
+```
+CodeRunner       ejecución AISLADA     paso de actividad
+NotebookKernel   SESIÓN persistente    celda de NexBook
+```
+
+No son dos motores: `NotebookKernel` envuelve al mismo `BrowserCodeRunner`, el
+mismo Worker y el mismo Pyodide. Lo único que viaja distinto es `mode` en el
+mensaje (`isolated` / `session`), añadido al protocolo sin romperlo —ausente
+significa `isolated`, el comportamiento de siempre—.
+
+El aislamiento de Python pasó a implementarse **vaciando `__main__`** antes y
+después de cada ejecución aislada, en lugar de pasar un diccionario propio como
+`globals`. Es observable desde Python y queda simétrico con el motor de R, que ya
+lo hacía así. Un `mode` por defecto distinto de `isolated` habría hecho que un
+paso de actividad heredara variables de un NexBook abierto en otra pestaña.
+
+### Concurrencia: la primera entidad con revisión
+
+Es la primera parte de UINexus con concurrencia optimista. Un NexBook es lo
+bastante grande y lo bastante largo de escribir para que «dos pestañas abiertas»
+deje de ser un caso raro, y ahí «gana el último en llegar» pierde media hora de
+trabajo.
+
+```
+PATCH { revision, document }
+  ConditionExpression: ownerUid = :owner AND revision = :expected
+  → 200  escrito, revision + 1
+  → 409  con el documento que ganó dentro
+  → 404  no existe, o no es tuyo
+```
+
+Las entregas y las prácticas de código siguen con escritura parcial sin revisión:
+ahí el conflicto no se da —una entrega se escribe por pasos y un archivo suelto es
+un campo— y añadir un contador habría sido ceremonia sin beneficio.
+
+### Ids deterministas para plantillas e instancias
+
+Mismo patrón que `submissionIdFor`, y por las mismas dos razones: la unicidad es
+aritmética en vez de «consulta previa más escritura» —donde se cuelan los
+duplicados—, y es un hash porque el id viaja en la URL y pegar el UID ahí sería la
+fuga que el resto del proyecto evita.
+
+De ahí sale la instanciación perezosa: la copia de cada estudiante se crea la
+primera vez que abre el paso, con `attribute_not_exists(id)`, en vez de crear
+trescientas al publicar.
+
+### El entregable `nexbook` no sustituye a `code`
+
+```
+Step
+├── text  file  url  image  video
+├── code        ← intacto, con sus modalidades y su starter code
+├── nexbook     ← nuevo
+└── ai_worklog  structured  project  resource_reference
+```
+
+Una actividad que pide veinte líneas de Python sigue usando `code`. `CodeData`
+no cambió.
+
+La evidencia de un paso `nexbook` es un **snapshot**, no una referencia: sin eso,
+seguir trabajando después de entregar cambiaría lo que se califica.
+
+## 16. NexBook modular (iteración 9)
+
+La documentación completa está en [`docs/NEXBOOK.md`](NEXBOOK.md). Aquí lo que
+afecta a la arquitectura general.
+
+### El eje nuevo: cosas que SALEN de la plataforma
+
+Hasta la iteración 8, un NexBook sólo se leía desde dentro. Ahora hay tres
+caminos por los que un documento sale, y los tres pasan por el mismo sitio:
+
+```
+                      ┌──────────────────────┐
+ NexBook vivo  ──────▶│ publishableDocument  │──────▶  publicación
+                      │  (lista BLANCA)      │──────▶  archivo .nexbook
+                      └──────────────────────┘
+```
+
+Reconstruye el documento **campo a campo** en vez de copiar y borrar. Es la misma
+decisión que `sanitizeWorkerRun` toma con el mensaje del Worker, y por el mismo
+motivo: con una lista negra, un campo nuevo en el modelo sale publicado sin que
+nadie haga nada.
+
+La entrega es el cuarto camino y ya existía; su snapshot no pasa por aquí porque
+no sale de la plataforma: lo lee la docente de la misma materia.
+
+### Binarios: la primera vez que un documento no se basta a sí mismo
+
+```
+NexBook (DynamoDB, ≤300 KB)  ──assetId──▶  S3  nexbook/<ownerUid>/<assetId>.<ext>
+```
+
+La clave cuelga de la **persona** y no del documento, y eso es lo que hace
+baratas las copias: publicar, entregar o copiar un documento con diez imágenes no
+mueve un byte en S3. El precio está anotado en LIMITATIONS: nadie puede borrar en
+cascada sin romper la copia de otro.
+
+Quién puede leer un asset **no lo decide el asset**, lo decide el documento que
+lo referencia. Es una capacidad, no una propiedad, y es lo que permite que una
+publicación enseñe imágenes de otra persona sin darle acceso a nada más.
+
+No hay tabla de assets: todo lo que los identifica cabe en su clave, y una tabla
+nueva es un recurso de AWS nuevo.
+
+### Publicaciones: otro `kind` en la misma tabla
+
+```
+uinexus-workspaces (GSI byOwner)
+├── kind: 'code'                 práctica de un archivo
+├── kind: 'nexbook'              documento vivo
+└── kind: 'nexbook-publication'  copia congelada          ← nuevo
+```
+
+Tercer tipo de item en la tabla y ninguna tabla nueva. El `slug` **es** el id del
+item, así que la unicidad la garantiza la clave primaria; y es un hash de
+`(dueño, NexBook)` para que «actualizar la publicación» encuentre la que ya
+existe sin guardar un puntero en el documento vivo.
+
+La lista de Prácticas filtra este `kind`: si no, cada documento publicado saldría
+dos veces y borrar «el segundo» borraría la publicación.
+
+### Las salidas dejaron de ser dos cadenas
+
+```
+motor  ──OutputRecorder──▶  secuencia ordenada  ──▶  documento
+                        └─▶  stdout / stderr    ──▶  consola de actividad
+```
+
+Las dos vistas salen del **mismo registro**, así que no pueden contradecirse. Las
+cadenas planas siguen existiendo porque un paso de actividad enseña una consola y
+no necesita más; un NexBook lee la secuencia.
+
+El orden real no exigió rediseñar ningún runtime: Pyodide ya llamaba a `stdout`
+según el programa escribía y `captureR` ya devolvía un array ordenado. Lo que
+faltaba era dejar de tirar esa información.
+
+`NEXBOOK_FORMAT_VERSION` **sigue en 1**: los tipos ricos entraron como valores
+nuevos de `stream`, que es lo que V1 dejó preparado.
+
+### El Worker puede volver a pedir cosas, acotadamente
+
+Permitir `numpy`, `pandas` y `matplotlib` rompió una garantía anterior: el
+endurecimiento dejaba `fetch` muerto tras arrancar, y `loadPackage` lo necesita
+**durante** una ejecución. La regla pasó de «no puede pedir nada» a «sólo puede
+pedir sus propios assets», con la URL resuelta contra el origen antes de
+comparar. Ver docs/SECURITY.md.
+
+Es el tipo de conflicto que sólo aparece en un navegador: las pruebas del motor
+no pasan por el endurecimiento.
+
+### La hoja de cálculo no trae dependencias
+
+Motor de fórmulas y rejilla son código propio. Univer se evaluó y se descartó
+—9.9 MB sólo el preset de hojas, 22 presets en el meta-paquete, una capa HTTP en
+el árbol y render en canvas— y el criterio que decidió fue la accesibilidad: un
+canvas no tiene celdas que un lector de pantalla pueda anunciar.
+
+`SpreadsheetBridge` media entre las hojas y quien las lea, para que conectar
+Python y R a una hoja no obligue a que los motores sepan cómo está implementada.
+Hoy no están conectados.
+
+### Leer y editar son dos pantallas
+
+```
+NexBookStudio   editar + ejecutar   Monaco, kernel, autoguardado   232 kB
+NexBookReader   leer                nada de eso                    167 kB
+```
+
+`NexBookReader` no es Studio con `editable: false`. Abrir un enlace público no
+puede costar 13 MB de Pyodide ni 46 MB de webR, y un editor de cientos de
+kilobytes para enseñar código que nadie va a tocar tampoco.

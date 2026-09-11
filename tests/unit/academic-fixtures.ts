@@ -1,5 +1,6 @@
 import type {
   AIWorklogData,
+  AssignmentMaterialRecord,
   AssignmentRecord,
   CourseRecord,
   CourseResourceRecord,
@@ -99,6 +100,8 @@ export function assignment(overrides: Partial<AssignmentRecord> = {}): Assignmen
     // `normalizeAssignment` le sintetiza el paso único al leerla, y varias
     // pruebas dependen de que aquí no haya pasos.
     workflow: [],
+    // Igual que arriba: una tarea anterior a los materiales no reparte archivos.
+    materials: [],
     assignedTo: null,
     status: 'published',
     createdBy: UID.luz,
@@ -274,6 +277,26 @@ export function step(
     required: true,
     assignedTo: null,
     dependsOnStepIds: [],
+    ...overrides,
+  };
+}
+
+/** Un archivo repartido por la docente dentro de una tarea. */
+export function material(
+  overrides: Partial<AssignmentMaterialRecord> = {}
+): AssignmentMaterialRecord {
+  return {
+    id: 'material-1',
+    kind: 'template',
+    displayName: 'Plantilla del reporte',
+    fileName: 'plantilla-reporte.docx',
+    storageKey: 'academic/materials/course-dcu/assignment-1/aaaaaaaa-bbbb.docx',
+    contentType:
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    sizeBytes: 24_576,
+    createdAt: '2026-09-02T00:00:00.000Z',
+    uploadedBy: UID.luz,
+    uploadedByName: 'Luz Adriana Márquez',
     ...overrides,
   };
 }

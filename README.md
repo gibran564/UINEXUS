@@ -1,20 +1,40 @@
 # UINexus
 
-**Diseña. Publica. Comparte.**
+**Aprende construyendo.**
 
-Galería y hosting de proyectos web para materias de diseño centrado en el
-usuario. Una alumna sube su `index.html`, obtiene una dirección propia y la
-comparte. Cualquiera puede verla sin cuenta, sin instalar nada y sin pedir
-permiso.
+Plataforma académica para crear, programar, practicar, entregar y publicar
+proyectos dentro de materias y grupos. Una actividad empieza como una
+instrucción, se convierte en código, crece como proyecto y termina siendo
+trabajo del estudiante.
 
 ```
-Alumna crea cuenta → sube su página → añade información → ve la vista previa
-→ publica → obtiene uinexus.mx/@ana/prototipo-biblioteca → lo comparte
+Docente plantea la actividad → elige lenguaje y código inicial → publica
 
-Visitante → UINexus → explora → proyecto → abre la experiencia
+Estudiante abre el paso → programa en el editor o en un NexBook → ejecuta
+→ ve tablas y gráficas → se guarda solo → entrega
+→ y lo que construyó sigue siendo suyo: lo copia, lo publica o lo exporta
+
+Docente revisa el código en el mismo editor → lo ejecuta → califica
+
+Proyecto terminado → uinexus.mx/@ana/prototipo-biblioteca → se comparte
 ```
 
-Sin saber Git, GitHub, Vercel, npm, CLI, DNS ni Firebase.
+Sin instalar un entorno, sin configurar nada y sin saber Git, npm, CLI ni DNS.
+
+## Qué se puede hacer con cada lenguaje
+
+Editar no es ejecutar, y UINexus no finge lo contrario.
+
+| Lenguaje | Se edita | Se ejecuta | Gráficas y tablas | Dónde |
+|---|---|---|---|---|
+| Python | ✅ | ✅ | ✅ pandas y matplotlib | Navegador (Pyodide) |
+| R | ✅ | ✅ | ✅ `plot()` y data frames | Navegador (webR) |
+| Java, C, C++ | ✅ | ❌ | ❌ | Necesitan un sandbox remoto que aún no existe |
+| HTML, CSS, JavaScript | ✅ | ❌ | ❌ | Se ven al publicar, en el origen aislado |
+| SQL | ✅ | ❌ | ❌ | No hay base de datos que consultar |
+
+El catálogo vive en `lib/constants.ts` y la portada se genera desde él, así que
+no puede prometer algo que el producto no haga.
 
 ---
 
@@ -59,6 +79,7 @@ Ver [`docs/SECURITY.md`](docs/SECURITY.md).
 | Documento | Contenido |
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Arquitectura, rutas, modelo de datos, los tres niveles de proyecto |
+| [`docs/NEXBOOK.md`](docs/NEXBOOK.md) | NexBook y UINexus Studio: bloques, salidas ricas, assets, hojas, kernels, publicación y el formato `.nexbook` |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Aislamiento por origen, capas de validación, cabeceras, y qué **no** resuelve |
 | [`docs/DESIGN-SYSTEM.md`](docs/DESIGN-SYSTEM.md) | Design language, tokens, tipografía, componentes |
 | [`docs/UX-AUDIT.md`](docs/UX-AUDIT.md) | Auditoría conceptual previa y auditoría del resultado, con puntuación |
@@ -102,7 +123,10 @@ npm run build               # build de producción
 npm run typecheck           # tsc --noEmit, modo estricto
 npm run lint                # ESLint
 
-npm test                    # 35 pruebas unitarias con Vitest
+npm test                    # pruebas unitarias con Vitest
+npm run test:integration    # rutas de API contra DynamoDB Local
+npm run runtimes            # publica Pyodide, webR y los Workers en public/
+npm run runtimes:python     # + numpy, pandas y matplotlib (~16.6 MB, opcional)
 
 npm run aws:deploy:infra    # crea/actualiza la pila de CloudFormation
 npm run aws:deploy:origin   # publica el código del origen aislado
