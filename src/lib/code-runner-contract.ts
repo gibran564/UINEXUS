@@ -1,4 +1,5 @@
 import { ACADEMIC_LIMITS, PROGRAMMING_LANGUAGES } from './constants';
+import type { BrowserRichOutput } from './browser-code-runner-protocol';
 import type { ProgrammingLanguage } from './types';
 
 export type CodeRunStatus = 'ok' | 'failed' | 'timeout' | 'rejected' | 'stopped';
@@ -17,6 +18,16 @@ export interface CodeRunResult {
   exitCode: number | null;
   durationMs: number;
   truncated: boolean;
+  /**
+   * La salida ORDENADA y con tipos ricos, cuando el ejecutor sabe darla.
+   *
+   * Opcional porque `CodeRunner` es un contrato más viejo y más amplio que un
+   * NexBook: el adaptador de servidor y las pruebas que devuelven resultados a
+   * mano siguen siendo válidos sin esto. Quien la necesita —el kernel— comprueba
+   * si está; quien no —la consola de una actividad— sigue leyendo las dos
+   * cadenas.
+   */
+  outputs?: BrowserRichOutput[];
 }
 
 export interface CodeRunner {
@@ -37,13 +48,24 @@ export const CODE_RUN_LIMITS = {
 
 const BROWSER_RUNTIME_LANGUAGES = new Set<ProgrammingLanguage>(['r', 'python']);
 
-/** Only explicitly enabled catalogue entries may reach a browser runtime. */
+/**
+ * Sólo lo que de verdad tiene un runtime en el navegador llega a un Worker.
+ *
+ * Dos condiciones, y las dos hacen falta. El catálogo dice qué PROMETE la
+ * interfaz (`browserExecution`); el conjunto de arriba dice para qué existe
+ * código de verdad en `src/workers/`. Fiarse sólo del catálogo convertiría un
+ * error de configuración —marcar Java como ejecutable— en un Worker que se
+ * arranca para nada; fiarse sólo del conjunto dejaría que la promesa de la
+ * interfaz y la realidad se separaran sin que nadie lo notara.
+ */
 export function isBrowserExecutableLanguage(
   language: ProgrammingLanguage
 ): language is 'r' | 'python' {
   return (
     BROWSER_RUNTIME_LANGUAGES.has(language) &&
-    PROGRAMMING_LANGUAGES.some((option) => option.value === language && option.enabled)
+    PROGRAMMING_LANGUAGES.some(
+      (option) => option.value === language && option.capabilities.browserExecution
+    )
   );
 }
 

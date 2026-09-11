@@ -1026,6 +1026,314 @@ de variables que no son credenciales, así que un entorno a medio configurar
 apaga el modo demo y después se estrella en el build en vez de degradarse. Si se
 quiere que un Preview sin credenciales compile igualmente, ahí está el sitio.
 
+## Sprint — Monaco Editor + ejecución de R y Python (2026-09-10)
+
+**Objetivo.** Que una actividad de programación deje de ser «pega tu código y
+que alguien lo ejecute en su equipo» y pase a ser: la docente configura el paso,
+el alumnado escribe en un editor de verdad, ejecuta, ve la salida, y la docente
+revisa y vuelve a ejecutar. Sin ejecutar nada en el servidor.
+
+### Lo que se implementó
+
+**Editor.** Un solo `CodeEditor` (`components/aula/code-editor.tsx`) para todos
+los lenguajes, con Monaco cargado por `next/dynamic` sin SSR. Números de línea,
+resaltado, emparejado de llaves, búsqueda, deshacer, ajuste de línea, minimapa
+apagado, tema claro/oscuro de UINEX y Ctrl/Cmd + Enter para ejecutar. Si Monaco
+no carga en diez segundos queda un `<textarea>` con el mismo valor y el mismo
+`onChange`: entregar no puede depender de un editor de 3 MB. **No** hay
+`REditor` ni `PythonEditor` — el lenguaje es un parámetro.
+
+**Ejecución.** R con webR y Python con Pyodide, cada uno en un Web Worker, en el
+navegador de quien programa. La UI no conoce ninguno de los dos: pide
+`runner.run({ language, source })`. El runtime se arranca en la PRIMERA
+ejecución, no al abrir la tarea («Preparando Python…» → «Python listo»).
+
+**Límites.** Fuente ≤ 60 KB, salida ≤ 20 000 caracteres, ejecución ≤ 10 s,
+arranque ≤ 120 s. Un programa que no termina se corta terminando el Worker —lo
+único que funciona con un bucle infinito— y la ejecución siguiente arranca
+limpia. Hay botón de Detener.
+
+**Persistencia.** El fuente vive donde ya vivía: `CodeData.code` dentro de
+`stepEvidence[stepId]`. Autoguardado con 800 ms de espera, y guardado forzoso
+antes de ejecutar, de cambiar de paso y de entregar. El editor manda SÓLO el
+paso que cambió y la ruta fusiona por paso, así que dos pasos de código no se
+pisan.
+
+**Modalidades.** `editor` (Monaco, sin archivo obligatorio), `upload` (el flujo
+de archivo de siempre) y `either` (las dos, más importar un `.R`/`.py` al
+editor). Un paso guardado antes de que existieran se lee como `either`, que es
+exactamente lo que ofrecía. Los nuevos nacen en `editor`.
+
+**Código inicial.** Viaja en el PASO, no en la entrega. La copia del alumnado se
+siembra la primera vez que abre el paso; cambiar la plantilla después no pisa
+nada. Botón «Restablecer código inicial», que pregunta sólo si hay algo que
+perder.
+
+**Constructor.** `Deliverable → Código` ofrece lenguaje (R / Python), modalidad,
+«Permitir ejecución» y un editor para el código inicial. Nada hardcodea
+Investigación de Operaciones: esas plantillas simplemente eligen un entregable
+de código.
+
+**Revisión docente.** El código se ve en el mismo editor, en sólo lectura, con
+el lenguaje del paso, y se puede ejecutar. Ejecutar **no** modifica la entrega y
+no hay por dónde: ese editor va sin `onChange` y sin `beforeExecute`.
+
+### Terminado
+
+- [x] E1 · `CodeEditor` único por `ProgrammingLanguage`, con respaldo a textarea
+- [x] E2 · Monaco desde el paquete instalado, nunca desde un CDN
+- [x] E3 · `browser-code-runner.ts`: reloj, terminación y estados
+- [x] E4 · Worker + motor de Python (Pyodide), probado ejecutando de verdad
+- [x] E5 · Worker + motor de R (webR), verificado en navegador
+- [x] E6 · Tiempo límite, Detener, y volver a ejecutar tras un corte
+- [x] E7 · Autoguardado por paso, con guardado forzoso antes de ejecutar/entregar
+- [x] E8 · Modalidades `editor` / `upload` / `either` con compatibilidad hacia atrás
+- [x] E9 · Código inicial y «Restablecer»
+- [x] E10 · Configuración del paso de código en el constructor
+- [x] E11 · Vista docente en sólo lectura, ejecutable
+- [x] E12 · Red y paquetes bloqueados en los dos runtimes
+- [x] E13 · `scripts/copy-code-runtimes.mjs`: assets + Workers, fuera de git
+- [x] E14 · 83 pruebas nuevas (79 unitarias + 4 de integración)
+- [x] V.1 · typecheck · lint · 550 unitarias · 98 de integración · build
+
+### Pendiente, y por qué
+
+- [ ] **CSP de la plataforma.** `uinexus.mx` no envía `Content-Security-Policy`.
+      Se auditó: ejecutar R y Python **no exige relajar nada** (Monaco, Pyodide,
+      webR y los Workers salen del propio origen), así que no había nada que
+      ajustar. Escribirla entera —Firebase Auth, S3, imágenes, scripts en línea
+      de Next— es un cambio con su propio riesgo y no era este sprint. Las
+      directivas concretas que este código necesita están en docs/SECURITY.md.
+- [ ] **Ejecución real de R en la suite.** webR no arranca bajo Node en Windows
+      (le pasa una ruta de Windows a `new Worker`). El motor se prueba contra un
+      doble; que webR sepa sumar se verificó a mano en el navegador. Lo correcto
+      es una suite de Playwright. Ver docs/LIMITATIONS.md.
+- [ ] **Recorridos manuales con cuentas reales.** Necesita Firebase y AWS.
+
+### Trampas que costó encontrar, para no repetirlas
+
+1. **Webpack emite Workers CLÁSICOS** aunque se pida `{ type: 'module' }`:
+   emitir módulos exige `output.module` en toda la compilación y Next no lo
+   permite. Pyodide lo detecta y se niega a arrancar. Por eso los Workers los
+   compila esbuild aparte, a `public/runtime/workers/`.
+2. **De webR hay que cargar `webr.js`, no `webr.mjs`.** La segunda es su
+   compilación para Node y conserva un `require` de `"module"`; el navegador
+   falla con un «Failed to resolve module specifier "module"» que no se parece
+   en nada a su causa.
+3. **`install.packages` y `download.file` viven en `package:utils`, no en
+   `base`.** Enmascararlas sólo en `base` las dejaba intactas, y `download.file`
+   llegó a INTENTAR salir a la red. Ahora el prólogo recorre `search()` y los
+   espacios de nombres.
+4. **`captureConditions: false` convertía un error de R en «Finalizado»** con el
+   error escondido en stderr. Con `true`, webR lanza y la ejecución falla de
+   verdad.
+5. **`import('monaco-editor')` resuelve el paquete AMD de `min/`**, que webpack
+   no empaqueta. La entrada ESM es `monaco-editor/editor/editor.main.js`.
+
+Las cinco se descubrieron ejecutando la aplicación en un navegador, no leyendo
+código. Ninguna habría salido de `npm run build`.
+
+## Sprint — Reposicionamiento y workspace académico (2026-09-10)
+
+**Objetivo.** UINexus dejó de ser un publicador de HTML hace dos iteraciones, pero
+el producto seguía presentándose como uno: la portada decía «Diseña. Publica.
+Comparte.» y explicaba cómo subir un `index.html`. Este sprint alinea el discurso
+con lo que la plataforma hace, y añade el sitio que faltaba para programar sin
+entregar nada.
+
+### Lo que se implementó
+
+**Capacidades por lenguaje.** El catálogo tenía UN booleano, `enabled`, que
+mezclaba «se puede escribir» con «se puede ejecutar». Ahora cada lenguaje declara
+`LanguageCapabilities`, y eso es lo que permite ofrecer Java con su resaltado y su
+`.java` mientras la interfaz dice «Ejecución no disponible» con el motivo —y no
+pinta el botón—. Entraron Java, C, C++, HTML y CSS al catálogo.
+
+**La portada se genera desde el catálogo.** `language-support.tsx` recorre
+`PROGRAMMING_LANGUAGES`: si mañana alguien apaga la ejecución de R, la portada
+deja de anunciarla el mismo día. Una lista escrita a mano habría envejecido sola.
+
+**Landing nuevo.** Hero «Aprende construyendo», el recorrido de una actividad, el
+editor (con una representación hecha con los tokens del sistema, no una captura),
+lenguajes, «de práctica a proyecto», estudiantes, docentes, y publicar como último
+paso en lugar de identidad. Sin cuadrícula de tarjetas: divisores y jerarquía
+tipográfica, con tarjetas sólo donde de verdad hay una cuadrícula.
+
+**Prácticas.** Tabla propia `uinexus-workspaces`, entidad `Workspace` con
+`context`, rutas `/api/workspaces` y `/api/workspaces/:id`, páginas `/practicas` y
+`/practicas/:id`. Privadas por definición, con autoguardado y reutilizando el
+`CodeEditor` existente sin envolverlo en nada.
+
+**Navegación.** `Prácticas` y `Proyectos` entran en la barra —`/dashboard` sólo se
+alcanzaba por el menú de la cuenta—, `Cursos` pasa a `Materias`, y la acción
+principal para quien no ha entrado deja de ser «Publicar» para ser «Crear cuenta».
+
+**Textos.** README, `SITE` (title y Open Graph de todo el sitio) y `/about`.
+
+### Terminado
+
+- [x] R1 · `LanguageCapabilities`: editar y ejecutar dejan de ser un booleano
+- [x] R2 · Java, C, C++, HTML y CSS editables con resaltado y extensión propia
+- [x] R3 · «Ejecución no disponible» con motivo, y sin botón fantasma
+- [x] R4 · `LEGACY_CODE_LANGUAGE`: el default nuevo no reinterpreta lo guardado
+- [x] R5 · Landing reposicionado, con la tabla de lenguajes generada del catálogo
+- [x] R6 · README, `SITE`, `/about` y navegación
+- [x] R7 · Modelo `Workspace` con `files` opcional, compatible hacia adelante
+- [x] R8 · Tabla, índice `byOwner`, CFN y script de tablas
+- [x] R9 · API de prácticas con privacidad comprobada en tres capas
+- [x] R10 · `/practicas` y `/practicas/:id` con autoguardado
+- [x] R11 · 37 pruebas nuevas (21 unitarias + 16 de integración)
+- [x] V.1 · typecheck · lint · 575 unitarias · 114 de integración · build
+
+### Pendiente, y por qué
+
+- [ ] **`RemoteRunner`.** Es la pieza que desbloquea Java, C **y** los proyectos
+      con frameworks a la vez. El contrato ya existe y la UI ya no conoce a su
+      proveedor. Ver docs/ARCHITECTURE.md §14 para la evaluación de
+      WebContainers y Sandpack, y por qué ninguna encaja hoy.
+- [ ] **Multi-archivo.** El modelo lo admite; el editor no lo escribe. Falta
+      árbol de archivos, archivo de entrada y resolución de `import` entre ellos.
+- [ ] **Convertir una práctica en entrega.** Hoy se copia el código a mano.
+- [ ] **CSP de la plataforma.** Sigue igual que en la iteración anterior.
+- [ ] **Recorridos manuales con cuentas reales.** Necesita Firebase y AWS.
+
+### Trampas de esta iteración
+
+1. **Cambiar `DEFAULT_PROGRAMMING_LANGUAGE` casi rompió la compatibilidad.**
+   `normalizeDeliverable` cae al default cuando el paso no trae lenguaje, así que
+   pasar de `r` a `python` habría reinterpretado en silencio actividades de R ya
+   entregadas. De ahí `LEGACY_CODE_LANGUAGE`, y la separación entre caminos de
+   lectura y de creación.
+2. **Un test viejo protegía algo real.** «Un paso de código NO admite un
+   ejecutable» rechazaba `.js`, que ahora es un lenguaje académico legítimo. Se
+   reescribió para mantener la garantía que importaba —binarios y scripts de
+   shell fuera, todo lo admitido como `text/plain`— en vez de borrarlo.
+3. **`ensure-academic-tables.mjs` se ejecutó sin querer** al usar un `import()`
+   como comprobación de sintaxis, y creó `uinexus-workspaces` en la cuenta de AWS
+   real. Es la tabla que esta función necesita y está vacía (PAY_PER_REQUEST),
+   pero la lección es usar `node --check` para comprobar sintaxis.
+
+## Sprint — NexBook y UINexus Studio (2026-09-10)
+
+**Objetivo.** Dar a UINexus un formato de documento computacional propio: texto,
+código ejecutable y resultados en un documento reproducible que sirva como
+laboratorio personal y como entregable de una actividad. Sin convertir toda
+actividad en un notebook y sin degradar nada de lo anterior.
+
+Documentación completa: [`docs/NEXBOOK.md`](docs/NEXBOOK.md).
+
+### Lo que se implementó
+
+**Modelo.** `NexBook` con `context` (personal / workflow+rol), `visibility`,
+`document { blocks, results }` y `revision`. Un solo tipo, no cuatro: lo que
+cambia entre una plantilla, una copia y un laboratorio es el contexto y el dueño.
+`NEXBOOK_FORMAT_VERSION` viaja en cada documento desde V1.
+
+**Bloques.** `markdown` y `code`, y sólo esos dos declarados. El lenguaje es una
+PROPIEDAD del bloque, así que un documento mezcla Python y R sin tipos nuevos.
+`editableByStudent` permite que una plantilla bloquee sus instrucciones.
+
+**Outputs ≠ bloques.** Viven en `results`, indexados por `blockId`, con `seq`
+para el orden. Una gráfica del alumnado no se convierte en un bloque editable:
+eso haría imposible saber al revisar qué escribió cada persona.
+
+**Kernels.** `NotebookKernel` sobre el MISMO Worker y el MISMO Pyodide que
+`CodeRunner`; lo único que cambia es `mode` en el mensaje. Un kernel por lenguaje
+y perezoso: un documento con Python y R no arranca 59 MB al abrirse.
+
+**Estado entre celdas.** En Python se ejecuta contra `__main__` y el modo aislado
+lo vacía antes y después; en R, que ya persistía, el aislado hace
+`rm(list = ls(all.names = TRUE))`. Simétrico y observable desde el propio
+intérprete.
+
+**Concurrencia.** Primera entidad con revisión: `ConditionExpression` sobre
+`ownerUid` Y `revision`. Un 409 trae el documento que ganó, y el editor deja de
+guardar en vez de fusionar a ciegas.
+
+**Persistencia.** Comparte `uinexus-workspaces` con las prácticas de un archivo,
+discriminado por `kind`. Presupuesto de 300 KB por documento comprobado sobre el
+JSON serializado, que es lo que DynamoDB va a medir.
+
+**Workflow.** Entregable `nexbook` nuevo, `code` intacto. Plantilla docente e
+instancia por estudiante con ids deterministas e instanciación perezosa. La
+entrega es un SNAPSHOT: seguir trabajando después no cambia lo que se califica.
+La docente lee el snapshot en Studio de sólo lectura y puede ejecutar celdas.
+
+### Terminado
+
+- [x] N1 · Modelo `NexBook`, bloques, outputs, contexto, visibilidad, revisión
+- [x] N2 · Límites explícitos en `NEXBOOK_LIMITS`, presupuesto sobre JSON real
+- [x] N3 · CRUD con ownership en tres capas y 404 indistinguible
+- [x] N4 · Concurrencia optimista con 409 que devuelve el documento actual
+- [x] N5 · UINexus Studio: bloques, orden, añadir/eliminar, foco tras insertar
+- [x] N6 · MarkdownBlock con el renderer sanitizado ya existente
+- [x] N7 · CodeBlock sobre Monaco, lenguaje por bloque
+- [x] N8 · `NotebookKernel` con sesión, restart, interrupt y estado por lenguaje
+- [x] N9 · Python conserva estado entre celdas (verificado en navegador)
+- [x] N10 · R con sesión y aislamiento simétrico
+- [x] N11 · Autoguardado con 800 ms y estados que nunca ocultan un error
+- [x] N12 · Laboratorios personales en `/practicas`, lista unificada
+- [x] N13 · Entregable `nexbook` en Workflow, sin tocar `CodeData`
+- [x] N14 · Plantilla docente e instancia perezosa por estudiante
+- [x] N15 · Snapshot de entrega y vista docente de sólo lectura
+- [x] N16 · 50 pruebas nuevas (32 unitarias + 18 de integración)
+- [x] N17 · `docs/NEXBOOK.md`
+- [x] V.1 · typecheck · lint · 616 unitarias · 132 de integración · build
+
+### Pendiente, y por qué
+
+- [ ] **Import/export `.nexbook`.** Formato diseñado y versionado; sin
+      implementar. Sus tests de «no filtra secretos» se escribirán con el
+      exportador: probarlo antes no probaría nada.
+- [ ] **Publicación.** `visibility` admite cuatro estados y sólo `private` está
+      implementado. La interfaz no ofrece los otros tres.
+- [ ] **Outputs ricos** (tabla, imagen, HTML). Entran como valores nuevos de
+      `stream`, sin romper documentos guardados.
+- [ ] **Orden real de stdout/stderr.** `seq` está listo; falta que el motor emita
+      eventos en vez de dos cadenas.
+- [ ] **Historial de reentregas.** El esquema lo admite; la interfaz guarda la
+      última.
+- [ ] **Project Workspace.** Otro `kind`, previsto y no empezado.
+- [ ] **`RemoteRunner`** para Java y C. Sin cambios respecto a la iteración
+      anterior.
+- [ ] **CSP de la plataforma.** Sin cambios.
+- [ ] **Recorridos con cuentas reales.** Necesita Firebase y AWS.
+
+### Trampas de esta iteración
+
+1. **Un Worker en caché me hizo perseguir un bug que no existía.** Tras
+   `npm run runtimes`, el navegador siguió sirviendo el bundle anterior del
+   Worker, así que «reiniciar el kernel» parecía no borrar el estado. Perdí un
+   buen rato rediseñando el aislamiento de Python por una evidencia falsa. El
+   rediseño se quedó porque es mejor —vaciar `__main__` es observable desde
+   Python, y queda simétrico con R—, pero la conclusión de la que partí era
+   equivocada y está corregida en el comentario del código.
+2. **Mi propia verificación en navegador estaba mal.** Esperaba «a que la salida
+   exista» en vez de «a que cambie», así que leía el resultado anterior y
+   concluía que el reset fallaba. Con el método correcto pasa a la primera.
+3. **`del` sobre la variable de un bucle falla si el bucle no se ejecutó.** La
+   primera versión de la limpieza de `__main__` usaba `for` + `del`, que revienta
+   con un espacio ya vacío. Una comprensión no deja variable suelta y es
+   idempotente.
+4. **Un test viejo protegía algo real, otra vez.** El que cuenta las claves del
+   mensaje del Worker falló al añadir `mode`. Se actualizó manteniendo la
+   garantía —ninguna credencial— y se añadió uno nuevo: que el valor por defecto
+   sea `isolated`, porque `session` por defecto haría que un paso de actividad
+   viera variables de un NexBook abierto en otra pestaña.
+
+### Estado del repositorio al cerrar
+
+**HEAD sigue en `8aef472`.** Las tres últimas iteraciones —Monaco/R-Python,
+reposicionamiento y NexBook— viven en el working tree sin commitear, por
+instrucción expresa. Hay un punto recuperable etiquetado:
+
+```bash
+git tag -l pre-nexbook-checkpoint     # estado previo a esta iteración
+git checkout pre-nexbook-checkpoint -- .
+```
+
+Conviene commitear antes de la siguiente fase.
+
 ### Antes de cerrar cualquier sesión
 
 ```bash
@@ -1035,3 +1343,135 @@ npm run typecheck && npm run lint && npm run test && npm run test:integration &&
 Y actualiza este archivo. No marques como terminado nada que sólo esté
 diseñado: la frontera entre «Terminado» y «Pendiente» es lo único que hace útil
 este documento.
+
+## Sprint — NexBook modular (2026-09-10)
+
+**Objetivo.** Llevar NexBook de «Markdown + código» a un documento computacional
+modular: que produzca tablas y gráficas, que contenga imágenes y hojas de
+cálculo, que se publique y que se intercambie. Sin degradar nada de lo anterior.
+
+Documentación completa: [`docs/NEXBOOK.md`](docs/NEXBOOK.md).
+
+### Lo que se implementó
+
+**Salidas ricas.** `table`, `image` y `json` entraron como valores NUEVOS de
+`stream`, que es exactamente lo que V1 dejó preparado. La consecuencia es que
+`NEXBOOK_FORMAT_VERSION` sigue en 1 y no hubo migración: un documento de la
+iteración 8 valida sin tocar un byte.
+
+**El orden real, que se daba por imposible.** La iteración anterior lo documentó
+como pendiente de «rediseñar los runtimes». No hacía falta: Pyodide ya llamaba a
+`stdout` según el programa escribía y `captureR` ya devolvía un array ordenado.
+La información estaba ahí y se tiraba al separarla en dos cadenas. Un acumulador
+que respeta la secuencia lo resolvió, y las dos cadenas planas siguen saliendo
+del mismo registro.
+
+**Python con pandas y matplotlib, sin red en ejecución.** Las ruedas se publican
+en `/runtime/pyodide/` —propio origen— verificadas contra el `sha256` del
+lockfile instalado. La lista blanca vive en el código; `micropip` sigue sin
+existir. Las tablas se detectan POR PATO, así que una lista de diccionarios ya
+produce una tabla sin instalar nada.
+
+**R con gráficas y data frames.** webR trae su dispositivo de canvas; estaba
+apagado porque hasta ahora la salida era texto. El `ImageBitmap` se convierte a
+PNG con `OffscreenCanvas`, que es la forma de hacerlo dentro de un Worker.
+
+**Assets.** Los binarios salen del documento y van a S3 con clave por PERSONA, no
+por documento: es lo que hace que publicar, entregar o copiar un documento con
+diez imágenes no mueva un byte. Quién puede leer un asset lo decide el DOCUMENTO
+que lo referencia, no el asset.
+
+**Hoja de cálculo propia.** Univer se evaluó con números —9.9 MB sólo el preset
+de hojas, 22 presets en el meta-paquete, una capa HTTP en el árbol— y se descartó
+por el render en canvas: un canvas no tiene celdas que un lector de pantalla
+pueda anunciar. Lo que hay es una `<table>` real y un intérprete de fórmulas que
+NO es `eval`.
+
+**Publicación.** Publicar CONGELA: crea un registro aparte con una copia. El
+autor sigue editando y lo publicado no se mueve hasta que lo diga. Una entrega no
+se publica —el servidor lo rechaza—; el camino es «Copiar a mis prácticas».
+
+**`.nexbook`.** ZIP con manifiesto, documento y assets, con las referencias
+reescritas a rutas del propio archivo. Lo que sale pasa por una lista BLANCA que
+reconstruye el documento campo a campo.
+
+### Terminado
+
+- [x] M1 · Salidas ricas tipadas, sin subir la versión del formato
+- [x] M2 · Orden REAL de stdout y stderr
+- [x] M3 · Limpiar salida por celda y global
+- [x] M4 · Python: tablas por pato, sin exigir pandas
+- [x] M5 · Python: pandas y matplotlib desde el propio origen
+- [x] M6 · Ruedas verificadas contra el sha256 del lockfile
+- [x] M7 · R: `plot()` capturado como PNG
+- [x] M8 · R: `data.frame` como tabla estructurada
+- [x] M9 · Assets en S3, clave por persona, sin tabla nueva
+- [x] M10 · `ImageBlock` con alt, pie, arrastrar, pegar y reemplazar
+- [x] M11 · `SpreadsheetBlock` con motor de fórmulas propio
+- [x] M12 · `SpreadsheetBridge` desacoplado de los kernels
+- [x] M13 · Publicar como snapshot, con actualización explícita
+- [x] M14 · Vista pública sin runtimes
+- [x] M15 · Exportar `.nexbook`
+- [x] M16 · Importar `.nexbook` con defensas
+- [x] M17 · Lista blanca de exportación, con pruebas de secretos
+- [x] M18 · «Copiar a mis prácticas»
+- [x] M19 · Barra de Studio y menú de bloques
+- [x] M20 · Aviso de tamaño al 80 %
+- [x] M21 · 112 pruebas nuevas (82 unitarias + 30 de integración)
+- [x] V.1 · typecheck · lint · 698 unitarias · 162 de integración · build
+
+### Pendiente, y por qué
+
+- [ ] **`AIBlock`.** Diseñado y documentado; no declarado. Falta el modelo de
+      credenciales, y una credencial dentro del documento viajaría en cada
+      exportación, publicación y entrega.
+- [ ] **`ChartBlock`.** Una gráfica se guarda como imagen, no como datos.
+- [ ] **Puente hoja ↔ Python/R.** La abstracción existe y está probada; conectarla
+      a los kernels no se hizo.
+- [ ] **Playwright.** Habría hecho falta un entorno de autenticación controlado
+      que esta suite no tiene.
+- [ ] **Recolección de assets huérfanos.** Consecuencia asumida de compartir
+      assets entre copias.
+- [ ] **Historial de publicaciones.** Actualizar sobrescribe.
+- [ ] **`.ipynb`, `.qmd`, PDF.** NexBook es el modelo canónico; serán
+      importadores y exportadores alrededor.
+- [ ] **Project Workspace**, **`RemoteRunner`** y **CSP**: sin cambios.
+
+### Trampas de esta iteración
+
+1. **Mi propio endurecimiento del Worker rompió los paquetes de Python.** Tras
+   arrancar el runtime, `fetch` quedaba muerto; `loadPackage` lo necesita DURANTE
+   una ejecución, porque qué rueda hace falta depende del código de la celda. Se
+   vio en el navegador y sólo ahí: las pruebas del motor no pasan por el
+   endurecimiento. La regla pasó de «no puede pedir nada» a «sólo puede pedir sus
+   propios assets», con la URL resuelta contra el origen antes de comparar.
+2. **Una prueba encontró un fallo real en el motor de fórmulas.** Las celdas con
+   literales se calculaban pero no se guardaban en la memoria compartida, así que
+   quien leía la hoja entera veía una columna de datos escritos a mano llena de
+   `null` mientras las fórmulas de al lado funcionaban.
+3. **El build falló por una caché de `.next` corrupta, no por el código.** El
+   error —`WasmHash._updateWithBuffer`, leyendo `length` de `undefined`— no se
+   parece en nada a su causa. Borrar `.next` lo resolvió; conviene descartarlo
+   antes de buscar en el propio cambio.
+4. **Volví a caer en el Worker cacheado**, que ya costó tiempo la iteración
+   anterior. Ahora la comprobación que funciona está anotada: pedir el bundle con
+   un parámetro que rompa la caché y buscar dentro el cambio esperado ANTES de
+   concluir nada.
+5. **Dos expectativas mías estaban mal, no el código.** Un rechazo de subida daba
+   422 —el esquema, antes de tocar la base— y yo esperaba 400; y el saneador de
+   nombres de archivo conservaba la letra al quitar el acento, que es mejor que
+   lo que yo había escrito en la prueba.
+
+### Estado del repositorio al cerrar
+
+**HEAD sigue en `8aef472`.** Las cuatro últimas iteraciones —Monaco/R-Python,
+reposicionamiento, NexBook y NexBook modular— viven en el working tree sin
+commitear, por instrucción expresa. El punto recuperable sigue etiquetado:
+
+```bash
+git tag -l pre-nexbook-checkpoint
+git checkout pre-nexbook-checkpoint -- .
+```
+
+Commitear antes de la siguiente fase dejó de ser una recomendación: son cuatro
+iteraciones de trabajo sostenidas por un solo tag.

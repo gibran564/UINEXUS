@@ -6,7 +6,10 @@ import {
   GET as downloadAcademicFileRoute,
   POST as uploadAcademicFileRoute,
 } from '@/app/api/assignments/[assignmentId]/files/route';
-import { PUT as saveSubmissionRoute } from '@/app/api/assignments/[assignmentId]/submission/route';
+import {
+  GET as readOwnSubmissionRoute,
+  PUT as saveSubmissionRoute,
+} from '@/app/api/assignments/[assignmentId]/submission/route';
 import { submissionIdFor } from '@/lib/data/academic';
 import type { Assignment, CodeData, MediaData } from '@/lib/types';
 import { ACTORS, jsonRequestAs, requestAs } from './helpers/auth';
@@ -401,5 +404,148 @@ describe('quién puede leer el archivo entregado', () => {
     const body = await response.json();
     const evidence = body.submissions[0].stepEvidence.codigo.data as CodeData;
     expect(evidence.code).toBe('x <- 1');
+  });
+});
+
+/**
+ * El autoguardado del editor, visto desde el servidor.
+ *
+ * El editor no manda la entrega entera cada vez que alguien escribe: manda EL
+ * PASO que cambió. Lo que hace que eso sea seguro es que la ruta fusiona por
+ * paso sobre lo ya guardado. Si en vez de fusionar reemplazara, escribir en el
+ * paso 2 borraría el paso 1 —y la pérdida sería silenciosa, que es la peor
+ * clase—.
+ */
+describe('guardar un solo paso no borra los demás', () => {
+  async function createTwoCodeSteps(): Promise<Assignment> {
+    const response = await createAssignmentRoute(
+      jsonRequestAs(
+        ACTORS.teacherA,
+        'http://localhost/api/courses/course-a/assignments',
+        'POST',
+        {
+          title: 'Dos programas',
+          type: 'workflow',
+          status: 'published',
+          workflow: [
+            {
+              id: 'modelo',
+              title: 'Modelo en Python',
+              actionType: 'code',
+              deliverables: [
+                { type: 'code', required: true, language: 'python', codeMode: 'editor' },
+              ],
+            },
+            {
+              id: 'validacion',
+              title: 'Validación en Python',
+              actionType: 'code',
+              required: false,
+              deliverables: [
+                { type: 'code', required: false, language: 'python', codeMode: 'editor' },
+              ],
+              dependsOnStepIds: [],
+            },
+          ],
+        }
+      ),
+      { params: Promise.resolve({ courseId: 'course-a' }) }
+    );
+    expect(response.status).toBe(201);
+    return (await response.json()).assignment as Assignment;
+  }
+
+  const autosave = (assignmentId: string, stepId: string, code: string) =>
+    saveSubmissionRoute(
+      jsonRequestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignmentId}/submission`,
+        'PUT',
+        { intent: 'draft', steps: [{ stepId, data: { code } }] }
+      ),
+      { params: Promise.resolve({ assignmentId }) }
+    );
+
+  it('dos pasos de código conservan cada uno su programa', async () => {
+    const assignment = await createTwoCodeSteps();
+
+    expect((await autosave(assignment.id, 'modelo', 'print("modelo")')).status).toBe(200);
+    expect((await autosave(assignment.id, 'validacion', 'print("validacion")')).status).toBe(200);
+    // Y volver al primero tampoco pisa el segundo.
+    expect((await autosave(assignment.id, 'modelo', 'print("modelo v2")')).status).toBe(200);
+
+    const persisted = await getPersistedSubmission(
+      submissionIdFor(assignment.id, ACTORS.studentA.uid)
+    );
+
+    expect((persisted?.stepEvidence.modelo?.data as CodeData).code).toBe('print("modelo v2")');
+    expect((persisted?.stepEvidence.validacion?.data as CodeData).code).toBe('print("validacion")');
+  });
+
+  it('guardar el código no borra el archivo de otro paso', async () => {
+    const assignment = await createCodeAssignment();
+
+    const upload = await presign(assignment.id, ACTORS.studentA, {
+      stepId: 'reporte',
+      contentType: 'application/pdf',
+      sizeBytes: 2048,
+      fileName: 'reporte.pdf',
+    });
+    const { storageKey } = await upload.json();
+
+    await saveSubmissionRoute(
+      jsonRequestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignment.id}/submission`,
+        'PUT',
+        {
+          intent: 'draft',
+          steps: [
+            { stepId: 'reporte', data: { storageKey, fileName: 'reporte.pdf', kind: 'file' } },
+          ],
+        }
+      ),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+
+    await autosave(assignment.id, 'codigo', 'x <- 1');
+
+    const persisted = await getPersistedSubmission(
+      submissionIdFor(assignment.id, ACTORS.studentA.uid)
+    );
+
+    expect((persisted?.stepEvidence.reporte?.data as MediaData).storageKey).toBe(storageKey);
+    expect((persisted?.stepEvidence.codigo?.data as CodeData).code).toBe('x <- 1');
+  });
+
+  it('lo autoguardado se recupera tal cual al reabrir el formulario', async () => {
+    // Es la promesa que ve el alumnado: recargar la página no pierde nada. La
+    // sangría entra en el trato; sin ella un programa de Python vuelve roto.
+    const assignment = await createTwoCodeSteps();
+    const source = 'def resolver(x):\n    if x > 0:\n        return x\n    return 0\n';
+
+    await autosave(assignment.id, 'modelo', source);
+
+    const reopened = await readOwnSubmissionRoute(
+      requestAs(
+        ACTORS.studentA,
+        `http://localhost/api/assignments/${assignment.id}/submission`
+      ),
+      { params: Promise.resolve({ assignmentId: assignment.id }) }
+    );
+
+    expect(reopened.status).toBe(200);
+    const body = await reopened.json();
+    expect((body.submission.stepEvidence.modelo.data as CodeData).code).toBe(source);
+  });
+
+  it('un autoguardado deja la entrega en borrador, nunca la entrega sola', async () => {
+    const assignment = await createTwoCodeSteps();
+    await autosave(assignment.id, 'modelo', 'print(1)');
+
+    const persisted = await getPersistedSubmission(
+      submissionIdFor(assignment.id, ACTORS.studentA.uid)
+    );
+    expect(persisted?.status).toBe('draft');
   });
 });

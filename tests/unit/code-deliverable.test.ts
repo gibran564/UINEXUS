@@ -4,8 +4,12 @@ import {
   DEFAULT_PROGRAMMING_LANGUAGE,
   DELIVERABLE_LABEL,
   ENABLED_PROGRAMMING_LANGUAGES,
+  EXECUTABLE_PROGRAMMING_LANGUAGES,
   FILE_CLASS_BY_DELIVERABLE,
+  LEGACY_CODE_LANGUAGE,
   PROGRAMMING_LANGUAGES,
+  languageCapabilities,
+  languageExecutionNote,
   programmingLanguageLabel,
 } from '../../src/lib/constants';
 import { resolveAcademicUpload } from '../../src/lib/academic-files';
@@ -37,16 +41,56 @@ const codeStep = (language = 'r') =>
   });
 
 describe('el catálogo de lenguajes', () => {
-  it('R y Python están habilitados', () => {
-    expect(ENABLED_PROGRAMMING_LANGUAGES.map((option) => option.value)).toEqual(['r', 'python']);
-    expect(DEFAULT_PROGRAMMING_LANGUAGE).toBe('r');
+  it('se puede escribir en todos los del catálogo', () => {
+    // Editar y ejecutar son cosas distintas: Java se escribe aquí aunque no se
+    // compile aquí. Ver `LanguageCapabilities`.
+    expect(ENABLED_PROGRAMMING_LANGUAGES.map((option) => option.value)).toEqual(
+      PROGRAMMING_LANGUAGES.map((option) => option.value)
+    );
   });
 
-  it('los demás están NOMBRADOS para poder encenderlos sin rehacer entregas', () => {
-    // El modelo guarda un lenguaje, no un booleano `isR`: encender Python es
-    // cambiar un `enabled`, no migrar las entregas existentes.
+  it('sólo R y Python se ejecutan, y sólo en el navegador', () => {
+    expect(EXECUTABLE_PROGRAMMING_LANGUAGES.map((option) => option.value)).toEqual([
+      'python',
+      'r',
+    ]);
+  });
+
+  it('un paso nuevo nace en Python, pero uno guardado sin lenguaje sigue siendo R', () => {
+    // Cambiar el valor por defecto NO puede reinterpretar lo ya guardado: esos
+    // pasos se crearon cuando R era el único lenguaje ofrecido.
+    expect(DEFAULT_PROGRAMMING_LANGUAGE).toBe('python');
+    expect(LEGACY_CODE_LANGUAGE).toBe('r');
+  });
+
+  it('el catálogo cubre los lenguajes que pide el plan de estudios', () => {
     const values = PROGRAMMING_LANGUAGES.map((option) => option.value);
-    expect(values).toEqual(['r', 'python', 'javascript', 'java', 'cpp', 'sql']);
+    for (const language of ['python', 'r', 'java', 'c', 'javascript', 'html', 'css']) {
+      expect(values, language).toContain(language);
+    }
+  });
+
+  it('Java y C se editan pero declaran que necesitan un sandbox remoto', () => {
+    for (const language of ['java', 'c', 'cpp']) {
+      expect(languageCapabilities(language), language).toMatchObject({
+        editor: true,
+        execution: false,
+        browserExecution: false,
+        remoteExecution: true,
+      });
+      // Y dicen POR QUÉ: un «no disponible» mudo parece una avería.
+      expect(languageExecutionNote(language), language).toBeTruthy();
+    }
+  });
+
+  it('un lenguaje desconocido se lee como editable y NO ejecutable', () => {
+    // Lo prudente ante una tarea guardada por una versión futura: escribir no
+    // rompe nada, ejecutar sí.
+    expect(languageCapabilities('rust')).toMatchObject({
+      editor: true,
+      execution: false,
+      browserExecution: false,
+    });
   });
 
   it('cada lenguaje tiene etiqueta legible', () => {
@@ -249,9 +293,23 @@ describe('un archivo .R se procesa según la política de archivos', () => {
     expect(resolveAcademicUpload('code', { fileName: 'modelo.r' })?.contentType).toBe('text/plain');
   });
 
-  it('un paso de código NO admite un ejecutable', () => {
-    for (const fileName of ['modelo.exe', 'modelo.sh', 'modelo.bat', 'modelo.js']) {
-      expect(resolveAcademicUpload('code', { fileName })).toBeNull();
+  it('un paso de código NO admite un binario ni un script de shell', () => {
+    // `.js` salió de esta lista al entrar el ecosistema web en el catálogo: es
+    // un fuente académico como `.py`. Lo que sigue fuera es lo que el sistema
+    // operativo sabría arrancar por sí solo.
+    for (const fileName of ['modelo.exe', 'modelo.sh', 'modelo.bat', 'modelo.dll', 'modelo.jar']) {
+      expect(resolveAcademicUpload('code', { fileName }), fileName).toBeNull();
+    }
+  });
+
+  it('todo fuente admitido se guarda como texto plano, sea cual sea', () => {
+    // Es la garantía que hace irrelevante que la lista crezca: un `.html` o un
+    // `.js` entregados son texto que se muestra, nunca algo que se sirva para
+    // ejecutarse. Publicar un proyecto es otro prefijo y otro dominio.
+    for (const fileName of [
+      'a.py', 'a.r', 'a.java', 'a.c', 'a.cpp', 'a.js', 'a.html', 'a.css', 'a.sql',
+    ]) {
+      expect(resolveAcademicUpload('code', { fileName })?.contentType, fileName).toBe('text/plain');
     }
   });
 

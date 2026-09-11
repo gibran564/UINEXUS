@@ -2,7 +2,11 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { DELIVERABLE_LABEL, programmingLanguageLabel } from '@/lib/constants';
+import {
+  LEGACY_CODE_LANGUAGE,
+  DELIVERABLE_LABEL,
+  programmingLanguageLabel,
+} from '@/lib/constants';
 import { aiWorklogToMarkdown, normalizeAIResult } from '@/lib/ai-worklog';
 import { academicFileUrl, useApi } from '@/lib/aula-client';
 import type {
@@ -14,13 +18,17 @@ import type {
   FreeformData,
   MediaData,
   ResearchData,
+  NexBookSubmissionData,
   ResourceSelectionData,
+  StepDeliverable,
   StepEvidence,
   WebProjectData,
   WorkflowGroupStep,
   WorkflowGroupView,
 } from '@/lib/types';
 import { MemberChip, Notice } from './aula-ui';
+import { CodeEditor } from './code-editor';
+import { NexBookStudio } from '@/components/studio/nexbook-studio';
 import { LinkCard } from './link-card';
 import { CopyButton } from './copy-button';
 import { MarkdownContent } from './markdown-content';
@@ -363,8 +371,18 @@ function EvidenceReader({
     return <MediaEvidence assignmentId={assignmentId} data={evidence.data as MediaData} />;
   }
 
+  if (type === 'nexbook') {
+    return <NexBookEvidence data={evidence.data as NexBookSubmissionData} />;
+  }
+
   if (type === 'code') {
-    return <CodeEvidence assignmentId={assignmentId} data={evidence.data as CodeData} />;
+    return (
+      <CodeEvidence
+        assignmentId={assignmentId}
+        data={evidence.data as CodeData}
+        deliverable={step.deliverables[0]}
+      />
+    );
   }
 
   if (type === 'resource_reference') {
@@ -394,27 +412,91 @@ function EvidenceReader({
 }
 
 /**
- * El código entregado, legible SIN descargar nada.
+ * El NexBook entregado, tal y como se entregó.
+ *
+ * Se pinta el SNAPSHOT que viajó en la evidencia, no el documento vivo. Es la
+ * diferencia entre calificar lo que alguien entregó y calificar lo que tenga
+ * ahora mismo: el segundo cambia mientras se corrige.
+ *
+ * En sólo lectura, y eso no es una promesa sino una imposibilidad: `editable` a
+ * `false` deja Studio sin botones de añadir, mover ni borrar, y el editor de
+ * cada bloque sin `onChange`. No hay ninguna ruta desde aquí hacia una
+ * escritura. Ejecutar una celda sí se puede —hace falta para comprobar la
+ * salida— y no toca nada: el resultado se pinta y se olvida.
+ */
+function NexBookEvidence({ data }: { data: NexBookSubmissionData }) {
+  const blocks = data.snapshot?.blocks ?? [];
+
+  if (blocks.length === 0) {
+    return <p className="text-sm text-subtle">(entregó un NexBook vacío)</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="meta">
+        NexBook · {blocks.length} {blocks.length === 1 ? 'bloque' : 'bloques'}
+        {data.revision ? ` · versión ${data.revision}` : ''}
+      </p>
+      <NexBookStudio
+        document={data.snapshot}
+        // El snapshot es inmutable: los cambios no se propagan a ninguna parte.
+        onChange={() => undefined}
+        editable={false}
+      />
+    </div>
+  );
+}
+
+/**
+ * El código entregado, legible y EJECUTABLE sin descargar nada.
  *
  * Es lo que hace útil la revisión: leer veinte entregas de R descargando veinte
- * archivos no lo hace nadie. El fuente se pinta como texto preformateado —nunca
- * se interpreta ni se ejecuta— y el archivo adjunto, si lo hay, sigue estando a
- * un clic para quien quiera ejecutarlo en su equipo.
+ * archivos no lo hace nadie. Se muestra en el mismo editor que usó el alumnado
+ * —resaltado, números de línea, búsqueda— en modo de sólo lectura, y se puede
+ * ejecutar para comprobar qué imprime.
+ *
+ * Ejecutar aquí NO TOCA LA ENTREGA, y no es una promesa: no hay por dónde. El
+ * editor va sin `onChange` y sin `beforeExecute`, así que no existe ninguna
+ * ruta desde este componente hacia una escritura. La salida se pinta y se
+ * olvida.
+ *
+ * El lenguaje sale del PASO. Un registro antiguo puede traerlo sólo en la
+ * evidencia, y por eso se lee del paso primero y del cuerpo después.
  */
-function CodeEvidence({ assignmentId, data }: { assignmentId: string; data: CodeData }) {
+function CodeEvidence({
+  assignmentId,
+  data,
+  deliverable,
+}: {
+  assignmentId: string;
+  data: CodeData;
+  deliverable?: StepDeliverable;
+}) {
+  const language = deliverable?.language ?? data.language ?? LEGACY_CODE_LANGUAGE;
+
   return (
     <div className="space-y-3 text-sm text-muted">
       <div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="meta">Código · {programmingLanguageLabel(data.language)}</p>
+          <p className="meta">Código · {programmingLanguageLabel(language)}</p>
           {data.code && <CopyButton value={data.code} label="Copiar código" variant="ghost" />}
         </div>
         {data.code ? (
-          <pre className="mt-2 max-h-96 overflow-auto rounded-sm border border-line bg-sunken p-3 font-mono text-sm whitespace-pre">
-            {data.code}
-          </pre>
+          <div className="mt-2">
+            <CodeEditor
+              language={language}
+              value={data.code}
+              readOnly
+              // La revisión siempre puede ejecutar. El interruptor del paso
+              // decide qué ve el ALUMNADO; quien corrige necesita comprobar la
+              // salida en cualquier caso.
+              executionEnabled
+              height={320}
+              ariaLabel={`Código entregado en ${programmingLanguageLabel(language)}`}
+            />
+          </div>
         ) : (
-          <p className="mt-1 text-subtle">(no pegó código)</p>
+          <p className="mt-1 text-subtle">(no escribió código)</p>
         )}
       </div>
 

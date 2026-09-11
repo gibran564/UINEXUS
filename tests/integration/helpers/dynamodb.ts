@@ -209,6 +209,26 @@ const tableDefinitions: CreateTableCommandInput[] = [
       },
     ],
   },
+  {
+    TableName: TABLES.workspaces,
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'id', AttributeType: 'S' },
+      { AttributeName: 'ownerUid', AttributeType: 'S' },
+      { AttributeName: 'updatedAt', AttributeType: 'S' },
+    ],
+    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: INDEXES.workspacesByOwner,
+        KeySchema: [
+          { AttributeName: 'ownerUid', KeyType: 'HASH' },
+          { AttributeName: 'updatedAt', KeyType: 'RANGE' },
+        ],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+  },
 ];
 
 const tableKeys = new Map<string, string>([
@@ -220,6 +240,7 @@ const tableKeys = new Map<string, string>([
   [TABLES.resources, 'id'],
   [TABLES.projects, 'id'],
   [TABLES.submissions, 'id'],
+  [TABLES.workspaces, 'id'],
 ]);
 
 async function batchWrite(

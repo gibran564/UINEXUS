@@ -25,7 +25,7 @@ import { upsertSubmission } from '@/lib/server/academic-writes';
 import { assertResourcesBelongTo } from '@/lib/server/resources';
 import { LEGACY_STEP_ID } from '@/lib/types';
 import { isAcademicFileKeyFor } from '@/lib/aws/s3';
-import { DEFAULT_PROGRAMMING_LANGUAGE } from '@/lib/constants';
+import { LEGACY_CODE_LANGUAGE } from '@/lib/constants';
 import type {
   AIWorklogData,
   AssignmentRecord,
@@ -191,7 +191,7 @@ async function saveSteppedSubmission(
     if (deliverable.type === 'code') {
       parsedData = {
         ...(parsedData as CodeData),
-        language: deliverable.language ?? DEFAULT_PROGRAMMING_LANGUAGE,
+        language: deliverable.language ?? LEGACY_CODE_LANGUAGE,
       };
     }
     // Un paso de código también puede llevar archivo adjunto, y su clave se

@@ -22,13 +22,28 @@ import { profilePath } from '@/lib/urls';
  */
 const PUBLIC_LINKS = [
   { href: '/explore', label: 'Explorar' },
-  { href: '/courses', label: 'Cursos' },
+  { href: '/courses', label: 'Materias' },
   { href: '/about', label: 'Acerca de' },
 ];
 
+/**
+ * `Aula` se queda como se llama.
+ *
+ * El nombre está por todo el producto —la ruta, los componentes, «Tu aula» del
+ * menú— y en la cabeza de quien ya lo usa. Renombrarlo a «Clases» en un sitio y
+ * dejarlo en los otros nueve sería peor que cualquiera de las dos opciones
+ * consistentes.
+ *
+ * Lo que sí faltaba era `Proyectos`: hasta ahora sólo se llegaba a `/dashboard`
+ * por el menú de la cuenta, escondiendo justo la mitad del producto que la
+ * portada nueva promete. Ahora que UINexus no es sólo publicar, el área donde
+ * vive lo construido tiene que estar en la barra.
+ */
 const PRIVATE_LINKS = [
   { href: '/', label: 'Inicio' },
   { href: '/aula', label: 'Aula' },
+  { href: '/practicas', label: 'Prácticas' },
+  { href: '/dashboard', label: 'Proyectos' },
   { href: '/explore', label: 'Explorar' },
 ];
 
@@ -145,16 +160,19 @@ export function Navbar() {
             />
           )}
 
+          {/*
+            Para quien todavía no ha entrado, la acción principal es ENTRAR.
+            Antes era «Publicar», y eso decía —en el sitio más visible de la
+            pantalla— que UINexus es un publicador. Publicar sigue estando a un
+            clic una vez dentro, que es además el único momento en que se puede.
+          */}
           {status === 'anonymous' && (
             <>
               <Link href="/login" className="btn btn-ghost btn-sm hidden sm:inline-flex">
                 Iniciar sesión
               </Link>
-              <Link href="/register" className="btn btn-secondary btn-sm hidden md:inline-flex">
-                Registrarse
-              </Link>
-              <Link href="/publish" className="btn btn-primary btn-sm">
-                Publicar
+              <Link href="/register" className="btn btn-primary btn-sm">
+                Crear cuenta
               </Link>
             </>
           )}

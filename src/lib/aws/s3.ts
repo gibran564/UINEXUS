@@ -5,6 +5,7 @@ import {
   DeleteObjectsCommand,
   GetObjectCommand,
   ListObjectsV2Command,
+  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -17,7 +18,7 @@ import {
   awsClientConfig,
   isAwsConfigured,
 } from './config';
-import { ACADEMIC_FILE_LIMITS, LIMITS } from '../constants';
+import { ACADEMIC_FILE_LIMITS, LIMITS, NEXBOOK_LIMITS } from '../constants';
 import { allowedExtensionsFor, resolveAcademicUpload } from '../academic-files';
 import { contentTypeFor, isAllowedExtension, sanitizeRelativePath } from '../files';
 import type { AcademicFileClass } from '../types';
@@ -423,6 +424,204 @@ export async function deleteAcademicObject(key: string): Promise<void> {
   if (!s3) return;
   if (!key.startsWith('academic/')) {
     throw new UploadRejected('Esa ruta no es un archivo académico.');
+  }
+  await s3.send(new DeleteObjectCommand({ Bucket: PROJECTS_BUCKET, Key: key }));
+}
+
+// ---------------------------------------------------------------------------
+// Assets de NexBook (iteración 9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dónde viven las imágenes de un NexBook.
+ *
+ * ```
+ * nexbook/<ownerUid>/<assetId>.<ext>
+ * ```
+ *
+ * Bucket PRIVADO y prefijo propio, no `academic/`. La separación no es
+ * cosmética: `presignAcademicDownload` firma la lectura de cualquier cosa bajo
+ * `academic/`, y un asset de NexBook no debe poder leerse por esa puerta —su
+ * autorización es otra: la da el documento que lo referencia, no la materia—.
+ *
+ * ## Por qué la clave NO lleva el id del NexBook
+ *
+ * Porque un asset sobrevive a copias. El documento se duplica al menos en tres
+ * sitios —publicar, entregar, «crear copia»— y si la clave llevara el id del
+ * documento, cada copia apuntaría a un objeto que no existe bajo su propio
+ * prefijo. Habría que duplicar los bytes en cada copia, y entonces publicar un
+ * documento con diez imágenes sería copiar cuarenta megas en S3.
+ *
+ * Colgar de la PERSONA conserva lo que de verdad importa: la clave la construye
+ * el servidor con el uid del token, así que la propiedad sigue siendo
+ * estructural y nadie puede escribir en el espacio de otro. Qué se puede leer lo
+ * decide aparte el documento que referencia el asset.
+ */
+export function nexBookAssetPrefix(ownerUid: string): string {
+  return `nexbook/${safeAcademicSegment(ownerUid)}/`;
+}
+
+export function nexBookAssetKey(params: {
+  ownerUid: string;
+  assetId: string;
+  extension: string;
+}): string {
+  return `${nexBookAssetPrefix(params.ownerUid)}${safeAcademicSegment(
+    params.assetId
+  )}.${safeAcademicSegment(params.extension)}`;
+}
+
+/** Los tipos de imagen que se admiten, y su extensión canónica. */
+const NEXBOOK_IMAGE_TYPES: Readonly<Record<string, string>> = Object.freeze({
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+});
+
+/**
+ * SVG NO está en la lista, y es una decisión de seguridad.
+ *
+ * Un SVG es un documento XML que puede llevar `<script>`, `<foreignObject>` y
+ * manejadores `on*`. Servirlo desde el mismo origen y pintarlo sería ejecutar
+ * código de quien subió el archivo en la sesión de quien lo mira —un NexBook
+ * publicado lo abre cualquiera—. Aceptarlo exige un saneador de SVG que este
+ * proyecto no tiene, así que no se acepta. Ver docs/SECURITY.md.
+ */
+export function nexBookImageExtension(contentType: string): string | null {
+  return NEXBOOK_IMAGE_TYPES[contentType] ?? null;
+}
+
+/**
+ * Permiso de subida de una imagen de NexBook.
+ *
+ * Mismo mecanismo que una entrega: POST firmado, con el tamaño aplicado por S3
+ * mediante `content-length-range` y el `Content-Type` fijado por el servidor. El
+ * navegador no elige ni la ruta, ni el tipo, ni cuánto puede pesar.
+ */
+export async function presignNexBookAssetUpload(params: {
+  ownerUid: string;
+  assetId: string;
+  contentType: string;
+  sizeBytes: number;
+}): Promise<{ post: PresignedPost; key: string; contentType: string }> {
+  const s3 = getS3();
+  if (!s3) throw new UploadRejected('El almacenamiento no está disponible.');
+
+  const extension = nexBookImageExtension(params.contentType);
+  if (!extension) {
+    throw new UploadRejected('La imagen debe ser PNG, JPEG o WebP.');
+  }
+  if (params.sizeBytes > NEXBOOK_LIMITS.maxAssetBytes) {
+    throw new UploadRejected(
+      `La imagen supera el límite de ${Math.round(NEXBOOK_LIMITS.maxAssetBytes / (1024 * 1024))} MB.`
+    );
+  }
+
+  const key = nexBookAssetKey({ ...params, extension });
+
+  const post = await createPresignedPost(s3, {
+    Bucket: PROJECTS_BUCKET,
+    Key: key,
+    Conditions: [
+      ['content-length-range', 0, NEXBOOK_LIMITS.maxAssetBytes],
+      ['eq', '$Content-Type', params.contentType],
+    ],
+    Fields: { 'Content-Type': params.contentType },
+    Expires: 300,
+  });
+
+  return { post, key, contentType: params.contentType };
+}
+
+/**
+ * URL de lectura temporal de un asset.
+ *
+ * Corta a propósito y NUNCA se guarda en el documento. Quien pinta la imagen
+ * pasa por `/api/nexbooks/:id/assets/:assetId`, que comprueba el permiso en CADA
+ * petición y redirige aquí. Guardar la URL firmada dentro del documento
+ * convertiría un permiso temporal en uno permanente, y además viajaría dentro de
+ * cada exportación.
+ */
+export async function presignNexBookAssetDownload(key: string): Promise<string> {
+  const s3 = getS3();
+  if (!s3) throw new UploadRejected('El almacenamiento no está disponible.');
+  if (!key.startsWith('nexbook/')) {
+    throw new UploadRejected('Esa ruta no es un asset de NexBook.');
+  }
+
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: PROJECTS_BUCKET, Key: key }), {
+    expiresIn: 300,
+  });
+}
+
+/** Los bytes de un asset. Lo usa el exportador para meterlos en el ZIP. */
+export async function readNexBookAsset(
+  key: string
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const s3 = getS3();
+  if (!s3) return null;
+  if (!key.startsWith('nexbook/')) {
+    throw new UploadRejected('Esa ruta no es un asset de NexBook.');
+  }
+
+  try {
+    const result = await s3.send(new GetObjectCommand({ Bucket: PROJECTS_BUCKET, Key: key }));
+    const bytes = await result.Body?.transformToByteArray();
+    if (!bytes) return null;
+    return { bytes, contentType: result.ContentType ?? 'application/octet-stream' };
+  } catch {
+    // Un asset que el documento menciona y que no está en el bucket no es un
+    // fallo del exportador: se omite y el resto del archivo se genera igual.
+    return null;
+  }
+}
+
+/** Sube bytes directamente. Lo usa el importador, que ya los tiene en memoria. */
+export async function putNexBookAsset(params: {
+  key: string;
+  bytes: Uint8Array;
+  contentType: string;
+}): Promise<boolean> {
+  const s3 = getS3();
+  if (!s3) return false;
+  if (!params.key.startsWith('nexbook/')) {
+    throw new UploadRejected('Esa ruta no es un asset de NexBook.');
+  }
+  if (!nexBookImageExtension(params.contentType)) {
+    throw new UploadRejected('Ese tipo de imagen no se admite.');
+  }
+  if (params.bytes.byteLength > NEXBOOK_LIMITS.maxAssetBytes) {
+    throw new UploadRejected('La imagen pesa demasiado.');
+  }
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: PROJECTS_BUCKET,
+      Key: params.key,
+      Body: params.bytes,
+      ContentType: params.contentType,
+    })
+  );
+  return true;
+}
+
+/**
+ * Borra UN asset.
+ *
+ * Y no «los de este NexBook», que es lo que pediría el nombre obvio. Con las
+ * claves colgando de la persona y no del documento, los assets se COMPARTEN
+ * entre un documento y sus copias: borrar en cascada al eliminar un NexBook
+ * dejaría rota la publicación que salió de él y la entrega que ya se calificó.
+ *
+ * La consecuencia se asume y está anotada: un asset cuyo bloque se borró deja de
+ * poder leerse —ningún documento lo referencia— pero sus bytes siguen en el
+ * bucket. Ver «assets huérfanos» en docs/LIMITATIONS.md.
+ */
+export async function deleteNexBookAsset(ownerUid: string, key: string): Promise<void> {
+  const s3 = getS3();
+  if (!s3) return;
+  if (!key.startsWith(nexBookAssetPrefix(ownerUid))) {
+    throw new UploadRejected('Ese asset no es tuyo.');
   }
   await s3.send(new DeleteObjectCommand({ Bucket: PROJECTS_BUCKET, Key: key }));
 }

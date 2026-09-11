@@ -1,14 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import {
   ACADEMIC_LIMITS,
   ACADEMIC_FILE_LIMITS,
   FILE_CLASS_BY_DELIVERABLE,
   LEGACY_CODE_MODE,
-  PROGRAMMING_LANGUAGES,
   acceptAttributeFor,
   fileLimitLabel,
   programmingLanguageLabel,
@@ -944,71 +943,192 @@ export function AcademicFileDrop({
 // Código (Investigación de Operaciones y cualquier materia que programe)
 // ---------------------------------------------------------------------------
 
+/** Cómo va el autoguardado del paso. Lo calcula quien tiene la conexión. */
+export type CodeSaveState = 'idle' | 'saving' | 'saved' | 'error';
+
 /**
  * Entrega de código.
  *
- * Dos formas que NO compiten: pegar el fuente y adjuntar el archivo. Pegarlo es
- * lo que permite a la docente leerlo sin descargar nada —que es como se revisa
- * de verdad, en la misma pantalla que el resto de la entrega—; adjuntarlo es lo
- * que permite ejecutarlo tal cual. Cada una resuelve un uso distinto, así que
- * aquí conviven y ninguna borra a la otra.
+ * ## Tres modalidades, no tres formularios
  *
- * UINexus NO ejecuta este código. No hay botón de «Ejecutar» porque no hay
- * ningún intérprete detrás: el texto se guarda y se muestra como texto. Ver
- * `lib/code-runner.ts` para la interfaz que un ejecutor externo tendría que
- * cumplir el día que se conecte uno.
+ * `editor` escribe en Monaco; `upload` entrega un archivo; `either` admite las
+ * dos cosas. Lo que decide es el PASO, no quien entrega. Un paso guardado antes
+ * de que existieran las modalidades se lee como `either`, que es exactamente lo
+ * que ofrecía antes: fuente pegado y archivo opcional. Nadie pierde nada.
+ *
+ * ## Importar un archivo NO es adjuntarlo
+ *
+ * En modo editable, «Importar» lee el `.R` o el `.py` como texto y lo mete en
+ * el editor: acaba habiendo UNA evidencia, la del editor. «Adjuntar» sube el
+ * archivo a S3 y deja su clave. Son cosas distintas y por eso son dos botones
+ * distintos: guardar el mismo programa dos veces obligaría a la docente a
+ * decidir cuál de las dos copias es la buena.
+ *
+ * ## Ejecutar no entrega
+ *
+ * El botón de ejecutar vive dentro de `CodeEditor` y no toca la entrega: antes
+ * de ejecutar se GUARDA (`beforeExecute`), y lo que se ejecuta es lo guardado.
+ * La salida no se persiste en ninguna parte.
  */
 export function CodeFields({
   data,
   onChange,
   language,
+  codeMode,
+  starterCode = '',
+  executionEnabled = false,
   hint,
   assignmentId,
   stepId,
+  readOnly = false,
+  onCodeEdited,
+  beforeExecute,
+  saveState = 'idle',
+  saveError,
 }: {
   data: CodeData;
   onChange: (changes: Record<string, unknown>) => void;
   /** El lenguaje que pide el paso. Lo decide la docente, no el alumnado. */
   language: ProgrammingLanguage;
+  /** Ausente en pasos anteriores a las modalidades: se lee como `either`. */
+  codeMode?: CodeMode | null;
+  starterCode?: string;
+  executionEnabled?: boolean;
   hint?: string;
   assignmentId?: string;
   stepId?: string;
+  readOnly?: boolean;
+  /** Aviso de que el fuente cambió POR UNA EDICIÓN, para el autoguardado. */
+  onCodeEdited?: () => void;
+  beforeExecute?: () => Promise<void>;
+  saveState?: CodeSaveState;
+  saveError?: string;
 }) {
-  const canUpload = Boolean(assignmentId && stepId);
+  const mode = codeMode ?? LEGACY_CODE_MODE;
+  const editable = mode === 'editor' || mode === 'either';
+  const attachable = (mode === 'upload' || mode === 'either') && Boolean(assignmentId && stepId);
   const label = programmingLanguageLabel(language);
+  const code = data.code ?? '';
+
+  const [importError, setImportError] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const seeded = useRef(false);
+
+  /**
+   * La copia del alumnado nace del código inicial UNA vez.
+   *
+   * La guarda importa: sin ella, cada visita al paso pisaría lo escrito con la
+   * plantilla, y cambiar la plantilla más tarde borraría el trabajo de quien ya
+   * había empezado. Se siembra en local y no se autoguarda: abrir un paso no
+   * debe fabricar una entrega que nadie ha escrito.
+   */
+  useEffect(() => {
+    if (seeded.current || readOnly || !editable) return;
+    seeded.current = true;
+    if (!code && starterCode) onChange({ code: starterCode, language });
+  }, [code, editable, language, onChange, readOnly, starterCode]);
+
+  function editCode(next: string): void {
+    onChange({ code: next, language });
+    onCodeEdited?.();
+  }
+
+  async function importSource(file: File | undefined): Promise<void> {
+    if (!file) return;
+    setImportError(null);
+
+    // Las mismas dos preguntas que hace el servidor al subir, hechas antes: qué
+    // extensión trae y cuánto ocupa.
+    if (!resolveAcademicUpload('code', { fileName: file.name, contentType: file.type })) {
+      setImportError(
+        `Sólo se admiten ${allowedExtensionsFor('code').join(', ')} para importar al editor.`
+      );
+      return;
+    }
+    if (file.size > ACADEMIC_LIMITS.codeMax) {
+      setImportError('Ese archivo es demasiado grande para el editor.');
+      return;
+    }
+
+    try {
+      editCode(await file.text());
+    } catch {
+      setImportError('No se pudo leer el archivo.');
+    } finally {
+      if (importRef.current) importRef.current.value = '';
+    }
+  }
 
   return (
     <div className="space-y-5">
       <Notice>
-        Esta entrega es en <strong>{label}</strong>. Pega tu código, adjunta el archivo, o las dos
-        cosas.
+        Esta entrega es en <strong>{label}</strong>.{' '}
+        {mode === 'editor'
+          ? 'Escribe tu solución en el editor. No hace falta adjuntar ningún archivo.'
+          : mode === 'upload'
+            ? 'Adjunta tu archivo de código.'
+            : 'Escribe en el editor, adjunta el archivo, o las dos cosas.'}
       </Notice>
 
-      <Field
-        label={`Tu código en ${label}`}
-        hint={hint || 'Pégalo tal cual. Se conserva la sangría y no se ejecuta en ningún momento.'}
-      >
-        <textarea
-          rows={14}
-          spellCheck={false}
-          value={data.code ?? ''}
-          onChange={(event) => onChange({ code: event.target.value, language })}
-          placeholder={'# Modelo de programación lineal\nlibrary(lpSolve)\n'}
-          className="field font-mono text-sm"
-        />
-      </Field>
+      {editable && (
+        <div>
+          <p className="label">Tu código en {label}</p>
+          <CodeEditor
+            language={language}
+            value={code}
+            onChange={editable && !readOnly ? editCode : undefined}
+            readOnly={readOnly}
+            starterCode={starterCode}
+            executionEnabled={executionEnabled}
+            beforeExecute={beforeExecute}
+            ariaLabel={`Tu código en ${label}`}
+            toolbar={<SaveState state={saveState} error={saveError} />}
+          />
+          <p className="hint">
+            {hint || 'Se conserva la sangría. Se guarda solo mientras escribes.'}
+          </p>
 
-      {canUpload && (
+          {!readOnly && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <label className="btn btn-ghost btn-sm cursor-pointer">
+                Importar archivo al editor
+                <input
+                  ref={importRef}
+                  type="file"
+                  accept={acceptAttributeFor('code')}
+                  onChange={(event) => void importSource(event.target.files?.[0])}
+                  className="sr-only"
+                />
+              </label>
+              {code && (
+                <button
+                  type="button"
+                  onClick={() => downloadText(code, sourceFilenameFor(language), 'text/plain')}
+                  className="btn btn-ghost btn-sm"
+                >
+                  Descargar mi código
+                </button>
+              )}
+            </div>
+          )}
+
+          {importError && (
+            <div className="mt-3">
+              <Notice tone="error">{importError}</Notice>
+            </div>
+          )}
+        </div>
+      )}
+
+      {attachable && (
         <AcademicFileDrop
-          label="Adjunta el archivo (opcional)"
+          label={mode === 'upload' ? `Tu archivo de ${label}` : 'Adjunta el archivo (opcional)'}
           fileClass="code"
           assignmentId={assignmentId!}
           stepId={stepId!}
           storageKey={data.storageKey ?? ''}
           fileName={data.fileName ?? ''}
-          onUploaded={({ storageKey, fileName }) =>
-            onChange({ storageKey, fileName, language })
-          }
+          onUploaded={({ storageKey, fileName }) => onChange({ storageKey, fileName, language })}
           onCleared={() => onChange({ storageKey: '', fileName: '' })}
         />
       )}
@@ -1019,11 +1139,38 @@ export function CodeFields({
       >
         <textarea
           rows={4}
+          readOnly={readOnly}
           value={data.explanation ?? ''}
           onChange={(event) => onChange({ explanation: event.target.value, language })}
           className="field"
         />
       </Field>
     </div>
+  );
+}
+
+/**
+ * El estado del autoguardado, dicho sin alarmar y sin mentir.
+ *
+ * «Guardado» aparece sólo cuando el servidor confirmó. Mientras tanto se dice
+ * «Guardando…», y si falló se dice que falló Y se deja el aviso puesto: perder
+ * una hora de trabajo porque un mensaje se desvaneció a los tres segundos es
+ * exactamente lo que no puede pasar.
+ */
+function SaveState({ state, error }: { state: CodeSaveState; error?: string }) {
+  if (state === 'idle') return null;
+
+  if (state === 'error') {
+    return (
+      <span className="text-sm text-danger" role="status">
+        {error || 'No se pudo guardar. Usa «Guardar borrador» antes de cerrar.'}
+      </span>
+    );
+  }
+
+  return (
+    <span className="text-sm text-subtle" role="status">
+      {state === 'saving' ? 'Guardando…' : 'Guardado'}
+    </span>
   );
 }

@@ -13,35 +13,63 @@ import {
 import type { OnMount } from '@monaco-editor/react';
 import {
   PROGRAMMING_LANGUAGES,
+  languageExecutionNote,
   programmingLanguageLabel,
 } from '@/lib/constants';
 import type { CodeRunResult } from '@/lib/code-runner-contract';
 import {
+  canRunInBrowser,
   getBrowserCodeRunner,
+  type BrowserCodeRunner,
   type BrowserCodeRunnerStatus,
 } from '@/lib/browser-code-runner';
 import type { ProgrammingLanguage } from '@/lib/types';
 
 /**
- * Monaco is part of the client chunk for this component; the loader is pointed
- * at the installed npm package so it never injects scripts from a public CDN.
+ * El editor de código, uno solo para todos los lenguajes.
+ *
+ * No hay `REditor` ni `PythonEditor`, y no los habrá: el lenguaje es un
+ * PARÁMETRO. Duplicar el componente por lenguaje habría duplicado también el
+ * autoguardado, el tema, la consola y el atajo de ejecutar, y habría que
+ * arreglar cada fallo dos veces. Lo que cambia entre R y Python cabe en
+ * `PROGRAMMING_LANGUAGES`.
+ *
+ * Monaco entra por `next/dynamic` sin SSR porque necesita `window` y porque no
+ * tiene sentido enviarlo en el HTML de una actividad que quizá no pida código.
+ *
+ * Si Monaco no carga —una red mala, un navegador viejo, un bloqueador— queda un
+ * `<textarea>` con el mismo valor y el mismo `onChange`. Entregar la tarea
+ * nunca puede depender de que un editor de 3 MB llegue entero.
  */
+
 const MonacoEditor = dynamic(
   async () => {
+    /**
+     * La ruta importa. `import('monaco-editor')` a secas acaba resolviendo el
+     * paquete AMD de `min/`, que webpack no sabe empaquetar. `editor/editor.main`
+     * es la entrada ESM —a través del mapa de `exports`, no por `esm/vs/…`, que
+     * el propio mapa duplicaría— y trae lo que este editor promete: búsqueda,
+     * deshacer, emparejado de llaves y el resaltado de R y de Python.
+     */
     const [{ default: Editor, loader }, monaco] = await Promise.all([
       import('@monaco-editor/react'),
-      import('monaco-editor'),
+      import('monaco-editor/editor/editor.main.js'),
     ]);
 
+    /**
+     * Monaco se apunta al paquete instalado, NO a un CDN.
+     *
+     * Por defecto `@monaco-editor/react` inyecta un `<script>` de jsdelivr. Eso
+     * significaría abrir `script-src` de toda la plataforma a un tercero para
+     * pintar un editor, y que una clase dependa de que ese CDN esté vivo.
+     */
     if (typeof self !== 'undefined') {
       const scope = self as typeof self & {
-        MonacoEnvironment?: {
-          getWorker: (_workerId: string, _label: string) => Worker;
-        };
+        MonacoEnvironment?: { getWorker: (_id: string, _label: string) => Worker };
       };
       scope.MonacoEnvironment = {
         getWorker: () =>
-          new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), {
+          new Worker(new URL('monaco-editor/editor/editor.worker.js', import.meta.url), {
             type: 'module',
           }),
       };
@@ -52,6 +80,12 @@ const MonacoEditor = dynamic(
   },
   { ssr: false, loading: () => null }
 );
+
+/** Si Monaco no ha montado para entonces, se asume que no va a montar. */
+const MONACO_GIVE_UP_MS = 10_000;
+
+/** Lenguajes cuya convención es sangrar con cuatro espacios. */
+const INDENT_FOUR = new Set<ProgrammingLanguage>(['python', 'java', 'c', 'cpp']);
 
 const languageOption = (language: ProgrammingLanguage) =>
   PROGRAMMING_LANGUAGES.find((option) => option.value === language);
@@ -72,23 +106,18 @@ function currentEditorTheme(): EditorTheme {
   return document.documentElement.dataset.theme === 'dark' ? 'vs-dark' : 'vs';
 }
 
-interface BoundaryProps {
-  children: ReactNode;
-  onError: () => void;
-}
-
-class MonacoBoundary extends Component<BoundaryProps, { failed: boolean }> {
-  state = { failed: false };
+class MonacoBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
+  override state = { failed: false };
 
   static getDerivedStateFromError(): { failed: boolean } {
     return { failed: true };
   }
 
-  componentDidCatch(_error: Error, _info: ErrorInfo): void {
+  override componentDidCatch(_error: Error, _info: ErrorInfo): void {
     this.props.onError();
   }
 
-  render(): ReactNode {
+  override render(): ReactNode {
     return this.state.failed ? null : this.props.children;
   }
 }
@@ -98,12 +127,15 @@ export interface CodeEditorProps {
   value: string;
   onChange?: (value: string) => void;
   readOnly?: boolean;
+  /** El programa inicial de la docente, si lo hay. Habilita «Restablecer». */
   starterCode?: string;
   executionEnabled?: boolean;
-  /** Persist the latest source before handing it to an isolated runner. */
+  /** Persiste el fuente antes de entregárselo a un ejecutor aislado. */
   beforeExecute?: () => Promise<void>;
   height?: number;
   ariaLabel?: string;
+  /** Se pinta encima de la consola: estado de guardado, avisos del paso… */
+  toolbar?: ReactNode;
 }
 
 export function CodeEditor({
@@ -111,34 +143,62 @@ export function CodeEditor({
   value,
   onChange,
   readOnly = false,
+  starterCode = '',
   executionEnabled = false,
   beforeExecute,
   height = 420,
   ariaLabel,
+  toolbar,
 }: CodeEditorProps) {
   const [theme, setTheme] = useState<EditorTheme>('vs');
-  const [advancedReady, setAdvancedReady] = useState(false);
-  const [advancedFailed, setAdvancedFailed] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [fallback, setFallback] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<BrowserCodeRunnerStatus>('idle');
   const [result, setResult] = useState<CodeRunResult | null>(null);
-  const runnerRef = useRef<ReturnType<typeof getBrowserCodeRunner>>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
+  const runnerRef = useRef<BrowserCodeRunner | null>(null);
   const executeRef = useRef<() => void>(() => undefined);
   const label = programmingLanguageLabel(language);
+
+  /**
+   * Tres estados, no dos.
+   *
+   * `runnable` es «hay botón y funciona». `unavailable` es «la actividad pide
+   * ejecución pero este lenguaje no la tiene»: Java y C se escriben aquí, no se
+   * compilan aquí, y callarlo dejaría a alguien buscando un botón que no
+   * existe. El tercero —la actividad no pide ejecutar— no muestra nada.
+   */
+  const runnable = executionEnabled && canRunInBrowser(language);
+  const unavailable = executionEnabled && !runnable;
+  const executionNote = languageExecutionNote(language);
 
   useEffect(() => {
     setTheme(currentEditorTheme());
     const observer = new MutationObserver(() => setTheme(currentEditorTheme()));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
     return () => observer.disconnect();
   }, []);
 
+  // Monaco que no monta en diez segundos es Monaco que no va a montar. Mejor un
+  // `<textarea>` a tiempo que un hueco gris indefinido.
   useEffect(() => {
-    const activeRunner = runnerRef.current;
+    if (mounted || fallback) return;
+    const timer = setTimeout(() => setFallback(true), MONACO_GIVE_UP_MS);
+    return () => clearTimeout(timer);
+  }, [mounted, fallback]);
+
+  // Cambiar de lenguaje invalida el runtime: el de Python no ejecuta R.
+  useEffect(() => {
+    const previous = runnerRef.current;
     runnerRef.current = null;
     setRuntimeStatus('idle');
     setResult(null);
     return () => {
-      if (activeRunner) void activeRunner.dispose();
+      void previous?.dispose();
     };
   }, [language]);
 
@@ -146,153 +206,216 @@ export function CodeEditor({
     () => () => {
       const runner = runnerRef.current;
       runnerRef.current = null;
-      if (runner) void runner.dispose();
+      void runner?.dispose();
     },
     []
   );
 
   const execute = useCallback(async (): Promise<void> => {
-    if (!executionEnabled || !advancedReady || runtimeStatus === 'running') return;
+    if (!runnable || runtimeStatus === 'running' || runtimeStatus === 'preparing') return;
 
     setResult(null);
     try {
+      // Ejecutar sin haber guardado deja al alumnado mirando la salida de un
+      // código que la entrega no tiene. Se guarda primero, siempre.
       await beforeExecute?.();
     } catch (caught) {
-      setRuntimeStatus('error');
-      setResult(rejectedResult(caught instanceof Error ? caught.message : 'No se pudo guardar el código.'));
+      setResult(
+        rejectedResult(
+          caught instanceof Error ? caught.message : 'No se pudo guardar el código antes de ejecutarlo.'
+        )
+      );
       return;
     }
 
     let runner = runnerRef.current;
     if (!runner) {
+      // El runtime se arranca AQUÍ, en la primera ejecución. Abrir una tarea de
+      // programación no puede costar 13 MB de WebAssembly que nadie pidió.
       runner = getBrowserCodeRunner(language, { onStatusChange: setRuntimeStatus });
       runnerRef.current = runner;
     }
     if (!runner) {
-      setRuntimeStatus('error');
-      setResult(rejectedResult(`La ejecución de ${label} no está disponible.`));
+      setResult(rejectedResult(`La ejecución de ${label} no está disponible en este navegador.`));
       return;
     }
 
-    setRuntimeStatus('running');
-    try {
-      setResult(await runner.run({ language, source: value }));
-    } catch (caught) {
-      setRuntimeStatus('error');
-      setResult(
-        rejectedResult(caught instanceof Error ? caught.message : 'No se pudo ejecutar el código.')
-      );
-    }
-  }, [advancedReady, beforeExecute, executionEnabled, label, language, runtimeStatus, value]);
+    setResult(await runner.run({ language, source: value }));
+  }, [beforeExecute, label, language, runnable, runtimeStatus, value]);
 
   executeRef.current = () => void execute();
 
   const handleMount: OnMount = (editor, monaco) => {
-    setAdvancedReady(true);
+    setMounted(true);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => executeRef.current());
   };
 
   async function stop(): Promise<void> {
-    const runner = runnerRef.current;
-    if (!runner) return;
-    await runner.interrupt();
+    await runnerRef.current?.interrupt();
   }
 
-  const running = runtimeStatus === 'running' || runtimeStatus === 'preparing';
+  function resetToStarter(): void {
+    setConfirmingReset(false);
+    onChange?.(starterCode);
+  }
+
+  const busy = runtimeStatus === 'running' || runtimeStatus === 'preparing';
   const editorLabel = ariaLabel ?? `Editor de código ${label}`;
+  const canReset = !readOnly && Boolean(starterCode) && Boolean(onChange);
+  const resetWouldDiscard = value.trim().length > 0 && value !== starterCode;
 
   return (
     <div className="space-y-3">
-      <div
-        className="relative w-full overflow-hidden rounded-sm border border-line-strong bg-sunken"
-        style={{ minHeight: Math.min(height, 240) }}
-      >
-        {!advancedReady && (
+      <div className="overflow-hidden rounded-sm border border-line-strong bg-sunken">
+        {fallback ? (
           <textarea
             aria-label={editorLabel}
             spellCheck={false}
             readOnly={readOnly}
             value={value}
             onChange={(event) => onChange?.(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                executeRef.current();
+              }
+            }}
             style={{ minHeight: height }}
             className="field resize-y rounded-none border-0 font-mono text-sm"
           />
+        ) : (
+          <MonacoBoundary onError={() => setFallback(true)}>
+            <MonacoEditor
+              height={height}
+              language={monacoLanguageFor(language)}
+              value={value}
+              theme={theme}
+              onChange={(next) => onChange?.(next ?? '')}
+              onMount={handleMount}
+              options={{
+                readOnly,
+                // Sin esto el textarea oculto de Monaco sigue siendo editable
+                // con el teclado: la vista docente dejaría de ser de sólo
+                // lectura para quien navegue con tabulador.
+                domReadOnly: readOnly,
+                minimap: { enabled: false },
+                lineNumbers: 'on',
+                automaticLayout: true,
+                wordWrap: 'on',
+                scrollBeyondLastLine: false,
+                bracketPairColorization: { enabled: true },
+                matchBrackets: 'always',
+                find: { addExtraSpaceOnTop: false },
+                padding: { top: 12, bottom: 12 },
+                fontSize: 14,
+                // La sangría de Python es sintaxis, y cuatro espacios es lo que
+                // pide PEP 8. Java, C y C++ comparten esa convención; R y el
+                // ecosistema web usan dos.
+                tabSize: INDENT_FOUR.has(language) ? 4 : 2,
+                insertSpaces: true,
+                ariaLabel: editorLabel,
+              }}
+            />
+          </MonacoBoundary>
         )}
-
-        <MonacoBoundary
-          onError={() => {
-            setAdvancedFailed(true);
-            setAdvancedReady(false);
-          }}
-        >
-          <MonacoEditor
-            height={height}
-            language={monacoLanguageFor(language)}
-            value={value}
-            theme={theme}
-            onChange={(next) => onChange?.(next ?? '')}
-            onMount={handleMount}
-            options={{
-              readOnly,
-              domReadOnly: readOnly,
-              minimap: { enabled: false },
-              lineNumbers: 'on',
-              automaticLayout: true,
-              wordWrap: 'on',
-              scrollBeyondLastLine: false,
-              bracketPairColorization: { enabled: true },
-              padding: { top: 12, bottom: 12 },
-              fontSize: 14,
-              tabSize: language === 'python' ? 4 : 2,
-              insertSpaces: true,
-              ariaLabel: editorLabel,
-            }}
-          />
-        </MonacoBoundary>
       </div>
 
-      {!advancedReady && (
+      {!mounted && !fallback && (
         <p className="text-sm text-muted" role="status">
-          {advancedFailed
-            ? 'El editor avanzado no pudo cargarse. Puedes continuar editando y entregando tu código.'
-            : 'Preparando el editor avanzado… Puedes comenzar a escribir mientras carga.'}
+          Preparando el editor…
+        </p>
+      )}
+      {fallback && (
+        <p className="hint" role="status">
+          Editor simplificado. Puedes escribir, guardar y entregar con normalidad.
         </p>
       )}
 
-      {executionEnabled && (
-        <section className="rounded-sm border border-line bg-sunken" aria-label="Ejecución de código">
+      {(toolbar || canReset) && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">{toolbar}</div>
+          {canReset && (
+            <div className="flex flex-wrap items-center gap-2">
+              {confirmingReset ? (
+                <>
+                  <span className="text-sm text-muted">¿Descartar tu código y volver al inicial?</span>
+                  <button type="button" onClick={resetToStarter} className="btn btn-secondary btn-sm">
+                    Sí, restablecer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingReset(false)}
+                    className="btn btn-ghost btn-sm"
+                  >
+                    Cancelar
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  // Sólo se pregunta cuando hay algo que perder. Confirmar para
+                  // reemplazar un editor vacío es ruido.
+                  onClick={() => (resetWouldDiscard ? setConfirmingReset(true) : resetToStarter())}
+                  className="btn btn-ghost btn-sm"
+                >
+                  Restablecer código inicial
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {unavailable && (
+        <section
+          className="rounded-sm border border-line bg-sunken px-3 py-3"
+          aria-label={`Ejecución de ${label}`}
+        >
+          <p className="text-sm font-medium">Ejecución no disponible</p>
+          <p className="mt-1 text-sm text-muted">
+            {executionNote ?? `UINexus todavía no puede ejecutar ${label}.`} Guardar y entregar
+            funciona con normalidad.
+          </p>
+        </section>
+      )}
+
+      {runnable && (
+        <section className="rounded-sm border border-line bg-sunken" aria-label={`Ejecución de ${label}`}>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-3 py-2">
-            <p className="text-sm font-medium">{executionStatusLabel(runtimeStatus, result)}</p>
+            <p className="text-sm font-medium" role="status">
+              {executionStatusLabel(runtimeStatus, result, label)}
+            </p>
             <div className="flex flex-wrap gap-2">
-              {running && (
+              {busy && (
                 <button type="button" onClick={() => void stop()} className="btn btn-secondary btn-sm">
                   Detener
                 </button>
               )}
               <button
                 type="button"
-                disabled={!advancedReady || running}
+                disabled={busy}
                 onClick={() => void execute()}
                 className="btn btn-primary btn-sm"
+                title="Ctrl + Enter"
               >
                 ▶ Ejecutar
               </button>
             </div>
           </div>
 
-          {!advancedReady && (
+          {busy ? (
             <p className="px-3 py-3 text-sm text-muted">
-              La ejecución estará disponible cuando cargue el editor avanzado.
+              {runtimeStatus === 'preparing'
+                ? `Preparando ${label}… la primera vez tarda unos segundos.`
+                : 'Ejecutando…'}
+            </p>
+          ) : result ? (
+            <ExecutionResult result={result} />
+          ) : (
+            <p className="px-3 py-3 text-sm text-subtle">
+              Ejecuta con el botón o con Ctrl + Enter. Tu código no sale de este navegador.
             </p>
           )}
-
-          {running && (
-            <p className="px-3 py-3 text-sm text-muted" role="status">
-              {runtimeStatus === 'preparing' ? `Preparando ${label}…` : 'Ejecutando…'}
-            </p>
-          )}
-
-          {result && !running && <ExecutionResult result={result} />}
         </section>
       )}
     </div>
@@ -310,13 +433,14 @@ function rejectedResult(message: string): CodeRunResult {
   };
 }
 
-function executionStatusLabel(
+export function executionStatusLabel(
   runtimeStatus: BrowserCodeRunnerStatus,
-  result: CodeRunResult | null
+  result: CodeRunResult | null,
+  languageLabel: string
 ): string {
-  if (runtimeStatus === 'preparing') return 'Preparando…';
+  if (runtimeStatus === 'preparing') return `Preparando ${languageLabel}…`;
   if (runtimeStatus === 'running') return 'Ejecutando…';
-  if (!result) return runtimeStatus === 'ready' ? 'Runtime listo' : 'Listo';
+  if (!result) return runtimeStatus === 'ready' ? `${languageLabel} listo` : 'Listo';
   if (result.status === 'ok') return 'Finalizado';
   if (result.status === 'timeout') return 'Tiempo excedido';
   if (result.status === 'stopped') return 'Detenido';
@@ -327,9 +451,10 @@ function ExecutionResult({ result }: { result: CodeRunResult }) {
   return (
     <div className="space-y-3 p-3 text-sm">
       <div className="flex flex-wrap gap-x-5 gap-y-1 text-label text-subtle">
-        <span>Tiempo de ejecución: {result.durationMs} ms</span>
-        {result.truncated && <span>La salida se truncó por seguridad.</span>}
+        <span>Duración: {result.durationMs} ms</span>
+        {result.truncated && <span>La salida se truncó al llegar al límite.</span>}
       </div>
+
       {result.stdout && (
         <div>
           <p className="meta">Salida</p>
@@ -338,6 +463,7 @@ function ExecutionResult({ result }: { result: CodeRunResult }) {
           </pre>
         </div>
       )}
+
       {result.stderr && (
         <div>
           <p className="meta">Errores</p>
@@ -346,7 +472,10 @@ function ExecutionResult({ result }: { result: CodeRunResult }) {
           </pre>
         </div>
       )}
-      {!result.stdout && !result.stderr && <p className="text-subtle">El programa no produjo salida.</p>}
+
+      {!result.stdout && !result.stderr && (
+        <p className="text-subtle">El programa terminó sin escribir nada.</p>
+      )}
     </div>
   );
 }

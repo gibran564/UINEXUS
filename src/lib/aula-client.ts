@@ -1,10 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api-client';
+import { apiFetch, currentIdToken, uploadSigned } from './api-client';
 import { getClientAuth } from './firebase/client';
 import { isFirebaseConfigured } from './firebase/config';
 import type {
+  NexBook,
+  NexBookDocument,
+  NexBookImageMimeType,
+  NexBookPublication,
+  NexBookPublicVisibility,
+  Workspace,
   Assignment,
   AssignmentMaterial,
   AssignmentMaterialKind,
@@ -547,4 +553,167 @@ export function downloadText(text: string, filename: string, contentType: string
   anchor.click();
   // Revocar en el mismo tick cancela la descarga en algunos navegadores.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------------------------------------------------------------------------
+// Prácticas de programación (iteración 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ninguna de estas funciones acepta un uid, y no es un olvido.
+ *
+ * La colección es siempre la de quien pide: el servidor la deriva del token. Si
+ * hubiera un parámetro de dueño, tarde o temprano alguien lo rellenaría desde
+ * la consola del navegador. Ver `app/api/workspaces/route.ts`.
+ */
+export const listWorkspaces = () => apiFetch<{ workspaces: Workspace[] }>('/api/workspaces');
+
+export const createWorkspace = (body: {
+  title: string;
+  language: string;
+  code?: string;
+  courseId?: string | null;
+}) => apiFetch<{ workspace: Workspace }>('/api/workspaces', { method: 'POST', body });
+
+/** Guarda sólo lo que cambió: es lo que usa el autoguardado del editor. */
+export const patchWorkspace = (
+  workspaceId: string,
+  changes: { title?: string; code?: string; language?: string }
+) =>
+  apiFetch<{ workspace: Workspace }>(`/api/workspaces/${workspaceId}`, {
+    method: 'PATCH',
+    body: changes,
+  });
+
+export const deleteWorkspace = (workspaceId: string) =>
+  apiFetch<{ ok: true }>(`/api/workspaces/${workspaceId}`, { method: 'DELETE' });
+
+// ---------------------------------------------------------------------------
+// NexBooks (iteración 8)
+// ---------------------------------------------------------------------------
+
+export const createNexBook = (body: { title: string; document?: NexBookDocument }) =>
+  apiFetch<{ nexbook: NexBook }>('/api/nexbooks', { method: 'POST', body });
+
+/**
+ * Guarda con concurrencia optimista.
+ *
+ * `revision` es la que el cliente creía tener. Un 409 significa que alguien
+ * guardó desde otro sitio y trae el documento que ganó dentro, para que la
+ * interfaz pueda decir qué pasó en vez de un «error» a secas.
+ */
+export const patchNexBook = (
+  nexbookId: string,
+  body: { revision: number; title?: string; document?: NexBookDocument }
+) => apiFetch<{ nexbook: NexBook }>(`/api/nexbooks/${nexbookId}`, { method: 'PATCH', body });
+
+export const deleteNexBook = (nexbookId: string) =>
+  apiFetch<{ ok: true }>(`/api/nexbooks/${nexbookId}`, { method: 'DELETE' });
+
+// ---------------------------------------------------------------------------
+// Assets, publicación e intercambio (iteración 9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sube una imagen y devuelve su identificador.
+ *
+ * Dos pasos y no uno: el servidor firma un permiso acotado y el navegador sube
+ * DIRECTAMENTE a S3. Pasar cuatro megas por una función serverless sería tiempo
+ * de cómputo pagado por copiar bytes de un sitio a otro.
+ */
+export async function uploadNexBookAsset(
+  nexbookId: string,
+  file: Blob,
+  contentType: NexBookImageMimeType
+): Promise<string> {
+  const { assetId, upload } = await apiFetch<{
+    assetId: string;
+    upload: { url: string; fields: Record<string, string> };
+  }>(`/api/nexbooks/${nexbookId}/assets`, {
+    method: 'POST',
+    body: { contentType, sizeBytes: file.size },
+  });
+
+  await uploadSigned(upload, file, assetId);
+  return assetId;
+}
+
+/**
+ * La URL por la que se lee una imagen.
+ *
+ * Estable y del propio origen: lo que caduca es la firma que hay detrás, no
+ * esto. El tipo viaja como pista para la imagen que todavía no llegó al
+ * documento guardado; ver la ruta.
+ */
+export function nexBookAssetUrl(
+  nexbookId: string,
+  assetId: string,
+  mimeType?: NexBookImageMimeType
+): string {
+  const suffix = mimeType ? `?type=${encodeURIComponent(mimeType)}` : '';
+  return `/api/nexbooks/${nexbookId}/assets/${assetId}${suffix}`;
+}
+
+export const publishNexBook = (
+  nexbookId: string,
+  body: { visibility: NexBookPublicVisibility }
+) =>
+  apiFetch<{ publication: NexBookPublication }>(`/api/nexbooks/${nexbookId}/publication`, {
+    method: 'PUT',
+    body,
+  });
+
+export const getNexBookPublication = (nexbookId: string) =>
+  apiFetch<{ publication: NexBookPublication | null; hasChanges: boolean }>(
+    `/api/nexbooks/${nexbookId}/publication`
+  );
+
+export const unpublishNexBook = (nexbookId: string) =>
+  apiFetch<{ ok: true }>(`/api/nexbooks/${nexbookId}/publication`, { method: 'DELETE' });
+
+/**
+ * Descarga el `.nexbook`.
+ *
+ * No pasa por `apiFetch` porque la respuesta es un ZIP y no JSON, pero necesita
+ * la misma cabecera `Authorization`: un `<a download>` no la lleva, así que un
+ * enlace directo devolvería un 401 guardado como si fuera el archivo.
+ */
+export async function downloadNexBookArchive(
+  nexbookId: string
+): Promise<{ body: Blob; fileName: string }> {
+  const token = await currentIdToken();
+  const response = await fetch(`/api/nexbooks/${nexbookId}/export`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!response.ok) {
+    const message = await response
+      .json()
+      .then((data: { error?: string }) => data.error)
+      .catch(() => undefined);
+    throw new Error(message ?? 'No se pudo exportar el NexBook.');
+  }
+
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const named = /filename="([^"]+)"/.exec(disposition);
+  return { body: await response.blob(), fileName: named?.[1] ?? 'nexbook.nexbook' };
+}
+
+/** Importa un `.nexbook` y devuelve el documento nuevo, ya del usuario actual. */
+export async function importNexBookArchive(file: File): Promise<NexBook> {
+  const token = await currentIdToken();
+  const form = new FormData();
+  form.append('file', file, file.name);
+
+  const response = await fetch('/api/nexbooks/import', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+
+  const data = (await response.json()) as { nexbook?: NexBook; error?: string };
+  if (!response.ok || !data.nexbook) {
+    throw new Error(data.error ?? 'No se pudo importar el archivo.');
+  }
+  return data.nexbook;
 }

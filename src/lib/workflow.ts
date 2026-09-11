@@ -1,6 +1,6 @@
 import { LEGACY_STEP_ID } from './types';
 import {
-  DEFAULT_PROGRAMMING_LANGUAGE as DEFAULT_CODE_LANGUAGE,
+  LEGACY_CODE_LANGUAGE as DEFAULT_CODE_LANGUAGE,
   LEGACY_CODE_MODE,
 } from './constants';
 import { detectTextFormat, normalizeAIResult } from './ai-worklog';
