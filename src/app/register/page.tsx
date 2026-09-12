@@ -4,7 +4,7 @@ import { LoginForm } from '@/components/auth/login-form';
 
 export const metadata: Metadata = {
   title: 'Crear cuenta institucional',
-  description: 'Regístrate con tu correo @itdurango.edu.mx para publicar y compartir tus proyectos web en UINexus.',
+  description: 'Regístrate con tu correo @itdurango.edu.mx para publicar y compartir tus proyectos web en Nextudio.',
   robots: { index: false, follow: true },
 };
 

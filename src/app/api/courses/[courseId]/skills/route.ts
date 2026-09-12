@@ -10,7 +10,7 @@ import { createSkill } from '@/lib/server/academic-writes';
  * Skills de una materia.
  *
  * Una Skill es una FICHA que explica una habilidad de IA: qué hace, con qué
- * herramientas funciona, cómo se instala y cómo se usa. UINexus no ejecuta
+ * herramientas funciona, cómo se instala y cómo se usa. Nextudio no ejecuta
  * nada de lo que aquí se guarda —los comandos son texto que se muestra y se
  * copia— y esa es una propiedad de la arquitectura, no una configuración: no
  * existe ninguna ruta, función ni cola que ejecute nada de esto.

@@ -19,7 +19,7 @@ import type { UserRole } from './types';
  * esquivado— quedaba restaurada como autenticada para siempre: perfil creado,
  * `status = 'authenticated'`, y todas las llamadas al aula respondiendo 403
  * porque el servidor no la conocía. Una sesión válida para Firebase e inválida
- * para UINexus deja la plataforma inutilizable y sin salida visible.
+ * para Nextudio deja la plataforma inutilizable y sin salida visible.
  *
  * ## Por qué es un módulo aparte y PURO
  *

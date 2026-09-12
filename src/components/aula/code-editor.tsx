@@ -373,7 +373,7 @@ export function CodeEditor({
         >
           <p className="text-sm font-medium">Ejecución no disponible</p>
           <p className="mt-1 text-sm text-muted">
-            {executionNote ?? `UINexus todavía no puede ejecutar ${label}.`} Guardar y entregar
+            {executionNote ?? `Nextudio todavía no puede ejecutar ${label}.`} Guardar y entregar
             funciona con normalidad.
           </p>
         </section>

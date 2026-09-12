@@ -93,12 +93,22 @@ export interface AssignmentDetail {
   assignment: Assignment;
   courseName: string;
   courseId: string;
+  /** Quién imparte la materia. Da remitente a la actividad. */
+  teacherName: string;
   viewerRole: 'teacher' | 'student';
   submission: Submission | null;
   /** Conceptos que le tocan a quien pregunta. Vacío en modo individual. */
   myGroupIds: string[];
   /** Pasos del workflow que le tocan. Siempre al menos uno. */
   myStepIds: string[];
+  /**
+   * Partes de laboratorio que esta persona ya abrió.
+   *
+   * Un NexLab vive en su propio documento y se guarda solo, así que su trabajo
+   * puede existir antes de que la entrega tenga ninguna copia. Sin esto, el
+   * progreso diría «Sin empezar» sobre trabajo ya hecho.
+   */
+  myLabs: string[];
   /** Prompts y Skills recomendados, ya resueltos por el servidor. */
   resources: { prompts: PromptTemplate[]; skills: SkillResource[] };
   /**
@@ -179,7 +189,7 @@ export function useApi<T>(path: string | null): {
 
     /**
      * El aula no tiene modo demo, y decirlo es mas honesto que fingirlo.
-     * El resto de UINexus si lo tiene porque sirve datos de ejemplo en memoria;
+     * El resto de Nextudio si lo tiene porque sirve datos de ejemplo en memoria;
      * aqui todo depende de quien eres, y sin identidad no hay materia, ni
      * tarea, ni entrega que ensenar. Un aula de mentira solo confundiria sobre
      * si la plataforma esta bien configurada.
@@ -518,6 +528,10 @@ export async function fetchExport(
   options: ExportOptions
 ): Promise<{ text: string; filename: string }> {
   const auth = getClientAuth();
+  // Misma espera que en `api-client.ts`: `currentUser` es `null` hasta que el
+  // SDK termina de restaurar la sesión guardada. Sin esto, exportar nada más
+  // abrir la pantalla decía «Necesitas iniciar sesión» teniéndola.
+  await auth?.authStateReady();
   const user = auth?.currentUser;
   if (!user) throw new Error('Necesitas iniciar sesión.');
 
@@ -652,6 +666,52 @@ export function nexBookAssetUrl(
 ): string {
   const suffix = mimeType ? `?type=${encodeURIComponent(mimeType)}` : '';
   return `/api/nexbooks/${nexbookId}/assets/${assetId}${suffix}`;
+}
+
+/**
+ * Los BYTES de una imagen del NexBook, en Base64, para dárselos al código.
+ *
+ * ## Por qué la descarga la hace ESTE lado
+ *
+ * ```
+ * correcto:   S3 → ruta autorizada → navegador (con sesión) → Data Bridge → Worker
+ * prohibido:  Worker → fetch → S3
+ * ```
+ *
+ * El Worker no tiene `fetch` —`jsglobals` está vacío en Python y `download.file`
+ * enmascarado en R— y eso es la barrera que hace que el código del alumnado no
+ * alcance la red. Mandarle una URL firmada para que se la descargara él habría
+ * significado devolverle la capacidad que se le quitó, y además convertir un
+ * permiso de cinco minutos en algo que vive dentro de una variable.
+ *
+ * Así que se descarga aquí, con la sesión de quien está trabajando, por la misma
+ * ruta que pinta las imágenes: `/api/nexbooks/:id/assets/:assetId` comprueba que
+ * el documento sea suyo y que REFERENCIE ese asset. Al Worker llega el
+ * contenido, no la llave.
+ */
+export async function nexBookAssetBytes(
+  nexbookId: string,
+  assetId: string,
+  mimeType: NexBookImageMimeType
+): Promise<string> {
+  const response = await fetch(nexBookAssetUrl(nexbookId, assetId, mimeType), {
+    headers: { Authorization: `Bearer ${await currentIdToken()}` },
+  });
+  if (!response.ok) throw new Error('No se pudo leer la imagen.');
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+
+  /**
+   * Base64 por trozos.
+   *
+   * `String.fromCharCode(...bytes)` con una imagen de megas desborda la pila de
+   * argumentos y lanza un `RangeError` que no dice nada. En trozos de 8 KB no.
+   */
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+  }
+  return btoa(binary);
 }
 
 export const publishNexBook = (

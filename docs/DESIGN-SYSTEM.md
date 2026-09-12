@@ -1,8 +1,8 @@
-# Design language — UINexus
+# Design language — Nextudio
 
 ## 1. El concepto: papel cuadriculado y tinta
 
-UINexus expone trabajo de diseño. Si la plataforma compite visualmente con lo
+Nextudio expone trabajo de diseño. Si la plataforma compite visualmente con lo
 que exhibe, falla en su único cometido. De ahí un lenguaje que se comporta como
 el papel de un cuaderno de bocetos: presente, con carácter, y por debajo del
 trabajo.

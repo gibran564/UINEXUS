@@ -81,7 +81,7 @@ export function PublishedNexBook({ slug }: { slug: string }) {
       </div>
 
       <footer className="mt-8 border-t border-line pt-4 text-label text-subtle">
-        Los resultados que se muestran son los que guardó quien publicó este documento. UINexus no
+        Los resultados que se muestran son los que guardó quien publicó este documento. Nextudio no
         vuelve a ejecutarlos al abrir esta página.
       </footer>
     </article>

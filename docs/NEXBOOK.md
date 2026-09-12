@@ -1,10 +1,13 @@
 # NexBook
 
-El formato de documento computacional de UINexus. Combina explicación, código
+El formato de documento computacional de Nextudio. Combina explicación, código
 ejecutable y resultados en un documento que sirve como laboratorio, práctica,
 entrega académica o —más adelante— publicación.
 
-Se edita en **UINexus Studio**.
+Se edita en **NexLab**, el espacio de trabajo por bloques de Nextudio. El
+componente sigue llamándose `NexBookStudio` y el editor se llamaba «UINexus
+Studio» hasta la Fase 1: **NexLab es el espacio, NexBook es el documento**. Ver
+`docs/NEXTUDIO-ROADMAP.md` §D3.
 
 ---
 
@@ -41,7 +44,7 @@ Una actividad que sólo pide veinte líneas de Python sigue usando el entregable
 
 ## Bloques
 
-Hay cuatro, y sólo se declaran los que alguna pantalla sabe pintar:
+Hay cinco, y sólo se declaran los que alguna pantalla sabe pintar:
 
 | Bloque | Qué hace | Desde |
 | --- | --- | --- |
@@ -49,16 +52,53 @@ Hay cuatro, y sólo se declaran los que alguna pantalla sabe pintar:
 | `code` | Código en cualquier lenguaje del catálogo. | V1 |
 | `image` | Una imagen del documento, con alt y pie. Los bytes van a S3. | it. 9 |
 | `spreadsheet` | Una hoja con datos y fórmulas. | it. 9 |
+| `ai_worklog` | Registro trazable de uso de IA (NexIA). Anida `AIWorklogData`. | it. 12 |
 
 El **lenguaje es una propiedad del bloque**, no un tipo de bloque: no hay
 `PythonBlock` ni `RBlock`, por la misma razón que no hay `REditor`. Un documento
 puede mezclar lenguajes y cada bloque elige el suyo.
 
-`ChartBlock` y `AIBlock` **siguen sin estar declarados**. Añadir un miembro a una
-unión discriminada por `type` no rompe los existentes, así que declararlos antes
-de que alguna pantalla sepa pintarlos sólo serviría para producir documentos que
-nadie puede abrir. `image` y `spreadsheet` entraron en la iteración 9 *con* su
-renderizador, su persistencia y su exportación, que es la condición.
+`ChartBlock` **sigue sin estar declarado**. Añadir un miembro a una unión
+discriminada por `type` no rompe los existentes, así que declararlo antes de que
+alguna pantalla sepa pintarlo sólo serviría para producir documentos que nadie
+puede abrir. `image` y `spreadsheet` entraron en la iteración 9, y `ai_worklog`
+en la 12, *con* su renderizador, su persistencia y su exportación, que es la
+condición.
+
+### `ai_worklog`: el registro, no una IA
+
+Este bloque **no llama a ningún modelo**. Nextudio no guarda claves de API, no
+transmite prompts a ningún servicio y no genera texto. Lo que hace el bloque es
+documentar lo que una persona hizo con una herramienta de fuera.
+
+Su forma anida el registro en vez de aplanarlo:
+
+```ts
+interface NexBookAIWorklogBlock {
+  id: string;
+  type: 'ai_worklog';
+  worklog: AIWorklogData;              // el MISMO objeto del entregable legacy
+  responseImages?: NexBookAIWorklogImage[];
+  conclusionMode?: 'none' | 'optional' | 'required';
+  editableByStudent?: boolean;
+}
+```
+
+Anidar es lo que permite que el entregable `ai_worklog` de siempre y este bloque
+lleven literalmente el mismo objeto: `normalizeAIResult()` y
+`aiWorklogToMarkdown()` sirven para los dos sin mapeo, y el esquema es el mismo
+`aiWorklogDataSchema`. Aplanar los once campos habría creado una segunda forma
+del mismo registro, y la segunda es siempre la que se queda atrás.
+
+`conclusionMode` actúa sobre **`studentAnalysis`**, que ya existía. No hay un
+segundo campo de conclusión. `required` se comprueba al **entregar**
+(`api/assignments/[assignmentId]/submission/route.ts`), nunca al guardar: un
+borrador a medias tiene que poder autoguardarse. Y el valor que manda es el de la
+**plantilla** del paso, no el que llegue del navegador.
+
+Las capturas de la respuesta usan el **mismo almacén de assets** que
+`ImageBlock`: mismo prefijo, mismo límite, misma lista de MIME (PNG, JPEG, WebP;
+sin SVG). Copiar o publicar un NexBook sigue sin duplicar bytes.
 
 ### Markdown y seguridad
 
@@ -262,7 +302,7 @@ alguien.
 
 ### Autoguardado
 
-800 ms tras la última pulsación, igual que el resto de UINexus. Estados:
+800 ms tras la última pulsación, igual que el resto de Nextudio. Estados:
 `Guardando…`, `Guardado`, `Error al guardar`, `Guardado detenido`. **Un error de
 guardado nunca se oculta.**
 
@@ -421,24 +461,79 @@ reconstruye el documento campo a campo, y está probada.
 | `ImageBlock` | **Hecho** (it. 9) | Un miembro más de la unión. Sigue siendo **distinto** de `ImageOutput`: una imagen insertada a mano y una generada por código no son lo mismo, y una salida NO se convierte sola en bloque. |
 | Outputs ricos | **Hecho** (it. 9) | Valores nuevos de `stream`, sin subir la versión del formato. |
 | `SpreadsheetBlock` | **Hecho** (it. 9) | Un miembro más, con `SpreadsheetBridge` en medio para no acoplar los kernels a la implementación de la hoja. |
+| `AIWorklogBlock` | **Hecho** (it. 12) | Un miembro más, que **anida** `AIWorklogData` en vez de aplanarlo. No ejecuta IA y no hay credenciales en ninguna parte del modelo. |
 | `ChartBlock` | Previsto | Una gráfica generada por código se persiste hoy como `ImageOutput`. Un `ChartBlock` sobre datos estructurados es otra cosa y necesita su propio editor. |
-| `AIBlock` | Previsto | Un miembro más. La credencial vive **fuera** del documento, siempre. |
+| Puente hoja/imagen/output ↔ kernels | **Hecho** (it. 13) | `NexLab Data Bridge` (`lib/lab/`), que **reutiliza** `SpreadsheetBridge`. Ver más abajo. |
+| Importación XLSX y CSV | **Hecho** (it. 13) | El archivo alimenta el `SpreadsheetBlock` y deja de mandar: la fuente de verdad pasa a ser el bloque. |
 | Project Workspace | Previsto | Otro `kind` de workspace. NexBook **no** debe convertirse en un IDE multiarchivo. |
 
 ---
 
-## Lo que NO hace (tras la iteración 9)
+## Lo que NO hace (tras la iteración 12)
 
-- **Sin `AIBlock`.** Diseñado, no declarado. Ver más abajo.
 - **Sin `ChartBlock`.** Una gráfica generada por código se guarda como imagen.
+- **Sin ejecución de IA.** `ai_worklog` registra; no llama a ningún modelo, no
+  guarda claves y no genera texto. Ver más abajo.
+- **Sin archivo genérico en el registro de IA.** PDF, DOCX o ZIP como evidencia
+  de una respuesta exigen otra lista blanca de MIME, otro límite de tamaño y otra
+  decisión sobre cómo se sirven al publicar. Es una decisión aparte.
 - **Sin entrada estándar.** `input()` y `readline()` no tienen de dónde leer.
 - **Sin `.ipynb`, `.qmd` ni PDF.** `.nexbook` sí está implementado.
 - **Sin historial de reentregas en la interfaz.** El esquema lo admite.
 - **Sin colaboración en tiempo real.** Un 409 avisa; no se fusiona.
 - **Sin arrastrar y soltar bloques**: se mueven con botones, que además funcionan
   con el teclado. Duplicar sí se añadió.
-- **Sin puente hoja ↔ Python/R.** La abstracción existe; la conexión no.
 - **Sin recolección de assets huérfanos.** Ver docs/LIMITATIONS.md.
+- **Sin recálculo automático entre bloques.** Editar una hoja no reejecuta nada:
+  el modelo es explícito. Ver «NexLab Data Bridge» más abajo.
+
+---
+
+## NexLab Data Bridge (iteración 13)
+
+Los bloques dejaron de estar computacionalmente aislados:
+
+```
+NexBook
+├── SpreadsheetBlock ─┐
+├── ImageBlock ───────┤
+├── results (outputs) ┤
+│                     ▼
+│             NexLab Data Bridge      lib/lab/
+│                     │
+│              NotebookKernel
+│              ├── Python   nex.sheet("Ventas")
+│              └── R        nex_sheet("Ventas")
+└── resultados
+```
+
+**Reutiliza `SpreadsheetBridge`, no lo sustituye.** El puente ya sabía evaluar
+fórmulas y deducir encabezados; lo que faltaba para conectarlo a un kernel era
+resolución con identidad estable, un tipo cerrado que pueda cruzar al Worker y
+preparación bajo demanda. Eso es lo que añade `lib/lab/data-bridge.ts`.
+
+**Tres reglas que no se negocian:**
+
+1. **Bajo demanda.** Se lee el fuente de la celda antes de ejecutarla y se
+   prepara **sólo lo que referencia**. Un NexBook con cien imágenes que ejecuta
+   una celda que lee una hoja transfiere una hoja. El precio: las referencias
+   tienen que ser **literales**.
+2. **Ninguna URL cruza.** Los bytes de una imagen los descarga el HILO PRINCIPAL
+   por la ruta autorizada de siempre; al Worker llega el contenido. Mandarle una
+   URL firmada habría devuelto al código la capacidad de salir a la red.
+3. **Nada de grafo reactivo.** Editar datos no ejecuta nada. `editar → ejecutar →
+   el bloque lee el estado actual`, que es predecible y se puede enseñar.
+
+**Identidad.** `blockId` manda: mover un bloque no rompe ninguna referencia. El
+nombre es comodidad, y dos bloques con el mismo nombre producen un **error** que
+los nombra a los dos. Elegir el primero en silencio significaría que añadir una
+hoja cambia el resultado de una celda que nadie tocó.
+
+**Importar datos.** CSV y XLSX alimentan un `SpreadsheetBlock` y **dejan de
+mandar**: después de importar, la fuente de verdad es el bloque. Una hoja de
+Excel se convierte en **un bloque**, con su nombre del libro. El lector de XLSX
+es propio, sobre `fflate`; lo que no soporta lo **avisa**, nunca lo inventa. Ver
+`lib/spreadsheet/xlsx.ts` y `docs/LIMITATIONS.md`.
 
 ---
 
@@ -485,7 +580,7 @@ que **una tabla rica no exige pandas**: `[{"ciudad": "Durango", "hab": 654876}]`
 
 No se usa el HTML que sabe generar pandas. Renderizar marcado producido por el
 código del alumnado es justo lo que `MarkdownContent` lleva todo el proyecto
-evitando; se extraen columnas y filas, y quien las pinta es UINexus.
+evitando; se extraen columnas y filas, y quien las pinta es Nextudio.
 
 Las figuras **se cierran** tras leerlas. Sin eso, en una sesión persistente cada
 celda volvería a emitir las figuras abiertas y cinco celdas darían quince
@@ -508,7 +603,7 @@ npm run runtimes:python   # 13 ruedas, ~16.6 MB, verificadas
 ```
 
 Es **opcional a propósito**: `npm run build` sin red tiene que seguir
-funcionando. Sin ruedas, UINexus funciona igual y `import pandas` falla con un
+funcionando. Sin ruedas, Nextudio funciona igual y `import pandas` falla con un
 error explicado en vez de a medias.
 
 El `pyodide-lock.json` que se publica va **recortado** a las ruedas presentes. Si
@@ -760,21 +855,29 @@ implementa ninguno todavía.
 
 ---
 
-## `AIBlock`: diseñado, NO implementado
+## IA: lo que se implementó y lo que sigue fuera
 
-No está en el union type, y esa es la regla: no se declara un bloque sin
-renderizador, persistencia y modelo de permisos.
+El bloque `ai_worklog` (iteración 12, NexIA) entró con su tipo, su esquema, su
+editor, su renderizador de sólo lectura, su persistencia, su snapshot de entrega,
+su lista blanca de publicación y exportación y sus pruebas. Es la misma regla de
+siempre: no se declara un bloque a medias.
 
-Cuando llegue, la separación innegociable es ésta:
+Lo que ese bloque **no** es, y no va a serse por ampliación:
 
 ```
-AIBlock            referencia a proveedor, modelo y contexto
-Credential Vault   entidad COMPLETAMENTE independiente
+ai_worklog       registro de lo que la persona hizo FUERA de Nextudio
+                 → texto, Markdown, capturas y un enlace
+
+lo que NO hay    proveedor de IA, clave de API, BYOK, streaming, RAG,
+                 agentes, detección automática de uso de IA ni cálculo
+                 de «porcentaje generado»
 ```
 
-Nunca `AIBlock.apiKey`. Una credencial dentro del documento viajaría en cada
-exportación, en cada publicación y en cada snapshot de entrega —y este mismo
+Nunca habrá una credencial dentro del documento. Una clave de API viajaría en
+cada exportación, en cada publicación y en cada snapshot de entrega —y este mismo
 archivo documenta tres caminos por los que un documento sale de la plataforma—.
+Si algún día Nextudio ejecuta un modelo, la credencial vivirá en una entidad
+COMPLETAMENTE independiente y el registro seguirá siendo lo que es hoy.
 
 ### Política docente de IA
 

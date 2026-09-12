@@ -15,7 +15,7 @@ import { CopyButton } from './copy-button';
  * No instala nada. No ejecuta nada. No descarga nada. Los comandos son TEXTO:
  * se muestran y se copian, y la persona los pega en su propia terminal si
  * quiere. Esa es una propiedad de la arquitectura y no una opción desactivada:
- * no existe en UINexus ninguna ruta capaz de ejecutar un comando.
+ * no existe en Nextudio ninguna ruta capaz de ejecutar un comando.
  *
  * Por eso el botón que lleva aquí dice «Ver instalación» y no «Instalar», y por
  * eso cada bloque de comando se pinta como código con su botón de copiar, con
@@ -99,7 +99,7 @@ export function SkillDetail({ courseId, skillId }: { courseId: string; skillId: 
                 Cómo instalarla
               </h2>
               <p className="mt-1 text-sm text-muted">
-                Estos comandos los ejecutas tú en tu propia terminal. UINexus sólo te los
+                Estos comandos los ejecutas tú en tu propia terminal. Nextudio sólo te los
                 muestra.
               </p>
 

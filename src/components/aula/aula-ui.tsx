@@ -18,7 +18,7 @@ import { formatDueLabel } from '@/lib/due-date';
  * Son deliberadamente pocas y pequeñas. La tentación en una plataforma
  * académica es inventar un sistema de componentes nuevo; aquí se reutilizan las
  * clases que ya existen en `globals.css` (`panel`, `field`, `chip`, `btn`,
- * `meta`) para que el aula se vea como el resto de UINexus y no como un
+ * `meta`) para que el aula se vea como el resto de Nextudio y no como un
  * producto pegado al lado.
  */
 
@@ -79,8 +79,17 @@ export function AssignmentStatusBadge({ status }: { status: AssignmentStatus }) 
   );
 }
 
+/**
+ * Qué clase de actividad es, en una palabra.
+ *
+ * `ASSIGNMENT_TYPE_LABEL` sólo nombra los cinco tipos anteriores a las
+ * actividades por partes: para una `workflow` devolvía `undefined` y el chip
+ * salía vacío. Y no se le puede añadir «Workflow» a esa tabla, porque es una
+ * etiqueta que se lee en la lista de la materia. Se dice lo que la persona ve:
+ * que la actividad tiene partes.
+ */
 export function TypeChip({ type }: { type: AssignmentType }) {
-  return <span className="tag">{ASSIGNMENT_TYPE_LABEL[type]}</span>;
+  return <span className="tag">{ASSIGNMENT_TYPE_LABEL[type] ?? 'Por partes'}</span>;
 }
 
 // ---------------------------------------------------------------------------

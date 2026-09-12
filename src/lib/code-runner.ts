@@ -15,7 +15,7 @@ export { CODE_RUN_LIMITS } from './code-runner-contract';
 /**
  * Ejecución de código: la interfaz, y por qué hoy no hay nadie detrás.
  *
- * ## Lo que UINexus NO hace, y no por falta de ganas
+ * ## Lo que Nextudio NO hace, y no por falta de ganas
  *
  * No ejecuta el código del alumnado. Ni con `exec`, ni con `spawn`, ni con un
  * `Rscript` en el host de Next.js. Ejecutar código arbitrario en el mismo
@@ -42,7 +42,7 @@ export { CODE_RUN_LIMITS } from './code-runner-contract';
  *  · Salida acotada: un bucle que imprime no puede llenar la memoria de nadie.
  *  · Tamaño de código acotado (`ACADEMIC_LIMITS.codeMax`).
  *  · Sin red por defecto.
- *  · Sin acceso a ninguna variable de entorno de UINexus. El token del runner
+ *  · Sin acceso a ninguna variable de entorno de Nextudio. El token del runner
  *    viaja en la cabecera de ESTA petición y nunca dentro del entorno de
  *    ejecución.
  *  · El cliente elige QUÉ código y en qué lenguaje, nunca QUÉ COMANDO: en esta

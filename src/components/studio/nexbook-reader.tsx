@@ -5,13 +5,14 @@ import { evaluateSheet, formatValue, isFormulaError } from '@/lib/spreadsheet/fo
 import { cellKey, columnName } from '@/lib/spreadsheet/cells';
 import type { NexBookBlock, NexBookDocument, NexBookSheetData } from '@/lib/types';
 import { NexBookOutputs } from './nexbook-outputs';
+import { NexBookWorklogView } from './nexbook-worklog';
 
 /**
  * Un NexBook en modo LECTURA.
  *
- * ## Por qué no es Studio con `editable: false`
+ * ## Por qué no es NexLab con `editable: false`
  *
- * Porque Studio arrastra el kernel, Monaco y todo lo que hace falta para
+ * Porque NexLab arrastra el kernel, Monaco y todo lo que hace falta para
  * ejecutar, y aquí nada de eso puede cargarse. Abrir una publicación no puede
  * costar 13 MB de Pyodide ni 46 MB de webR: quien la abre viene de un enlace y
  * sólo quiere leer.
@@ -21,7 +22,7 @@ import { NexBookOutputs } from './nexbook-outputs';
  * nadie va a editar.
  *
  * ```
- * Studio    editar + ejecutar    kernel, Monaco, autoguardado
+ * NexLab    editar + ejecutar    kernel, Monaco, autoguardado
  * Reader    leer                 nada de eso
  * ```
  *
@@ -79,6 +80,12 @@ function ReaderBlock({
           </pre>
         </div>
       );
+
+    case 'ai_worklog':
+      // El MISMO renderizador que la vista docente y que un bloque bloqueado.
+      // Uno solo: un registro académico que se viera distinto según quién lo
+      // abre dejaría de servir para comparar.
+      return <NexBookWorklogView block={block} assetUrl={(assetId) => assetUrl(assetId)} />;
 
     case 'image':
       return (

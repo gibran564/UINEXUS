@@ -12,19 +12,35 @@ import type { Project, ProjectRecord } from './types';
  * Origin público de la aplicación. La variable nueva expresa su propósito;
  * `NEXT_PUBLIC_SITE_URL` se conserva como alias para despliegues existentes.
  */
-export const APP_ORIGIN = (
-  process.env.NEXT_PUBLIC_APP_ORIGIN ??
-  process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.NODE_ENV === 'production' ? 'https://uinex.vercel.app' : 'http://localhost:3000')
-).replace(/\/$/, '');
+/**
+ * El primer origen que de verdad diga algo, sin la barra final.
+ *
+ * VACÍO cuenta como ausente, y ésa es toda la diferencia. Con `??` una variable
+ * definida como cadena vacía —que es lo que deja un panel de despliegue al
+ * borrar un valor, y lo que el sandbox local escribe a propósito para decir «no
+ * hay»— se colaba tal cual, y el `new URL('')` de más abajo reventaba con
+ * `Invalid URL`: un error que no nombra la variable, que ocurre al CARGAR el
+ * módulo y que por tanto tira la compilación entera de una página estática.
+ *
+ * Lo encontró el sandbox compilado (`npm run prod:local`), no el de desarrollo.
+ */
+const firstOrigin = (...candidates: (string | undefined)[]): string =>
+  (candidates.find((value) => value?.trim()) ?? '').trim().replace(/\/$/, '');
+
+export const APP_ORIGIN = firstOrigin(
+  process.env.NEXT_PUBLIC_APP_ORIGIN,
+  process.env.NEXT_PUBLIC_SITE_URL,
+  process.env.NODE_ENV === 'production' ? 'https://uinex.vercel.app' : 'http://localhost:3000'
+);
 
 /** Alias compatible para metadata, robots y sitemap. */
 export const SITE_URL = APP_ORIGIN;
 export const APP_HOST = new URL(APP_ORIGIN).host;
 
-export const PROJECTS_ORIGIN =
-  process.env.NEXT_PUBLIC_PROJECTS_ORIGIN?.replace(/\/$/, '') ??
-  'http://localhost:5002';
+export const PROJECTS_ORIGIN = firstOrigin(
+  process.env.NEXT_PUBLIC_PROJECTS_ORIGIN,
+  'http://localhost:5002'
+);
 
 export function profilePath(handle: string): string {
   return `/@${handle}`;

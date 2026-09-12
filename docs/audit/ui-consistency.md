@@ -2,7 +2,7 @@
 
 ## Veredicto
 
-**UINexus parece una única aplicación coherente, y eso es un logro poco común.**
+**Nextudio parece una única aplicación coherente, y eso es un logro poco común.**
 Hay un lenguaje visual declarado, argumentado y aplicado: papel cuadriculado y
 tinta, filetes en vez de sombras, radios pequeños, serif variable para títulos,
 acento terracota apagado, y la regla explícita de que «el color nunca carga la
@@ -132,7 +132,7 @@ Recuento de prefijos de breakpoint en todo `src/**/*.tsx`:
 | `2xl:` | 1536 px | **0** |
 
 Los dos `xl:` están en el navbar y sólo mueven el conmutador de tema entre la
-barra y el menú de cuenta. **Ningún contenido de UINexus cambia por encima de
+barra y el menú de cuenta. **Ningún contenido de Nextudio cambia por encima de
 1024 px.** `container-page` topa en 78 rem (1248 px) y el muro en 48 rem
 (768 px). El resultado está medido en `responsive.md`.
 
@@ -199,7 +199,7 @@ usan.
   numeración. Un solo trabajo, bien hecho, usado con constancia.
 - **`.section-mark`.** La cruz de la retícula como marca de sección: firma visual
   propia construida con dos gradientes, sin imagen ni icono. Es lo más
-  «UINexus» del sistema.
+  «Nextudio» del sistema.
 - **`.chip` y su estado desde ARIA.** Ver `accessibility.md`.
 - **El comentario de cada decisión.** `globals.css` explica por qué de cada
   elección. Es la razón por la que esta auditoría ha podido distinguir «decisión

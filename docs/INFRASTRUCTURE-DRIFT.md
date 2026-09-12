@@ -5,7 +5,7 @@
 
 ## El hecho
 
-`infra/uinexus.cfn.yaml` declara la infraestructura de UINexus, pero **ninguno
+`infra/uinexus.cfn.yaml` declara la infraestructura de Nextudio, pero **ninguno
 de los recursos que existen en la cuenta fue creado por esa pila**. Se
 comprobó recurso a recurso: ninguna tabla lleva etiquetas
 `aws:cloudformation:stack-name`, que es lo que CloudFormation pone

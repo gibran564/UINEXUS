@@ -12,7 +12,7 @@ import type { NexBookImageBlock, NexBookImageMimeType } from '@/lib/types';
  * El componente recibe una función `upload` y una `resolve`. No sabe que hay S3
  * detrás, ni que la subida es un POST firmado en dos pasos: sabe que entrega un
  * archivo y recibe un identificador. Eso es lo que permite que el mismo bloque
- * se pinte en Studio, en la revisión de una entrega y en una publicación, donde
+ * se pinte en NexLab, en la revisión de una entrega y en una publicación, donde
  * los permisos de lectura son tres cosas distintas.
  *
  * ## La vista previa local cubre el hueco

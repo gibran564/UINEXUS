@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { PracticeWorkspace } from '@/components/workspace/practice-workspace';
 
 export const metadata: Metadata = {
-  title: 'Práctica',
+  title: 'NexCode',
   robots: { index: false, follow: false },
 };
 

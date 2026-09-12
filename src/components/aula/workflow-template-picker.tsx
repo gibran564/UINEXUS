@@ -70,8 +70,8 @@ export function WorkflowTemplatePicker({
     <div className="mt-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm text-muted">
-          Empieza desde un proceso ya armado. Después puedes cambiar los pasos, quitarlos,
-          reordenarlos o hacerlos opcionales.
+          Empieza desde un proceso ya armado. Después puedes cambiar las partes, quitarlas,
+          reordenarlas o hacerlas opcionales.
         </p>
         {hasSteps && (
           <button
@@ -98,7 +98,7 @@ export function WorkflowTemplatePicker({
                   <h4 className="font-medium">{template.name}</h4>
                   <p className="mt-1 text-sm text-muted">{template.summary}</p>
                   <p className="mt-2 text-label text-subtle tabular-nums">
-                    {steps.length} pasos ·{' '}
+                    {steps.length} partes ·{' '}
                     {steps.filter((step) => step.required).length} obligatorios
                   </p>
 
@@ -110,7 +110,7 @@ export function WorkflowTemplatePicker({
                       }
                       className="btn btn-primary btn-sm"
                     >
-                      {hasSteps ? 'Reemplazar pasos' : 'Usar esta plantilla'}
+                      {hasSteps ? 'Reemplazar las partes' : 'Usar esta plantilla'}
                     </button>
                     <button
                       type="button"
@@ -118,14 +118,14 @@ export function WorkflowTemplatePicker({
                       aria-expanded={showing}
                       className="btn btn-ghost btn-sm"
                     >
-                      {showing ? 'Ocultar pasos' : 'Ver los pasos'}
+                      {showing ? 'Ocultar las partes' : 'Ver las partes'}
                     </button>
                   </div>
 
                   {confirming === template.id && (
                     <div className="mt-3">
                       <Notice tone="error">
-                        Esto reemplaza los pasos que ya escribiste. No se puede deshacer.
+                        Esto reemplaza las partes que ya escribiste. No se puede deshacer.
                       </Notice>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <button

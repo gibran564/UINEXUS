@@ -15,6 +15,10 @@ import {
   type BatchWriteCommandInput,
 } from '@aws-sdk/lib-dynamodb';
 import { INDEXES, TABLES } from '@/lib/aws/config';
+import {
+  tableDefinitions,
+  tablePrimaryKeys,
+} from '../../../scripts/lib/table-definitions.mjs';
 import type { AssignmentRecord } from '@/lib/types';
 import type { SubmissionRecord } from '@/lib/types';
 import { COURSE_FIXTURES, USER_FIXTURES } from './fixtures';
@@ -42,206 +46,21 @@ const documentClient = DynamoDBDocumentClient.from(rawClient, {
   marshallOptions: { removeUndefinedValues: true },
 });
 
-const tableDefinitions: CreateTableCommandInput[] = [
-  {
-    TableName: TABLES.users,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'uid', AttributeType: 'S' },
-      { AttributeName: 'handle', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'uid', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.usersByHandle,
-        KeySchema: [{ AttributeName: 'handle', KeyType: 'HASH' }],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-  {
-    TableName: TABLES.courses,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-  },
-  {
-    TableName: TABLES.assignments,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'id', AttributeType: 'S' },
-      { AttributeName: 'courseId', AttributeType: 'S' },
-      { AttributeName: 'createdAt', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.assignmentsByCourse,
-        KeySchema: [
-          { AttributeName: 'courseId', KeyType: 'HASH' },
-          { AttributeName: 'createdAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-  /**
-   * La biblioteca de prompts. Hace falta aquí desde que un paso puede citar uno:
-   * guardar la actividad comprueba que ese prompt sea de ESTA materia, y sin la
-   * tabla la comprobación no se puede ejercer.
-   */
-  {
-    TableName: TABLES.prompts,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'id', AttributeType: 'S' },
-      { AttributeName: 'courseId', AttributeType: 'S' },
-      { AttributeName: 'createdAt', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.promptsByCourse,
-        KeySchema: [
-          { AttributeName: 'courseId', KeyType: 'HASH' },
-          { AttributeName: 'createdAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-  /**
-   * Skills, recursos generales y proyectos. Los tres hacen falta desde que el
-   * Inicio autenticado compone su muro: sin ellos la ruta no se puede ejercer,
-   * y lo que hay que probar de esa ruta es justamente qué deja fuera.
-   */
-  {
-    TableName: TABLES.skills,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'id', AttributeType: 'S' },
-      { AttributeName: 'courseId', AttributeType: 'S' },
-      { AttributeName: 'createdAt', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.skillsByCourse,
-        KeySchema: [
-          { AttributeName: 'courseId', KeyType: 'HASH' },
-          { AttributeName: 'createdAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-  {
-    TableName: TABLES.resources,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'id', AttributeType: 'S' },
-      { AttributeName: 'courseId', AttributeType: 'S' },
-      { AttributeName: 'createdAt', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.resourcesByCourse,
-        KeySchema: [
-          { AttributeName: 'courseId', KeyType: 'HASH' },
-          { AttributeName: 'createdAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-  /**
-   * El índice `byStatus` es DISPERSO: `statusKey` sólo existe en los proyectos
-   * publicados y listables. Es la misma garantía estructural que en producción,
-   * y por eso la prueba de que un borrador no aparece en el muro vale algo.
-   */
-  {
-    TableName: TABLES.projects,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'id', AttributeType: 'S' },
-      { AttributeName: 'statusKey', AttributeType: 'S' },
-      { AttributeName: 'listedAt', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.projectsByStatus,
-        KeySchema: [
-          { AttributeName: 'statusKey', KeyType: 'HASH' },
-          { AttributeName: 'listedAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-  {
-    TableName: TABLES.submissions,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'id', AttributeType: 'S' },
-      { AttributeName: 'assignmentId', AttributeType: 'S' },
-      { AttributeName: 'studentId', AttributeType: 'S' },
-      { AttributeName: 'updatedAt', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.submissionsByAssignment,
-        KeySchema: [
-          { AttributeName: 'assignmentId', KeyType: 'HASH' },
-          { AttributeName: 'updatedAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-      {
-        IndexName: INDEXES.submissionsByStudent,
-        KeySchema: [
-          { AttributeName: 'studentId', KeyType: 'HASH' },
-          { AttributeName: 'updatedAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-  {
-    TableName: TABLES.workspaces,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [
-      { AttributeName: 'id', AttributeType: 'S' },
-      { AttributeName: 'ownerUid', AttributeType: 'S' },
-      { AttributeName: 'updatedAt', AttributeType: 'S' },
-    ],
-    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
-    GlobalSecondaryIndexes: [
-      {
-        IndexName: INDEXES.workspacesByOwner,
-        KeySchema: [
-          { AttributeName: 'ownerUid', KeyType: 'HASH' },
-          { AttributeName: 'updatedAt', KeyType: 'RANGE' },
-        ],
-        Projection: { ProjectionType: 'ALL' },
-      },
-    ],
-  },
-];
+/**
+ * Las definiciones vienen de `scripts/lib/table-definitions.mjs`, que es el
+ * reflejo ejecutable de `infra/uinexus.cfn.yaml`.
+ *
+ * Estaban escritas aquí a mano, y eso costó dos fallos de la misma familia
+ * —`projects.byOwner` en la Fase 2, `projects.byPath` y las tablas `handles` y
+ * `reports` en la Fase 3—: una tabla de pruebas que no es la de producción
+ * prueba otra cosa. Con el sandbox local habría habido un TERCER sitio que
+ * sincronizar a mano, así que el riesgo R12 se cierra donde se tenía que
+ * cerrar: dejando de tener copias.
+ */
+const tableDefinitionList: CreateTableCommandInput[] = tableDefinitions(TABLES, INDEXES);
 
-const tableKeys = new Map<string, string>([
-  [TABLES.users, 'uid'],
-  [TABLES.courses, 'id'],
-  [TABLES.assignments, 'id'],
-  [TABLES.prompts, 'id'],
-  [TABLES.skills, 'id'],
-  [TABLES.resources, 'id'],
-  [TABLES.projects, 'id'],
-  [TABLES.submissions, 'id'],
-  [TABLES.workspaces, 'id'],
-]);
+/** La clave primaria de cada tabla, para poder vaciarla entre pruebas. */
+const tableKeys = tablePrimaryKeys(TABLES);
 
 async function batchWrite(
   requestItems: NonNullable<BatchWriteCommandInput['RequestItems']>
@@ -258,7 +77,7 @@ async function batchWrite(
 
 export async function createIntegrationTables(): Promise<void> {
   assertLocalTestTarget();
-  for (const definition of tableDefinitions) {
+  for (const definition of tableDefinitionList) {
     await rawClient.send(new CreateTableCommand(definition));
     await waitUntilTableExists(
       { client: rawClient, maxWaitTime: 20, minDelay: 1, maxDelay: 1 },
@@ -306,7 +125,7 @@ export async function resetAndSeedIntegrationData(): Promise<void> {
 
 export async function deleteIntegrationTables(): Promise<void> {
   assertLocalTestTarget();
-  for (const definition of [...tableDefinitions].reverse()) {
+  for (const definition of [...tableDefinitionList].reverse()) {
     try {
       await rawClient.send(new DeleteTableCommand({ TableName: definition.TableName }));
     } catch (caught) {

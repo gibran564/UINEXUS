@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { flattenSubmission, type FlatField } from '@/lib/export/submissions';
 import { aiWorklogToMarkdown } from '@/lib/ai-worklog';
+import { partActionLabel } from '@/lib/activity-builder';
 import type { AIWorklogData, Assignment, Submission } from '@/lib/types';
 import { Notice, SubmissionBadge } from './aula-ui';
+import { EvidenceReader } from './evidence-reader';
 import { MarkdownContent } from './markdown-content';
 
 /**
@@ -47,7 +49,23 @@ export function SubmissionViewer({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const fields = flattenSubmission(submission, assignment.researchQuestions);
+  /**
+   * ¿Se lee por partes?
+   *
+   * Lo decide el TIPO, igual que en la pantalla del alumnado y por la misma
+   * razón: una actividad por partes con una sola parte sigue siéndolo, y contar
+   * pasos confunde «una parte» con «ninguna» porque la lectura sintetiza uno
+   * para las actividades anteriores.
+   */
+  const byParts = assignment.type === 'workflow';
+
+  // El workflow va siempre: `flattenSubmission` lo necesita para saber qué
+  // pide cada Parte. Sin él devolvería los campos de una entrega libre.
+  const fields = flattenSubmission(
+    submission,
+    assignment.researchQuestions,
+    assignment.workflow
+  );
   const worklog = submission.type === 'ai_worklog' ? (submission.data as AIWorklogData) : null;
 
   const fullText = worklog
@@ -110,11 +128,53 @@ export function SubmissionViewer({
           </div>
         )}
 
-        <div className="mt-5 space-y-5">
-          {fields.map((field, index) => (
-            <CopyBlock key={`${field.label}-${index}`} field={field} />
-          ))}
-        </div>
+        {/*
+          Una actividad por partes no tiene UNA respuesta: tiene una por parte,
+          y cada una puede ser un laboratorio, un programa o un archivo.
+          `flattenSubmission` sólo sabe aplanar los cinco tipos anteriores, así
+          que sobre una actividad por partes devolvía los campos de una entrega
+          libre y el visor enseñaba «(sin respuesta)» encima de un laboratorio
+          entero. Aquí se lee cada parte con el mismo lector que usa el
+          resultado del grupo.
+        */}
+        {byParts ? (
+          <div className="mt-5 space-y-6">
+            {assignment.workflow.map((part, index) => (
+              <section key={part.id} className="rounded-sm border border-line p-4">
+                <header className="border-b border-line pb-3">
+                  <p className="meta">
+                    Parte {index + 1} · {partActionLabel(part)}
+                  </p>
+                  <h3 className="mt-1 font-display text-h3">
+                    {part.title || partActionLabel(part)}
+                  </h3>
+                </header>
+                <div className="mt-4">
+                  {submission.stepEvidence[part.id] ? (
+                    <EvidenceReader
+                      assignmentId={submission.assignmentId}
+                      step={part}
+                      evidence={submission.stepEvidence[part.id]!}
+                    />
+                  ) : (
+                    <p className="text-sm text-subtle">(no entregó nada en esta parte)</p>
+                  )}
+                </div>
+                {submission.stepEvidence[part.id]?.note && (
+                  <p className="mt-3 border-t border-line pt-3 text-sm text-muted">
+                    Nota: {submission.stepEvidence[part.id]!.note}
+                  </p>
+                )}
+              </section>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-5 space-y-5">
+            {fields.map((field, index) => (
+              <CopyBlock key={`${field.label}-${index}`} field={field} />
+            ))}
+          </div>
+        )}
 
         <div className="mt-6 flex flex-wrap gap-2 border-t border-line pt-4">
           <button

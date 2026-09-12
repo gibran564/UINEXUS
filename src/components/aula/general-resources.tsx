@@ -37,7 +37,7 @@ export const RESOURCE_TYPE_LABEL: Record<CourseResourceType, string> = {
 /**
  * El dominio de una URL, para la tarjeta (§38).
  *
- * Se calcula en el NAVEGADOR a partir del texto. UINexus no visita el enlace
+ * Se calcula en el NAVEGADOR a partir del texto. Nextudio no visita el enlace
  * para sacarle título ni favicon, y no es pereza: pedir metadatos a un sitio
  * que alguien acaba de pegar convierte al servidor en un cliente de peticiones
  * arbitrarias, que es un problema de seguridad con nombre propio (SSRF). La

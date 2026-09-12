@@ -1,4 +1,35 @@
-# Arquitectura — UINexus
+# Arquitectura — Nextudio
+
+## 0. La marca y los identificadores son dos cosas
+
+El producto se llama **Nextudio** desde la Fase 1 del rediseño. La
+infraestructura **sigue diciendo `uinexus`**, y no es un descuido:
+
+| Se lee | Se ejecuta |
+|---|---|
+| La marca: títulos, portada, barra, pie, mensajes | Los identificadores: tablas, buckets, prefijos, variables, dominios |
+| Cambiarla cuesta editar copy | Cambiarlos cuesta migrar datos y romper enlaces ya entregados |
+| Es Nextudio | Es `uinexus-*`, `UINEXUS_*`, `uinexus.mx`, `uinexus-nexbook` |
+
+Por eso en este documento —y en el código— conviven las dos formas. La regla
+operativa está en `docs/NEXTUDIO-ROADMAP.md` §D2: se sustituye `UINexus` con
+capitalización exacta, y **nunca** `uinexus` ni `UINEXUS`.
+
+Los nombres de las experiencias, por si se leen aquí por primera vez:
+
+```
+Nextudio            el producto
+├── NexLab          el espacio por bloques   →  entidad: NexBook
+├── NexCode         el espacio de código     →  entidad: Workspace kind 'code'
+└── NexIA           trazabilidad de uso IA   →  entidad: NexBook con un bloque
+                                                 `ai_worklog`
+```
+
+**NexIA no es una entidad.** No hay `kind: 'nexia'`, ni tabla, ni documento
+propio: es un preset que crea un NexBook sembrado, y un bloque más de la unión.
+Tampoco ejecuta ninguna IA —no hay proveedor, ni clave de API, ni llamada a
+ningún modelo—: lo que hace es **registrar** lo que una persona hizo con una
+herramienta de fuera. Ver `docs/NEXBOOK.md`.
 
 ## 1. Idea rectora
 
@@ -217,7 +248,7 @@ No se ejecuta código de servidor de terceros. Aceptarlo abriría ejecución
 remota, abuso de CPU, minería, lectura de secretos, procesos persistentes y
 toda la superficie de dependencias de npm.
 
-La arquitectura deja la puerta abierta a **UINexus Apps** —proyectos con
+La arquitectura deja la puerta abierta a **Nextudio Apps** —proyectos con
 backend desplegados en contenedores aislados sobre Cloud Run— sin que nada del
 MVP haya que rehacerse: `projectType` ya es un enum extensible, la ficha ya
 está separada de la ejecución, y `liveProjectUrl()` es el único punto que
@@ -343,7 +374,7 @@ recurso corregido se corrige en todas partes; un recurso borrado deja una
 referencia que `lib/server/resources.ts` omite en silencio al resolver, para que
 borrar una Skill no vuelva inabrible la tarea que la recomendaba.
 
-### UINexus no ejecuta Skills
+### Nextudio no ejecuta Skills
 
 Una Skill es una FICHA. Sus comandos son texto que se muestra y se copia. No
 existe en el proyecto ninguna ruta, función ni cola capaz de ejecutar un
@@ -445,7 +476,7 @@ segundo lenguaje es cambiar un `enabled` y añadir su extensión a
 `CodeData` guarda el fuente pegado **y** la clave del archivo adjunto, y las dos
 conviven: pegarlo es lo que permite revisar sin descargar nada —que es como se
 corrigen veinte entregas—, adjuntarlo es lo que permite ejecutarlo. Cada una
-resuelve un uso distinto. UINexus no ejecuta ninguna de las dos (ver
+resuelve un uso distinto. Nextudio no ejecuta ninguna de las dos (ver
 docs/SECURITY.md).
 
 ### La política institucional, en un solo sitio
@@ -690,15 +721,19 @@ la vez. El contrato ya existe (`CodeRunner` en `code-runner-contract.ts`) y la U
 ya no conoce a su proveedor. Clasificación honesta hoy: **Planeado**, no
 «Experimental», porque no hay nada que probar todavía.
 
-## 15. NexBook y UINexus Studio (iteración 8)
+## 15. NexBook y NexLab (iteración 8)
 
 La documentación completa está en [`docs/NEXBOOK.md`](NEXBOOK.md). Aquí queda lo
 que afecta a la arquitectura general.
 
+> El editor se llamaba **UINexus Studio** hasta la Fase 1 de Nextudio. Hoy el
+> nombre visible es **NexLab**; el componente sigue siendo `NexBookStudio` y el
+> documento sigue siendo un `NexBook`. Ver `docs/NEXTUDIO-ROADMAP.md` §D3.
+
 ### Dónde encaja
 
 ```
-UINexus Studio
+NexLab (el espacio)
 ├── NexBook Workspace     ← implementado
 └── Project Workspace     ← previsto, no implementado
 ```
@@ -737,7 +772,7 @@ paso de actividad heredara variables de un NexBook abierto en otra pestaña.
 
 ### Concurrencia: la primera entidad con revisión
 
-Es la primera parte de UINexus con concurrencia optimista. Un NexBook es lo
+Es la primera parte de Nextudio con concurrencia optimista. Un NexBook es lo
 bastante grande y lo bastante largo de escribir para que «dos pestañas abiertas»
 deje de ser un caso raro, y ahí «gana el último en llegar» pierde media hora de
 trabajo.
@@ -879,7 +914,9 @@ canvas no tiene celdas que un lector de pantalla pueda anunciar.
 
 `SpreadsheetBridge` media entre las hojas y quien las lea, para que conectar
 Python y R a una hoja no obligue a que los motores sepan cómo está implementada.
-Hoy no están conectados.
+Hoy no están conectados: conectarlos es la **Fase 3.5 — NexLab Data Interop**,
+que reutiliza este puente en vez de crear un segundo. Ver
+`docs/NEXTUDIO-ROADMAP.md`.
 
 ### Leer y editar son dos pantallas
 
@@ -891,3 +928,148 @@ NexBookReader   leer                nada de eso                    167 kB
 `NexBookReader` no es Studio con `editable: false`. Abrir un enlace público no
 puede costar 13 MB de Pyodide ni 46 MB de webR, y un editor de cientos de
 kilobytes para enseñar código que nadie va a tocar tampoco.
+
+---
+
+## 17. La evolución a Nextudio (fases 1–6)
+
+Seis fases sobre la base anterior. La regla que las gobierna a todas, y que
+conviene leer antes de tocar nada de lo que sigue:
+
+> **Cambia la interfaz, no el motor.**
+
+`Workflow`, `WorkflowStep`, `StepDeliverable`, `StepPrompt`, `StepToolChoice`,
+`dependsOnStepIds` y `assignedTo` son los mismos que en la iteración 4. No hubo
+`ActivityV2`, ni migración de registros, ni un segundo constructor. Lo que se
+añadió fueron **capas de traducción**: módulos puros que convierten entre lo que
+una persona quiere decir y lo que el modelo guarda.
+
+```
+lib/activity-builder.ts    intención docente  ⇄  modelo académico
+lib/student-activity.ts    modelo académico   →  estados y progreso del alumnado
+```
+
+Los dos son puros —sin React, sin red— y por eso sus reglas se prueban una a
+una en vez de a través de una pantalla.
+
+### 17.1 Las tres experiencias no son tres productos
+
+```
+NexCode   Workspace kind 'code'      Monaco sobre un archivo
+NexLab    NexBook                    documento por bloques
+NexIA     bloque `ai_worklog`        registro de uso de IA, dentro de un NexBook
+```
+
+NexIA **no es una entidad**. Es un preset (`lib/nexia-preset.ts`) que crea un
+NexBook personal con un bloque de registro, y el mismo bloque puede vivir dentro
+de cualquier NexLab. Comparten `AIWorklogData` con el entregable `ai_worklog` de
+siempre: un registro es el mismo dato sea la actividad entera o una parte de
+cuatro.
+
+### 17.2 NexLab Data Interop: el puente, no un motor nuevo
+
+Una hoja de cálculo se lee desde Python (`nex.sheet("Ventas")`) y desde R
+(`nex_sheet("Ventas")`). Lo que hace posible eso es que los datos se preparan
+**antes** de ejecutar: el fuente de la celda se analiza en busca de referencias
+literales, se resuelven contra `SpreadsheetBridge` y se inyectan en el preludio
+del Worker.
+
+De ahí la limitación que no es un descuido: la referencia tiene que ser
+literal. `nex.sheet(nombre_variable)` no se puede resolver sin ejecutar primero,
+y resolverlo en caliente exigiría `SharedArrayBuffer` con COOP/COEP, que este
+origen no tiene. No devuelve datos vacíos: lanza un error que lo explica.
+
+El sandbox de ejecución no se abrió para esto. Ver §17.6 y `docs/SECURITY.md`.
+
+### 17.3 El creador docente: la forma se DERIVA
+
+La pantalla dejó de preguntar por la implementación. No hay «¿un paso o
+varios?», ni «tipo de entrega» entre nombres internos: hay **Partes**, y cada
+una declara una intención humana del catálogo de `ACTIVITY_ACTIONS`.
+
+Cómo se guarda lo decide `deriveActivity`:
+
+```
+ya era un proceso   → proceso            (nunca se degrada)
+2 o más partes      → proceso
+1 parte que cabe    → su forma antigua
+1 parte que no cabe → proceso
+```
+
+«Cabe» lo comprueba `legacyEquivalent` campo por campo: la parte no puede
+llevar título propio, ni instrucciones, ni prompt, ni herramienta, ni recursos,
+ni responsables, ni dependencias, ni pista, ni conclusión obligatoria. Nada de
+eso sobreviviría a la lectura antigua, así que su presencia obliga a guardar
+como proceso.
+
+Un proceso **no vuelve atrás** aunque se quede con una parte: la evidencia se
+indexa por id de parte, y la forma antigua se lee con el paso sintético `main`.
+
+### 17.4 La consecuencia de todo lo anterior, y la que más ha costado
+
+Una actividad `type: 'workflow'` **puede tener una sola Parte**.
+
+```
+❌  workflow.length > 1     confunde «una parte» con «ninguna»
+✅  assignment.type === 'workflow'
+```
+
+Contar partes falla porque la lectura sintetiza una para las actividades
+anteriores. Ese error costó tres fallos distintos en tres capas: el formulario
+del alumnado se quedaba sin nada que rellenar, el avance docente respondía 409
+sobre la pestaña que él mismo ofrecía, y la exportación devolvía «(sin
+respuesta)» encima de un laboratorio entero. Por eso `isSingleStep()` se retiró
+del código: el nombre invitaba a la decisión equivocada.
+
+### 17.5 La experiencia del estudiante
+
+La pantalla responde cinco preguntas en orden: **qué tengo que hacer → dónde lo
+hago → qué llevo → qué me falta → qué voy a entregar.** Nada de lo que se ve
+nombra el modelo.
+
+Todos los estados son **derivados**; no hay ningún campo nuevo persistido. El
+ciclo de vida sigue siendo el de `Submission`, y el avance dentro del borrador
+sigue siendo `stepEvidence`.
+
+La regla que sostiene la capa: *lo que la pantalla llama «lista para entregar»
+tiene que coincidir con lo que el servidor deja entregar*. Más permisiva
+habilitaría un botón que acaba en 409; más estricta bloquearía una entrega
+válida. Hay pruebas que comparan las dos cuentas directamente.
+
+**El laboratorio y la entrega hablan por `lib/server/student-labs.ts`.** Un
+NexLab se guarda solo, en su propio documento; la entrega guarda una COPIA
+congelada. El servidor dice qué laboratorios llevan trabajo —revisión mayor que
+1, que es lo que distingue «abrí la pestaña» de «guardé algo»— y, al entregar,
+recoge el que no llegó en el cuerpo. Lo que NO hace es guardar la copia
+continuamente: eso destruiría el congelado, que es lo que impide que seguir
+trabajando cambie lo que se califica.
+
+### 17.6 El sandbox local
+
+`npm run dev:local` levanta DynamoDB Local, el emulador de Firebase Auth, las
+tablas, la semilla y `next dev`. Es lo que permitió por fin probar los
+recorridos autenticados, que llevaban siendo deuda desde la primera iteración.
+
+```
+requireLocalSandbox()    prefijo de tablas reservado + endpoint loopback
+requireLocalFirebase()   proyecto demo-* + emulador declarado
+```
+
+El interruptor que abre el endpoint local (`UINEXUS_LOCAL_SANDBOX`) exige
+además `NODE_ENV === 'development'`, y `NODE_ENV` en Next es una constante de
+COMPILACIÓN: en un build de producción la rama que permitiría otro endpoint
+está literalmente eliminada del bundle. De ahí que `npm run prod:local` —la
+compilación real servida en local— **no tenga base de datos**: es la
+consecuencia de una garantía que vale más que la comodidad de probar.
+
+### 17.7 Qué corre dónde
+
+| | Se carga | Cuándo |
+|---|---|---|
+| Monaco | NexCode, bloque de código de un NexLab | al abrir el editor |
+| Pyodide / webR | al ejecutar una celda | nunca antes |
+| Parser de CSV/XLSX | al importar | nunca antes |
+| `NexBookStudio` | laboratorio | `next/dynamic`, al abrirlo |
+
+Ninguna ruta los carga de inicio. Lo comprueba el manifiesto de compilación, y
+un recorrido de Playwright sobre el build real lo confirma en el navegador.

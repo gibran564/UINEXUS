@@ -52,7 +52,7 @@ Requieren decisión de diseño e implementación real. Es el rediseño.
 | B8 | Separador «nuevo desde tu última visita» dentro de la lista | P2 | S | Medio | B3 |
 | B9 | Paginación o «cargar más» en el muro | P2 | M | Medio | `api/home` |
 | B10 | Pantalla propia de moderación de publicaciones | P2 | M | Medio | — |
-| B11 | Carril derecho «Del resto de UINexus» (≥1440 px) | P2 | M | Medio | B2 |
+| B11 | Carril derecho «Del resto de Nextudio» (≥1440 px) | P2 | M | Medio | B2 |
 | B12 | Cierre del muro con salida a `/explore` | P2 | S | Medio | B9 |
 
 **Orden sugerido**: B1 → A2 → B4 → B2 → B3 → B6 → B5 → B8 → B9 → B12 → B7 → B10 → B11.

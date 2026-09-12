@@ -5,6 +5,7 @@ import {
   workflowSubmissionInputSchema,
 } from '@/lib/academic-schemas';
 import { getOwnSubmission } from '@/lib/data/academic';
+import { getNexBookRecord, templateNexBookIdFor } from '@/lib/data/nexbooks';
 import {
   canWorkOnStep,
   missingRequiredSteps,
@@ -23,6 +24,7 @@ import { requireAssignmentAccess } from '@/lib/server/course-access';
 import { assertOpenForSubmission } from '@/lib/server/deadline';
 import { upsertSubmission } from '@/lib/server/academic-writes';
 import { assertResourcesBelongTo } from '@/lib/server/resources';
+import { fillMissingLabEvidence } from '@/lib/server/student-labs';
 import { LEGACY_STEP_ID } from '@/lib/types';
 import { isAcademicFileKeyFor } from '@/lib/aws/s3';
 import { LEGACY_CODE_LANGUAGE } from '@/lib/constants';
@@ -31,6 +33,7 @@ import type {
   AssignmentRecord,
   CodeData,
   MediaData,
+  NexBookSubmissionData,
   StepEvidence,
   SubmissionData,
   SubmissionRecord,
@@ -238,6 +241,14 @@ async function saveSteppedSubmission(
    * no.
    */
   if (input.intent === 'submit') {
+    /**
+     * Antes de contar lo que falta, se recoge el trabajo de laboratorio que
+     * existe pero no llegó en el cuerpo: es de quien entrega, está guardado, y
+     * no haberlo tenido abierto en esta pestaña no es una razón para
+     * considerarlo no hecho. Ver `lib/server/student-labs.ts`.
+     */
+    await fillMissingLabEvidence(assignment, evidence, actor.uid);
+
     const missing = missingRequiredSteps(assignment.workflow, evidence, actor.uid);
     if (missing.length > 0) {
       throw new HttpError(
@@ -245,6 +256,8 @@ async function saveSteppedSubmission(
         `Todavía te falta: ${missing.map((step) => step.title).join(', ')}.`
       );
     }
+
+    await assertConclusionsWritten(assignment, evidence, actor.uid);
   }
 
   /**
@@ -264,6 +277,84 @@ async function saveSteppedSubmission(
     intent: input.intent,
     stepEvidence: evidence,
   });
+}
+
+/**
+ * La conclusión obligatoria de un registro de IA, comprobada al ENTREGAR.
+ *
+ * ## Por qué aquí y no en el esquema
+ *
+ * Porque el esquema valida cada autoguardado. Un bloque cuya reflexión fuera
+ * obligatoria desde el primer carácter haría que el documento no se pudiera
+ * guardar mientras se escribe, que es exactamente cuando hay que guardarlo. La
+ * obligatoriedad es ACADÉMICA, no estructural: rige el acto de entregar.
+ *
+ * ## Por qué manda la PLANTILLA y no lo que llega del navegador
+ *
+ * `conclusionMode` es una decisión del profesorado. Si se leyera del snapshot
+ * que manda quien entrega, bastaría con mandar `conclusionMode: 'none'` para
+ * saltarse la regla —el esquema lo acepta, porque el campo es legítimo en un
+ * documento—. Se lee de la plantilla del paso, que es de la docente, y se
+ * empareja por id de bloque: la copia del estudiante CONSERVA los ids de la
+ * plantilla (ver `instanceDocumentFrom`), así que la correspondencia es exacta.
+ *
+ * Un bloque que la plantilla exigía y que ya no está en la entrega también
+ * falla: borrarlo no puede ser la forma de no contestarlo.
+ *
+ * Un NexIA personal no pasa por aquí: no hay actividad, no hay plantilla y
+ * nadie exige nada. `conclusionMode` es entonces una nota del propio autor.
+ */
+async function assertConclusionsWritten(
+  assignment: AssignmentRecord,
+  evidence: Record<string, StepEvidence>,
+  uid: string
+): Promise<void> {
+  for (const step of assignment.workflow) {
+    if (!canWorkOnStep(step, uid)) continue;
+    const deliverable = primaryDeliverable(step);
+
+    /**
+     * Un registro de IA como ENTREGABLE de la parte. La política la pone la
+     * parte, que es de la docente, y por eso no se lee de lo que llega del
+     * navegador: la evidencia sólo aporta lo que el estudiante escribió.
+     */
+    if (deliverable.type === 'ai_worklog') {
+      if (deliverable.conclusionMode !== 'required') continue;
+      const written = evidence[step.id]?.data as { studentAnalysis?: string } | undefined;
+      if (!(written?.studentAnalysis ?? '').trim()) {
+        throw new HttpError(
+          409,
+          `${step.title}: falta tu análisis en el registro de uso de IA. La actividad lo pide para poder entregar.`
+        );
+      }
+      continue;
+    }
+
+    if (deliverable.type !== 'nexbook') continue;
+
+    const template = await getNexBookRecord(templateNexBookIdFor(assignment.id, step.id));
+    const demanded = (template?.document.blocks ?? []).filter(
+      (block) => block.type === 'ai_worklog' && block.conclusionMode === 'required'
+    );
+    if (demanded.length === 0) continue;
+
+    const submitted = (evidence[step.id]?.data as NexBookSubmissionData | undefined)?.snapshot;
+    const byId = new Map(
+      (submitted?.blocks ?? []).map((block) => [block.id, block] as const)
+    );
+
+    for (const block of demanded) {
+      const written = byId.get(block.id);
+      const analysis =
+        written?.type === 'ai_worklog' ? (written.worklog.studentAnalysis ?? '').trim() : '';
+      if (!analysis) {
+        throw new HttpError(
+          409,
+          `${step.title}: falta tu análisis en el registro de uso de IA. La actividad lo pide para poder entregar.`
+        );
+      }
+    }
+  }
 }
 
 function assertOwnedAcademicFile(

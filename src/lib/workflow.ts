@@ -102,6 +102,13 @@ export function normalizeDeliverable(raw: Partial<StepDeliverable>): StepDeliver
     codeMode: raw.type === 'code' ? (raw.codeMode ?? LEGACY_CODE_MODE) : null,
     starterCode: raw.type === 'code' ? (raw.starterCode ?? '') : '',
     executionEnabled: raw.type === 'code' ? (raw.executionEnabled ?? false) : false,
+    /**
+     * Ausente significa `optional`, que es lo que hacían las partes guardadas
+     * antes de que la política existiera: se ofrecía el espacio y no se exigía.
+     * Normalizarlo a `required` habría hecho imposible entregar tareas que ya
+     * estaban en marcha.
+     */
+    conclusionMode: raw.type === 'ai_worklog' ? (raw.conclusionMode ?? 'optional') : null,
   };
 }
 
@@ -239,10 +246,18 @@ export function normalizeWorkflow(
     .map((step, index) => ({ ...step, order: index }));
 }
 
-/** ¿Es una tarea de un solo paso? Decide si la UX esconde el workflow (§20). */
-export function isSingleStep(assignment: { workflow: readonly unknown[] }): boolean {
-  return assignment.workflow.length <= 1;
-}
+/*
+ * Aquí vivía `isSingleStep(assignment)`, que devolvía `workflow.length <= 1`.
+ *
+ * Se RETIRÓ, y el hueco queda escrito porque lo que enseñó importa. Desde la
+ * Fase 4 una actividad por partes puede tener una sola, así que contar partes
+ * ya no responde «¿es un proceso?»: confunde «una parte» con «ninguna», porque
+ * la lectura sintetiza una para las actividades anteriores. Costó una regresión
+ * en la pantalla del alumnado y un 409 en el avance docente.
+ *
+ * La señal es `assignment.type === 'workflow'`. Una función con este nombre
+ * seguía invitando a la decisión equivocada aunque ya no la usara nadie.
+ */
 
 // ---------------------------------------------------------------------------
 // Evidencia

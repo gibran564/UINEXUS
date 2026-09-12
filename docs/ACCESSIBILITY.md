@@ -1,4 +1,4 @@
-# Evaluación de accesibilidad — UINexus
+# Evaluación de accesibilidad — Nextudio
 
 **Objetivo:** WCAG 2.2 nivel AA.
 **Método:** axe-core 4.10 sobre cada plantilla de página, en claro y oscuro, a
@@ -124,7 +124,7 @@ GET. Publicar y administrar sí lo requieren — leen y escriben archivos.
   si el recorrido es cómodo.
 - **Prueba con personas.** Cinco estudiantes publicando su primer proyecto
   encontrarían más de lo que ha encontrado esta auditoría entera.
-- **El contenido de los alumnos no se audita.** UINexus garantiza la
+- **El contenido de los alumnos no se audita.** Nextudio garantiza la
   accesibilidad de la plataforma, no la de los proyectos alojados. Una mejora
   futura interesante —y muy apropiada para la materia— sería ejecutar axe sobre
   cada proyecto publicado y devolver el informe a su autor.

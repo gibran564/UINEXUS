@@ -18,7 +18,7 @@
  * pandas sabe producir su propio HTML y aquí se ignora a propósito. Renderizar
  * marcado generado por el código del alumnado es exactamente lo que
  * `MarkdownContent` lleva todo el proyecto evitando; se extraen columnas y filas,
- * y quien las pinta es UINexus.
+ * y quien las pinta es Nextudio.
  *
  * ## Vive en su propio módulo
  *

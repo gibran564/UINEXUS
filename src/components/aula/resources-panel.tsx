@@ -32,7 +32,7 @@ import { CourseResourceEditor, GeneralResourceCard } from './general-resources';
  * obligaría a recordar en cuál estaba cada cosa.
  *
  * El botón de la Skill dice **Ver instalación** y no «Instalar», y no es
- * cosmética: UINexus no instala nada, no ejecuta nada y no descarga nada. Un
+ * cosmética: Nextudio no instala nada, no ejecuta nada y no descarga nada. Un
  * botón que dijera «Instalar» prometería algo que la plataforma no hace, y en
  * el peor caso haría creer que un comando ya se ejecutó.
  */

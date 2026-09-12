@@ -1,5 +1,7 @@
+import { safeMarkdownUrl } from './ai-worklog';
 import { NEXBOOK_FORMAT_VERSION } from './types';
 import type {
+  NexBookAIWorklogBlock,
   NexBookBlock,
   NexBookCellResult,
   NexBookDocument,
@@ -94,6 +96,9 @@ function publishableBlock(block: NexBookBlock): NexBookBlock {
         ...(block.height ? { height: block.height } : {}),
       };
 
+    case 'ai_worklog':
+      return publishableWorklogBlock(block);
+
     default:
       return {
         id: block.id,
@@ -110,6 +115,88 @@ function publishableBlock(block: NexBookBlock): NexBookBlock {
         ...(block.editableByStudent === false ? { editableByStudent: false } : {}),
       };
   }
+}
+
+/**
+ * El registro de uso de IA, reconstruido campo a campo.
+ *
+ * ## Ni `{ ...block }` ni `{ ...worklog }`
+ *
+ * Aquí es donde más tentador sería copiar el objeto: `AIWorklogData` tiene once
+ * campos y escribirlos uno a uno parece ceremonia. Es justo al revés. El día que
+ * alguien añada al registro un `reviewedByUid`, un `courseId` o una marca
+ * interna, un `...spread` lo publicaría sin que nadie tuviera que hacer nada.
+ * Escrito así, un campo nuevo NO sale hasta que se añada a esta función, y
+ * añadirlo es el momento de preguntarse si debería.
+ *
+ * ## Qué NO sale, y por qué
+ *
+ * **`resourcesUsed`.** Son ids internos de Skills, prompts y recursos de UNA
+ * materia (`ResourceRef`), de la misma familia que `context`. Fuera de esa
+ * materia no significan nada, y dentro son un mapa de qué existe en ella. Sale
+ * como lista VACÍA, no ausente: el esquema exige el campo, y omitirlo produciría
+ * un documento que no se puede reimportar.
+ *
+ * Lo que sí sale es todo lo humano —objetivo, prompt, respuesta, uso, cambios,
+ * descartes y análisis—, que es exactamente lo que hace legible el registro. La
+ * limitación real es que **la información semántica de `resourcesUsed` se pierde
+ * al exportar**: convertir los ids a nombres legibles exigiría resolverlos
+ * contra la materia dentro de la frontera de publicación, y eso es otra decisión
+ * —qué se resuelve, con qué permisos, qué pasa con un recurso borrado—. Está
+ * documentado en `docs/LIMITATIONS.md` en vez de improvisado aquí.
+ *
+ * ## `conversationUrl` sí sale, saneado
+ *
+ * Pasa por `safeMarkdownUrl`, que sólo deja HTTP(S). Lo que NO se hace es
+ * inspeccionar los parámetros de un servicio ajeno buscando «secretos»: no se
+ * puede saber cuáles lo son, y la persona decidió registrar ese enlace. Una URL
+ * firmada de Nextudio no puede llegar aquí porque este campo no lo escribe el
+ * servidor: lo escribe quien rellena el formulario, y el esquema exige HTTP(S).
+ */
+function publishableWorklogBlock(block: NexBookAIWorklogBlock): NexBookAIWorklogBlock {
+  const worklog = block.worklog;
+
+  return {
+    id: block.id,
+    type: 'ai_worklog',
+    worklog: {
+      provider: worklog.provider,
+      model: worklog.model,
+      conversationUrl: safeMarkdownUrl(worklog.conversationUrl ?? ''),
+      objective: worklog.objective,
+      prompt: worklog.prompt,
+      ...(worklog.result
+        ? { result: { content: worklog.result.content, format: worklog.result.format } }
+        : {}),
+      responseSummary: worklog.responseSummary,
+      studentAnalysis: worklog.studentAnalysis,
+      whatWasUsed: worklog.whatWasUsed,
+      whatWasChanged: worklog.whatWasChanged,
+      whatWasDiscarded: worklog.whatWasDiscarded,
+      // Ver la cabecera: ids internos de una materia. Vacío, nunca ausente.
+      resourcesUsed: [],
+    },
+    ...(block.responseImages?.length
+      ? {
+          responseImages: block.responseImages.map((image) => ({
+            assetId: image.assetId,
+            mimeType: image.mimeType,
+            alt: image.alt,
+            ...(image.caption ? { caption: image.caption } : {}),
+            ...(image.width ? { width: image.width } : {}),
+            ...(image.height ? { height: image.height } : {}),
+          })),
+        }
+      : {}),
+    /**
+     * `conclusionMode` y `editableByStudent` SÍ salen, por la misma razón que
+     * `editableByStudent` sale en los demás bloques: dicen qué pedía la
+     * actividad y qué escribió cada quien. Sin ellos, una copia de una plantilla
+     * deja de poder explicarse a sí misma.
+     */
+    ...(block.conclusionMode ? { conclusionMode: block.conclusionMode } : {}),
+    ...(block.editableByStudent === false ? { editableByStudent: false } : {}),
+  };
 }
 
 function publishableResult(result: NexBookCellResult): NexBookCellResult {

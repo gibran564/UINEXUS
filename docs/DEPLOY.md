@@ -1,6 +1,6 @@
-# Despliegue — UINexus
+# Despliegue — Nextudio
 
-UINexus se reparte entre dos proveedores, y el reparto es deliberado:
+Nextudio se reparte entre dos proveedores, y el reparto es deliberado:
 
 ```
 Firebase Authentication   →  identidad (quién eres)
@@ -101,7 +101,7 @@ En [console.firebase.google.com](https://console.firebase.google.com), proyecto
    aplicación pueda arreglar por su cuenta.
    **No** añadir el dominio de proyectos: el origen aislado no debe
    poder autenticar a nadie. Si apareciera ahí, el HTML de un alumno podría
-   montar un inicio de sesión creíble bajo un dominio de UINexus.
+   montar un inicio de sesión creíble bajo un dominio de Nextudio.
 3. **Project settings → Service accounts → Generate new private key**. Ese JSON
    es un secreto de verdad: va en `FIREBASE_SERVICE_ACCOUNT_JSON`, en el gestor
    de secretos de Amplify, nunca en el repositorio.

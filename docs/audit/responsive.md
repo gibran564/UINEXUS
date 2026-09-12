@@ -22,7 +22,7 @@ requiere confirmación visual está marcado como tal.
 Los dos `xl:` están en `navbar.tsx` y sólo deciden si el conmutador de tema vive
 en la barra o dentro del menú de cuenta.
 
-**Conclusión estructural: UINexus está diseñado para el rango 375–1024 px.** Por
+**Conclusión estructural: Nextudio está diseñado para el rango 375–1024 px.** Por
 encima de 1024 px la interfaz no cambia; sólo aparece margen.
 
 Contenedores:
@@ -186,7 +186,7 @@ convertirse mecánicamente en tres columnas comprimidas en móvil— aplicada:
 │ 280px fijo   │  600–640px                 │ 300px fijo   │
 │              │                            │              │
 │ identidad    │  [chips de materia]        │ del resto de │
-│ atención(3)  │  ── nuevo ──               │ UINexus      │
+│ atención(3)  │  ── nuevo ──               │ Nextudio      │
 │ materias     │  publicaciones compactas   │ materia      │
 │              │                            │ activa       │
 └──────────────┴────────────────────────────┴──────────────┘

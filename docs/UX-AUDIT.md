@@ -1,4 +1,4 @@
-# Auditoría de UX — UINexus
+# Auditoría de UX — Nextudio
 
 Dos auditorías: una **antes** de escribir interfaz (Etapa 1) y otra **sobre el
 resultado construido** (Etapa 8). Método: heurísticas de Nielsen, las tres

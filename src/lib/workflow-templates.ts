@@ -10,7 +10,7 @@ import type {
 } from './types';
 
 /**
- * Plantillas de proceso que vienen con UINexus.
+ * Plantillas de proceso que vienen con Nextudio.
  *
  * ## Son DATOS, no un motor nuevo
  *

@@ -82,7 +82,7 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
       version: NEXBOOK_ARCHIVE_VERSION,
       documentVersion: NEXBOOK_FORMAT_VERSION,
       title: record.title,
-      createdWith: 'UINexus',
+      createdWith: 'Nextudio',
       exportedAt: new Date().toISOString(),
       assets,
     };

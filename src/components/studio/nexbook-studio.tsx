@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Notice } from '@/components/aula/aula-ui';
+import { emptyAIWorklog } from '@/lib/ai-worklog';
+import { resolveLabDataset } from '@/lib/lab/data-bridge';
+import { scanLabReferences, usesLabApi } from '@/lib/lab/references';
+import type { LabDataset } from '@/lib/lab/dataset';
 import {
   DEFAULT_PROGRAMMING_LANGUAGE,
   NEXBOOK_LIMITS,
@@ -17,12 +21,19 @@ import type {
   NexBookCellResult,
   NexBookDocument,
   NexBookImageMimeType,
+  NexBookSheetData,
   ProgrammingLanguage,
 } from '@/lib/types';
 import { NexBookBlockCard } from './nexbook-block-card';
 
 /**
- * UINexus Studio: el editor de un NexBook.
+ * NexLab: el editor de un NexBook.
+ *
+ * El componente sigue llamándose `NexBookStudio` y el archivo sigue estando en
+ * `components/studio/`. Es deliberado: **NexLab es el nombre visible del
+ * espacio; NexBook es la entidad y el formato**. Renombrar el módulo sólo
+ * movería archivos y ensuciaría el historial sin cambiar nada de lo que ve
+ * nadie. Ver `docs/NEXTUDIO-ROADMAP.md` §D3.
  *
  * ## Un solo editor, dos layouts
  *
@@ -34,11 +45,11 @@ import { NexBookBlockCard } from './nexbook-block-card';
  *
  * ## El estado del documento es de quien llama
  *
- * Studio es controlado: recibe `document` y emite `onChange`. El autoguardado,
- * la revisión y los conflictos son de la página, porque cambian según el
- * contexto —una práctica se guarda sola, una plantilla docente se guarda con la
- * actividad—. Meter el guardado aquí habría atado el editor a UNA forma de
- * persistir.
+ * El editor es controlado: recibe `document` y emite `onChange`. El
+ * autoguardado, la revisión y los conflictos son de la página, porque cambian
+ * según el contexto —un NexLab personal se guarda solo, una plantilla docente se
+ * guarda con la actividad—. Meter el guardado aquí habría atado el editor a UNA
+ * forma de persistir.
  *
  * ## El kernel sí es de aquí
  *
@@ -60,6 +71,23 @@ export interface NexBookStudioProps {
   uploadAsset?: (file: File, contentType: NexBookImageMimeType) => Promise<string>;
   /** Resuelve la URL de lectura de un asset. */
   assetUrl?: (assetId: string, mimeType: NexBookImageMimeType) => string;
+  /**
+   * Descarga los BYTES de un asset, para que el código pueda leer una imagen.
+   *
+   * Sin esto, `nex.image(...)` responde con un error explicado en vez de con una
+   * imagen vacía. Lo aporta quien tiene sesión; el Worker nunca descarga nada.
+   */
+  assetBytes?: (assetId: string, mimeType: NexBookImageMimeType) => Promise<string>;
+  /**
+   * Se está editando la PLANTILLA de una actividad, no una copia.
+   *
+   * Sólo afecta a lo que la docente decide POR la clase y quien resuelve no
+   * debería poder cambiar: hoy, si la reflexión del bloque de IA es obligatoria.
+   * No es una comprobación de seguridad —la de verdad está en el servidor, que
+   * mira la plantilla al entregar— sino la razón por la que el control no
+   * aparece donde no significa nada.
+   */
+  templateMode?: boolean;
 }
 
 /** Ids cortos y legibles: aparecen en `results` y en los mensajes de error. */
@@ -84,6 +112,8 @@ export function NexBookStudio({
   defaultLanguage = DEFAULT_PROGRAMMING_LANGUAGE,
   uploadAsset,
   assetUrl,
+  assetBytes,
+  templateMode = false,
 }: NexBookStudioProps) {
   const kernelRef = useRef<NotebookKernel | null>(null);
   const [kernelStatus, setKernelStatus] = useState<Record<string, KernelStatus>>({});
@@ -203,6 +233,42 @@ export function NexBookStudio({
     patchDocument({ blocks });
   }
 
+  /**
+   * Inserta las hojas restantes de un libro importado, detrás de la primera.
+   *
+   * Una hoja de Excel, un bloque. La decisión está razonada en
+   * `lib/spreadsheet/xlsx.ts`: es la que no obliga a cambiar `NexBookSheetData`,
+   * el editor, la exportación ni el puente, y deja a cada hoja con su nombre del
+   * libro, que es por el que `nex.sheet("Ventas")` la va a buscar.
+   */
+  function addSheetsAfter(
+    index: number,
+    sheets: { name: string; sheet: NexBookSheetData }[]
+  ): void {
+    const room = NEXBOOK_LIMITS.maxBlocks - docRef.current.blocks.length;
+    if (room <= 0) {
+      setNotice(`Un NexBook admite hasta ${NEXBOOK_LIMITS.maxBlocks} bloques.`);
+      return;
+    }
+
+    const added = sheets.slice(0, room).map((entry) => ({
+      id: newBlockId(),
+      type: 'spreadsheet' as const,
+      name: entry.name,
+      sheet: entry.sheet,
+    }));
+
+    const blocks = [...docRef.current.blocks];
+    blocks.splice(index + 1, 0, ...added);
+    patchDocument({ blocks });
+
+    setNotice(
+      added.length < sheets.length
+        ? `Se añadieron ${added.length} de ${sheets.length} hojas: el documento llegó al tope de bloques.`
+        : `Se añadieron ${added.length} hoja${added.length === 1 ? '' : 's'} más del libro.`
+    );
+  }
+
   function removeBlock(blockId: string): void {
     /**
      * Se borra el bloque Y su resultado.
@@ -291,13 +357,39 @@ export function NexBookStudio({
     });
   }
 
+  /**
+   * Los datos que ESTA celda pidió, resueltos justo antes de ejecutarla.
+   *
+   * Aquí y no en el kernel, porque aquí es donde están las dos cosas que hacen
+   * falta: el documento —el estado ACTUAL, leído de `docRef`, no el de cuando se
+   * montó el componente— y la sesión, que es lo que permite descargar los bytes
+   * de una imagen por la ruta autorizada.
+   *
+   * Y justo antes de ejecutar, que es lo que hace el modelo predecible: editar
+   * la hoja y volver a ejecutar la celda lee lo nuevo, sin ningún grafo reactivo
+   * que dispare ejecuciones por su cuenta. Ver `docs/NEXTUDIO-ROADMAP.md`.
+   */
+  async function labFor(block: NexBookBlock): Promise<LabDataset | undefined> {
+    if (block.type !== 'code') return undefined;
+
+    const references = scanLabReferences(block.source, block.language);
+    // Una celda que no menciona la API no paga nada: ni serialización, ni
+    // descargas, ni un nombre más en su espacio global.
+    if (!usesLabApi(references)) return undefined;
+
+    return resolveLabDataset(docRef.current, references, {
+      loadAsset: assetBytes,
+    });
+  }
+
   async function runBlock(block: NexBookBlock): Promise<boolean> {
     if (block.type !== 'code') return true;
 
     const { result, sessionLost, images } = await kernel().executeCell(
       block.id,
       block.language,
-      block.source
+      block.source,
+      await labFor(block)
     );
     await storeResult(block.id, result, images);
 
@@ -397,7 +489,7 @@ export function NexBookStudio({
               */
               <div
                 role="menu"
-                className="absolute left-0 top-full z-30 mt-1 w-52 rounded-sm border border-line bg-surface py-1 shadow-lg"
+                className="absolute left-0 top-full z-30 mt-1 w-60 rounded-sm border border-line bg-surface py-1 shadow-lg"
               >
                 <MenuItem onSelect={() => addBlock('markdown')} label="Texto" hint="Markdown" />
                 <MenuItem onSelect={() => addBlock('code')} label="Código" hint="Python, R…" />
@@ -408,6 +500,17 @@ export function NexBookStudio({
                   onSelect={() => addBlock('spreadsheet')}
                   label="Hoja de cálculo"
                   hint="Datos y fórmulas"
+                />
+                {/*
+                  «Registrar uso de IA», no «IA». El menú sigue sin prometer lo
+                  que no hay: esto abre un formulario para documentar lo que
+                  pasó en otra herramienta, no un sitio donde pedirle algo a
+                  Nextudio.
+                */}
+                <MenuItem
+                  onSelect={() => addBlock('ai_worklog')}
+                  label="Registrar uso de IA"
+                  hint="NexIA"
                 />
               </div>
             )}
@@ -495,6 +598,8 @@ export function NexBookStudio({
               uploadAsset={uploadAsset}
               assetUrl={assetUrl}
               pendingImages={pending[block.id]}
+              templateMode={templateMode}
+              onAddSheets={(sheets) => addSheetsAfter(index, sheets)}
             />
           </div>
         ))}
@@ -552,6 +657,16 @@ function blankBlock(
       return { id, type: 'image', assetId: '', mimeType: 'image/png', alt: '' };
     case 'spreadsheet':
       return { id, type: 'spreadsheet', name: 'Hoja', sheet: emptySheet() };
+    case 'ai_worklog':
+      /**
+       * Nace con `conclusionMode: 'optional'`.
+       *
+       * Ni `none` —que escondería el campo de reflexión justo en el bloque cuyo
+       * sentido es dejar constancia de lo que la persona pensó— ni `required`,
+       * que impondría una regla académica que nadie ha pedido. `optional` se
+       * pinta y no bloquea nada.
+       */
+      return { id, type: 'ai_worklog', worklog: emptyAIWorklog(), conclusionMode: 'optional' };
     default:
       return { id, type: 'code', language, source: '' };
   }

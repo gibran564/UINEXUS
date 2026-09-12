@@ -14,6 +14,7 @@ import {
   type CodeWorkerResponse,
 } from './browser-code-runner-protocol';
 import { CODE_WORKER_URLS } from './code-engines/runtime-assets';
+import type { LabDataset } from './lab/dataset';
 import type { ProgrammingLanguage } from './types';
 
 /**
@@ -65,6 +66,15 @@ export interface BrowserCodeRunnerOptions {
 
 export interface BrowserCodeRunner extends CodeRunner {
   readonly language: BrowserRuntimeLanguage;
+  /**
+   * `lab` es un parámetro OPCIONAL añadido sobre `CodeRunner.run`.
+   *
+   * No entra en `CodeRunRequest` a propósito: ese tipo es el contrato genérico
+   * de un ejecutor —lo comparte el adaptador hacia un sandbox externo— y un
+   * `LabDataset` es un concepto de NexBook. Meterlo ahí habría obligado a
+   * cualquier ejecutor futuro a saber qué es una hoja de cálculo.
+   */
+  run(request: CodeRunRequest, lab?: LabDataset): Promise<CodeRunResult>;
   interrupt(): Promise<void>;
   /** Vacía el estado de la sesión sin volver a descargar el runtime. */
   resetSession(): Promise<void>;
@@ -126,7 +136,7 @@ class WorkerCodeRunner implements BrowserCodeRunner {
     return candidate === this.language;
   }
 
-  async run(request: CodeRunRequest): Promise<CodeRunResult> {
+  async run(request: CodeRunRequest, lab?: LabDataset): Promise<CodeRunResult> {
     const started = Date.now();
 
     const invalid = validateCodeRunRequest(request, (candidate) => this.supports(candidate));
@@ -159,7 +169,8 @@ class WorkerCodeRunner implements BrowserCodeRunner {
             this.language,
             request.source,
             { maxOutputChars: CODE_RUN_LIMITS.maxOutputChars },
-            this.options.executionMode ?? 'isolated'
+            this.options.executionMode ?? 'isolated',
+            lab
           ),
         this.options.timeoutMs ?? CODE_RUN_LIMITS.timeoutMs
       );

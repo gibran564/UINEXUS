@@ -354,6 +354,13 @@ export function buildWorkflowSteps(
         deliverable.type === 'code' ? (deliverable.codeMode ?? DEFAULT_CODE_MODE) : null,
       starterCode: deliverable.type === 'code' ? deliverable.starterCode : '',
       executionEnabled: deliverable.type === 'code' ? deliverable.executionEnabled : false,
+      /**
+       * Si se le pide una conclusión sobre su uso de la IA. Sólo significa algo
+       * en un registro de IA; fuera de ahí sería un campo que interpretar. Es la
+       * MISMA política que en un bloque de NexLab, con el mismo tipo.
+       */
+      conclusionMode:
+        deliverable.type === 'ai_worklog' ? (deliverable.conclusionMode ?? 'optional') : null,
       questions: deliverable.questions.map((question, position) => ({
         ...question,
         group: question.group ?? null,
@@ -726,7 +733,7 @@ export interface SkillWriteInput {
  * Campos de una Skill.
  *
  * Los comandos de los pasos de instalación se guardan TAL CUAL, como texto. No
- * se sanean, no se interpretan y no se validan contra ninguna lista: UINexus no
+ * se sanean, no se interpretan y no se validan contra ninguna lista: Nextudio no
  * los ejecuta nunca, así que «limpiarlos» sólo estropearía comandos legítimos y
  * daría una falsa sensación de defensa. Lo que sí se valida de verdad son los
  * enlaces, que sí se pintan como `href` y sí puede pulsar alguien.

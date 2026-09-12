@@ -3,7 +3,7 @@
 import { getClientAuth } from './firebase/client';
 
 /**
- * Cliente de la API de UINexus.
+ * Cliente de la API de Nextudio.
  *
  * Tras la migración a AWS, el navegador ya no escribe en la base de datos ni
  * en el almacenamiento: pide, y el servidor decide. Firebase queda reducido a
@@ -35,9 +35,35 @@ export function currentIdToken(): Promise<string> {
   return idToken();
 }
 
+/**
+ * El ID token, esperando a que Firebase termine de restaurar la sesión.
+ *
+ * ## El fallo que cierra este `await`
+ *
+ * `auth.currentUser` es `null` hasta que el SDK lee IndexedDB y confirma la
+ * sesión guardada. Eso ocurre en otro tick, así que una pantalla que pedía datos
+ * nada más montarse ganaba la carrera y recibía «Necesitas iniciar sesión»
+ * TENIENDO sesión. El síntoma era desconcertante porque la barra superior sí
+ * mostraba la cuenta: el proveedor de autenticación ya se había enterado y esta
+ * función no.
+ *
+ * En la práctica se veía al abrir una URL directamente —un marcador de `/aula`,
+ * un enlace compartido— y no al navegar dentro de la aplicación, porque entonces
+ * la restauración ya había terminado hacía rato. Por eso sobrevivió hasta que
+ * hubo un entorno local donde entrar de verdad: el emulador añade un viaje de
+ * red que hace la carrera visible SIEMPRE. Es justo la clase de fallo que el
+ * sandbox de la Fase 3.5 existía para destapar.
+ *
+ * `authStateReady()` resuelve en cuanto el estado inicial está decidido y,
+ * después, de inmediato: no añade latencia a las siguientes llamadas.
+ */
 async function idToken(): Promise<string> {
   const auth = getClientAuth();
-  const user = auth?.currentUser;
+  if (!auth) throw new ApiError(401, 'Necesitas iniciar sesión.');
+
+  await auth.authStateReady();
+
+  const user = auth.currentUser;
   if (!user) throw new ApiError(401, 'Necesitas iniciar sesión.');
   return user.getIdToken();
 }

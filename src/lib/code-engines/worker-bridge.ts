@@ -57,7 +57,7 @@ interface WorkerScope {
  *   ✗  /api/nexbooks/abc                       mismo origen, fuera del prefijo
  *
  * La garantía que importa se conserva entera: no hay forma de sacar datos ni de
- * alcanzar la API de UINexus. Y lo que queda alcanzable son archivos estáticos
+ * alcanzar la API de Nextudio. Y lo que queda alcanzable son archivos estáticos
  * públicos que ese mismo Worker ya descargó para arrancar.
  */
 export function hardenWorkerScope(allowedPrefix?: string): void {
@@ -208,7 +208,8 @@ export function serveCodeEngine(
         const result = await active.run(
           message.source,
           message.executionOptions,
-          message.mode ?? 'isolated'
+          message.mode ?? 'isolated',
+          message.lab
         );
         post({ type: 'result', id: message.id, ...result });
       } catch (caught) {

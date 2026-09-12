@@ -10,7 +10,7 @@ import type { CodeSaveState } from '@/components/aula/deliverable-fields';
 import type { Workspace } from '@/lib/types';
 
 /**
- * Una práctica abierta.
+ * Un NexCode abierto: un archivo, un lenguaje y el editor.
  *
  * ## Por qué reutiliza `CodeEditor` sin envolverlo en nada
  *
@@ -103,7 +103,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
 
   if (state === 'loading') return <p className="py-10 text-center text-muted">Cargando…</p>;
   if (state === 'error' || !data) {
-    return <Notice tone="error">{error ?? 'No pudimos abrir esta práctica.'}</Notice>;
+    return <Notice tone="error">{error ?? 'No pudimos abrir este NexCode.'}</Notice>;
   }
 
   const { workspace } = data;
@@ -113,7 +113,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-4">
         <div className="min-w-0">
           <Link href="/practicas" className="meta no-underline hover:underline">
-            ← Mis prácticas
+            ← Mis espacios
           </Link>
           <h1 className="mt-2 truncate font-display text-h1">{workspace.title}</h1>
           <p className="mt-1 text-sm text-muted">
@@ -133,7 +133,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
           executionEnabled
           beforeExecute={flush}
           height={460}
-          ariaLabel={`Práctica ${workspace.title} en ${programmingLanguageLabel(workspace.language)}`}
+          ariaLabel={`NexCode ${workspace.title} en ${programmingLanguageLabel(workspace.language)}`}
         />
       </div>
     </div>

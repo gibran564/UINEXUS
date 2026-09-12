@@ -8,6 +8,7 @@ import {
   scopeStepPrompts,
 } from '@/lib/server/resources';
 import { toAssignment, toSubmission } from '@/lib/data/academic-mappers';
+import { startedLabStepIds } from '@/lib/server/student-labs';
 import { errorResponse, readJson, requireWriter } from '@/lib/server/session';
 import {
   requireAssignmentAccess,
@@ -60,6 +61,12 @@ export async function GET(
       assignment: toAssignment(assignment, { viewerRole: role, roster: course.students }),
       courseName: course.name,
       courseId: course.id,
+      /**
+       * Quién imparte la materia. Es el dato que hace que una actividad tenga
+       * remitente en la pantalla del alumnado; sale de la materia, no de la
+       * tarea, porque es de la materia.
+       */
+      teacherName: course.teacherName,
       viewerRole: role,
       submission: own ? toSubmission(own) : null,
       myGroupIds,
@@ -72,6 +79,15 @@ export async function GET(
         role === 'teacher'
           ? assignment.workflow.map((step) => step.id)
           : [...workableStepIds(assignment.workflow, actor.uid)],
+      /**
+       * Las Partes de laboratorio que esta persona YA ABRIÓ.
+       *
+       * Un NexLab se guarda solo, en su propio documento: su trabajo puede
+       * existir mucho antes de que la entrega tenga ninguna copia. Sin este
+       * dato, volver al día siguiente mostraría «Sin empezar» sobre una hora de
+       * trabajo. Ver `lib/server/student-labs.ts`.
+       */
+      myLabs: role === 'teacher' ? [] : await startedLabStepIds(assignment, actor.uid),
       // Los recursos recomendados se RESUELVEN aquí: la tarea guarda sólo ids
       // (§20 y §27), así que el navegador recibe el contenido vigente y no una
       // copia congelada del día que se creó la tarea.

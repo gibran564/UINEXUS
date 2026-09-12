@@ -1,4 +1,4 @@
-# Auditoría integral de UINexus
+# Auditoría integral de Nextudio
 
 Fecha: **2026-09-06** · Rama: `codex/unified-academic-publishing` ·
 Producción auditada: `https://uinex.vercel.app`
@@ -78,13 +78,13 @@ revisar sus descripciones:
 | `refactoring-ui` (integrada) | **Sí** | Jerarquía visual, densidad, escalas y consolidación de tokens |
 | `animate-expo`, `write-swift`, `ask-sonner` | No | Otras plataformas o librerías que este proyecto no usa |
 | `animation-vocabulary`, `pick-ui-library`, `prototype` | No | Fuera del alcance de una auditoría |
-| `animate`, `find-animation-opportunities`, `improve-animations`, `review-animations` | No | UINexus tiene una sola transición (`160ms`, `--ease`) y `prefers-reduced-motion` bien resuelto. El movimiento no es un problema aquí, y auditarlo habría sido usar una skill por usarla |
+| `animate`, `find-animation-opportunities`, `improve-animations`, `review-animations` | No | Nextudio tiene una sola transición (`160ms`, `--ease`) y `prefers-reduced-motion` bien resuelto. El movimiento no es un problema aquí, y auditarlo habría sido usar una skill por usarla |
 
 ---
 
 ## Resumen ejecutivo
 
-UINexus es un producto **mejor construido de lo que su interfaz deja ver**. Tiene
+Nextudio es un producto **mejor construido de lo que su interfaz deja ver**. Tiene
 un lenguaje visual propio, declarado y argumentado decisión por decisión en el
 CSS; una frontera de privacidad resuelta en el servidor; un orden del muro
 derivado de fechas y estados en lugar de un algoritmo de popularidad; y una base
@@ -315,7 +315,7 @@ maquetación ya estable.
 ## Un apunte final
 
 Este informe es duro con la maquetación del muro y con el vocabulario, y debe
-serlo. Pero la conclusión honesta es que **UINexus no necesita un rediseño de
+serlo. Pero la conclusión honesta es que **Nextudio no necesita un rediseño de
 identidad**: necesita que su interfaz deje ver lo que ya tiene detrás. El sistema
 visual es propio y está bien pensado; el problema es que la pantalla más
 importante del producto lo está usando en el eje equivocado.

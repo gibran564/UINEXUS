@@ -11,6 +11,7 @@ import {
   type BrowserCodeRunnerStatus,
 } from './browser-code-runner';
 import { NEXBOOK_LIMITS } from './constants';
+import type { LabDataset } from './lab/dataset';
 import type { NexBookCellResult, NexBookOutput, ProgrammingLanguage } from './types';
 
 /**
@@ -96,7 +97,16 @@ export interface NotebookKernel {
   executeCell(
     blockId: string,
     language: ProgrammingLanguage,
-    source: string
+    source: string,
+    /**
+     * Los datos del NexBook que esta celda pidió (iteración 13).
+     *
+     * Los resuelve quien llama —Studio, que es el único que tiene el documento
+     * y la sesión— y no el kernel: el kernel ejecuta, no sabe de qué documento
+     * viene la celda ni tiene forma de pedir un asset. Es la misma separación
+     * por la que las imágenes de salida se suben fuera de aquí.
+     */
+    lab?: LabDataset
   ): Promise<KernelCellRun>;
   /** Termina lo que esté corriendo. Se lleva la sesión: es lo único que funciona. */
   interrupt(language: ProgrammingLanguage): Promise<void>;
@@ -155,12 +165,12 @@ export function createNotebookKernel(options: NotebookKernelOptions = {}): Noteb
   }
 
   return {
-    async executeCell(blockId, language, source): Promise<KernelCellRun> {
+    async executeCell(blockId, language, source, lab): Promise<KernelCellRun> {
       const ranAt = new Date().toISOString();
 
       if (!isBrowserExecutableLanguage(language)) {
         return {
-          result: rejected(blockId, 'Este lenguaje no se puede ejecutar en UINexus.', ranAt),
+          result: rejected(blockId, 'Este lenguaje no se puede ejecutar en Nextudio.', ranAt),
           sessionLost: false,
           images: [],
         };
@@ -175,7 +185,7 @@ export function createNotebookKernel(options: NotebookKernelOptions = {}): Noteb
         };
       }
 
-      const run = await session.runner.run({ language, source });
+      const run = await session.runner.run({ language, source }, lab);
 
       /**
        * Terminar el Worker es lo que aplica el tiempo límite, y se lleva la

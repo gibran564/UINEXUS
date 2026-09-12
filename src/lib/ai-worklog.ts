@@ -92,6 +92,34 @@ export function aiWorklogToMarkdown(data: AIWorklogData): string {
   return `${blocks.join('\n\n')}\n`;
 }
 
+/**
+ * Un registro vacío pero COMPLETO.
+ *
+ * Existe para que crear un bloque, sembrar un preset y construir una prueba
+ * partan del mismo objeto. Sin esto, cada sitio escribiría su propia versión y
+ * el día que `AIWorklogData` gane un campo, alguna se quedaría sin él —y el
+ * esquema lo rellenaría con un `default` que nadie habría decidido.
+ *
+ * `result` se deja AUSENTE a propósito: es opcional, y `normalizeAIResult` sabe
+ * caer a `responseSummary`. Un `result` vacío escrito de más sería una tercera
+ * forma de decir «no hay respuesta».
+ */
+export function emptyAIWorklog(): AIWorklogData {
+  return {
+    provider: 'Other',
+    model: '',
+    conversationUrl: '',
+    objective: '',
+    prompt: '',
+    responseSummary: '',
+    studentAnalysis: '',
+    whatWasUsed: '',
+    whatWasChanged: '',
+    whatWasDiscarded: '',
+    resourcesUsed: [],
+  };
+}
+
 /** Sólo HTTP(S) puede convertirse en un enlace navegable. */
 export function safeMarkdownUrl(url: string): string {
   try {

@@ -9,11 +9,14 @@ import type {
   NexBookBlock,
   NexBookCellResult,
   NexBookImageMimeType,
+  NexBookSheetData,
   ProgrammingLanguage,
 } from '@/lib/types';
 import { NexBookImage } from './nexbook-image';
 import { NexBookOutputs } from './nexbook-outputs';
 import { NexBookSheet } from './nexbook-sheet';
+import { NexBookSheetImport } from './nexbook-sheet-import';
+import { NexBookWorklog } from './nexbook-worklog';
 
 /**
  * Un bloque del documento.
@@ -57,6 +60,16 @@ export interface NexBookBlockCardProps {
   assetUrl?: (assetId: string, mimeType: NexBookImageMimeType) => string;
   /** Imágenes de la última ejecución que todavía no son assets. Clave: `seq`. */
   pendingImages?: Record<number, string>;
+  /** Se está editando la PLANTILLA de una actividad, no una copia. */
+  templateMode?: boolean;
+  /**
+   * Inserta hojas nuevas detrás de ésta.
+   *
+   * Lo necesita la importación de un XLSX con varias hojas: la primera sustituye
+   * a la de este bloque y las demás tienen que convertirse en bloques propios,
+   * que es una operación sobre el DOCUMENTO y no sobre un bloque.
+   */
+  onAddSheets?: (sheets: { name: string; sheet: NexBookSheetData }[]) => void;
 }
 
 const BLOCK_LABEL: Record<NexBookBlock['type'], string> = {
@@ -64,6 +77,9 @@ const BLOCK_LABEL: Record<NexBookBlock['type'], string> = {
   code: 'Código',
   image: 'Imagen',
   spreadsheet: 'Hoja de cálculo',
+  // «Registrar» y no «IA» a secas: la etiqueta tiene que decir qué hace el
+  // bloque, y lo que hace es documentar, no consultar un modelo.
+  ai_worklog: 'Registro de uso de IA',
 };
 
 export function NexBookBlockCard({
@@ -82,6 +98,8 @@ export function NexBookBlockCard({
   uploadAsset,
   assetUrl,
   pendingImages,
+  templateMode = false,
+  onAddSheets,
 }: NexBookBlockCardProps) {
   const [editingMarkdown, setEditingMarkdown] = useState(false);
   const label = BLOCK_LABEL[block.type];
@@ -134,9 +152,20 @@ export function NexBookBlockCard({
           <span className="text-label text-subtle">{block.name}</span>
         )}
 
+        {/*
+          Un bloque bloqueado se EXPLICA, no sólo se apaga.
+
+          Antes esto decía «· sólo lectura» y la explicación vivía en un
+          `title`, es decir, detrás del ratón: en un móvil no existía, y con
+          teclado tampoco. Quien lo ve tiene que saber por qué no puede
+          escribir ahí sin tener que averiguarlo.
+        */}
         {locked && (
           <span className="text-label text-subtle" title="Lo escribió tu docente">
-            · sólo lectura
+            ·{' '}
+            {templateMode
+              ? 'bloqueado para el estudiante'
+              : 'contenido de tu docente · sólo lectura'}
           </span>
         )}
 
@@ -273,7 +302,36 @@ export function NexBookBlockCard({
             editable={writable}
             onChange={(sheet) => onChange({ ...block, sheet })}
           />
+          {writable && (
+            <NexBookSheetImport
+              name={block.name}
+              hasContent={Object.keys(block.sheet.cells).length > 0}
+              onImport={({ sheet, name }) =>
+                // El nombre del archivo sólo se adopta si la hoja todavía se
+                // llama «Hoja»: renombrar una que alguien ya nombró sería
+                // pisarle una decisión suya.
+                onChange({
+                  ...block,
+                  sheet,
+                  ...(name && block.name === 'Hoja' ? { name } : {}),
+                })
+              }
+              onImportMany={onAddSheets}
+            />
+          )}
         </div>
+      )}
+
+      {block.type === 'ai_worklog' && (
+        <NexBookWorklog
+          block={block}
+          index={index}
+          editable={writable}
+          onChange={onChange}
+          upload={uploadAsset}
+          resolve={assetUrl}
+          templateMode={templateMode}
+        />
       )}
 
       {result && (
@@ -307,7 +365,7 @@ function RunButton({
 }) {
   if (!languageCapabilities(language).browserExecution) {
     return (
-      <span className="text-label text-subtle" title={`${language} no se ejecuta en UINexus`}>
+      <span className="text-label text-subtle" title={`${language} no se ejecuta en Nextudio`}>
         Ejecución no disponible
       </span>
     );

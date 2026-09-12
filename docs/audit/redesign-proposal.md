@@ -8,7 +8,7 @@ de trabajo en `priorities.md`.
 
 ## 0. La tesis
 
-UINexus no necesita un rediseño de identidad. El lenguaje visual —papel
+Nextudio no necesita un rediseño de identidad. El lenguaje visual —papel
 cuadriculado, tinta, filetes en vez de sombras, serif editorial, acento
 terracota— es propio, coherente y está argumentado decisión por decisión en el
 código. **Conservarlo entero.**
@@ -41,7 +41,7 @@ Tres reglas que gobiernan todo lo que sigue:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ UINexus    Inicio · Materias · Explorar    [buscar]  [Publicar]  [avatar] │  64px sticky
+│ Nextudio    Inicio · Materias · Explorar    [buscar]  [Publicar]  [avatar] │  64px sticky
 └───────────────────────────────────────────────────────────────────────────┘
 
   ┌──────────────┬──────────────────────────────────┬──────────────────┐
@@ -227,10 +227,10 @@ esa ruta, de modo que compartir el enlace lleva a la página completa.
 
 ```
 Sin sesión
-  [UINexus]  Explorar · Cursos · Acerca de      [Iniciar sesión] [Publicar]
+  [Nextudio]  Explorar · Cursos · Acerca de      [Iniciar sesión] [Publicar]
 
 Con sesión
-  [UINexus]  Inicio · Materias · Explorar   [buscar]  [Publicar]  [avatar ▾]
+  [Nextudio]  Inicio · Materias · Explorar   [buscar]  [Publicar]  [avatar ▾]
 ```
 
 Cambios:

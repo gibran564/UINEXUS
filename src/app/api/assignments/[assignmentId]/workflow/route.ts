@@ -25,8 +25,21 @@ export async function GET(
     const { assignmentId } = await params;
     const { assignment, course } = await requireAssignmentTeacher(actor, assignmentId);
 
-    if (assignment.workflow.length <= 1) {
-      throw new HttpError(409, 'Esta actividad no tiene varios pasos.');
+    /**
+     * Lo decide el TIPO, no cuántas partes hay.
+     *
+     * Una actividad por partes con una sola sigue siéndolo, y su avance es
+     * exactamente igual de útil: quién la hizo y quién no. Contar partes
+     * rechazaba con un 409 la pantalla que el profesorado abre por defecto en
+     * una actividad de un solo laboratorio —la pestaña se ofrecía y luego
+     * fallaba—, y confundía además «una parte» con «ninguna», porque la lectura
+     * sintetiza una para las actividades anteriores.
+     *
+     * Una actividad anterior a los procesos sí se rechaza, y sigue siendo
+     * correcto: su única parte es sintética, no la escribió nadie.
+     */
+    if (assignment.type !== 'workflow') {
+      throw new HttpError(409, 'Esta actividad no está organizada por partes.');
     }
 
     const submissions = await listSubmissionsByAssignment(assignmentId);

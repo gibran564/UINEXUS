@@ -131,7 +131,7 @@ Ese criterio no se aplicó en ningún otro sitio:
 │                                  escaparate público (anónimo)
 │  carril: identidad · atención · materias
 │  centro: muro filtrable por materia
-│  carril ≥1440: del resto de UINexus
+│  carril ≥1440: del resto de Nextudio
 │
 ├── /muro/[publicationId]          NUEVO · permalink de una publicación
 │                                  (modal interceptado desde el muro)
@@ -191,10 +191,10 @@ Ese criterio no se aplicó en ningún otro sitio:
 
 ```
 Sin sesión
-  [UINexus]   Explorar · Cursos · Acerca de      [Iniciar sesión] [Publicar]
+  [Nextudio]   Explorar · Cursos · Acerca de      [Iniciar sesión] [Publicar]
 
 Con sesión
-  [UINexus]   Inicio · Materias · Explorar        [buscar] [Publicar] [avatar ▾]
+  [Nextudio]   Inicio · Materias · Explorar        [buscar] [Publicar] [avatar ▾]
                                                                        ├ Tu perfil
                                                                        ├ Tus proyectos
                                                                        ├ Editar perfil

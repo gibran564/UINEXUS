@@ -126,17 +126,29 @@ export const PROJECT_TYPE_LABEL: Readonly<Record<ProjectType, string>> = {
  * La identidad del producto, en un solo sitio.
  *
  * De aquí salen el `<title>`, la descripción de los buscadores y las tarjetas de
- * Open Graph. Decía «Galería y hosting de proyectos web», que describía a
- * UINexus cuando sólo se podía subir un `index.html`; hoy se puede programar,
- * ejecutar, guardar y entregar aquí dentro, y dejarlo así habría hecho que cada
- * enlace compartido siguiera vendiendo un hosting.
+ * Open Graph, y de aquí sale el nombre en las superficies centrales —la barra,
+ * el pie, la portada—. Es la fuente canónica del NOMBRE, no un sistema de
+ * traducción: una frase normal escribe «Nextudio» tal cual, porque interpolar
+ * una constante dentro de cada oración convierte el copy en plantillas
+ * ilegibles a cambio de nada.
+ *
+ * ## Por qué dice Nextudio y la infraestructura sigue diciendo uinexus
+ *
+ * Son dos cosas distintas y conviene no mezclarlas. Lo que lee una persona es
+ * la MARCA; lo que leen DynamoDB, S3 y el despliegue son IDENTIFICADORES. Las
+ * tablas `uinexus-*`, los prefijos de S3, las variables `UINEXUS_*`, los
+ * proyectos de Firebase y el formato `uinexus-nexbook` de los archivos ya
+ * exportados **no cambian**: renombrarlos sería migrar datos y romper enlaces
+ * entregados para ganar coherencia en un sitio donde nadie mira.
+ * Ver `docs/NEXTUDIO-ROADMAP.md` §D2.
  */
 export const SITE = {
-  name: 'UINexus',
+  name: 'Nextudio',
   tagline: 'Aprende construyendo.',
   description:
-    'Plataforma académica para crear, programar, practicar, entregar y publicar proyectos ' +
-    'dentro de tus materias. Código, proyectos y clases en un solo espacio.',
+    'Espacio académico para programar, construir laboratorios reproducibles, desarrollar ' +
+    'proyectos y entregar el proceso completo de tu trabajo. Código, laboratorios, ' +
+    'proyectos y clases en un solo espacio.',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -210,6 +222,36 @@ export const NEXBOOK_LIMITS = {
   maxSheetCells: 2_000,
   maxSheetNameChars: 60,
 
+  // -- Registro de uso de IA (iteración 12) ----------------------------------
+
+  /**
+   * Capturas de la respuesta POR BLOQUE.
+   *
+   * Suficiente para documentar una conversación larga a trozos, y lejos del
+   * tope global de `maxAssetsPerNexBook`, que sigue siendo el que de verdad
+   * acota lo que cuesta exportar o publicar el documento.
+   */
+  maxWorklogImages: 8,
+
+  // -- NexLab Data Interop (iteración 13) ------------------------------------
+
+  /**
+   * Filas que el código recibe de UNA hoja o de UN output.
+   *
+   * Más que las 50 de una tabla de salida —aquí los datos se van a analizar, no
+   * a mirar— y muy por debajo de lo que costaría serializar la hoja entera hacia
+   * el Worker en cada ejecución. El tope de la hoja sigue siendo
+   * `maxSheetRows`; éste acota lo que CRUZA.
+   */
+  maxLabRows: 5_000,
+
+  // -- Importación de datos (iteración 13) -----------------------------------
+
+  /** Lo que se acepta importar, ya en memoria. CSV y XLSX comparten tope. */
+  maxImportBytes: 8 * 1024 * 1024,
+  /** Hojas de un XLSX que se convierten en bloques. */
+  maxImportSheets: 12,
+
   // -- Archivo .nexbook ------------------------------------------------------
 
   /** Lo que se acepta IMPORTAR, ya descomprimido. Ver `lib/nexbook-archive.ts`. */
@@ -256,7 +298,7 @@ export const ASSIGNMENT_TYPES: readonly AssignmentTypeOption[] = [
     value: 'research',
     label: 'Investigación estructurada',
     helper:
-      'Tú defines los campos y el alumnado los rellena dentro de UINexus. Sustituye al documento de Word.',
+      'Tú defines los campos y el alumnado los rellena dentro de Nextudio. Sustituye al documento de Word.',
     action: 'Comenzar tarea',
   },
   {
@@ -269,7 +311,7 @@ export const ASSIGNMENT_TYPES: readonly AssignmentTypeOption[] = [
   {
     value: 'web_project',
     label: 'Proyecto web',
-    helper: 'Se entrega un proyecto ya publicado en UINexus. No se duplica: se referencia.',
+    helper: 'Se entrega un proyecto ya publicado en Nextudio. No se duplica: se referencia.',
     action: 'Elegir proyecto',
   },
   {
@@ -442,7 +484,7 @@ export const STEP_ACTIONS: readonly StepActionOption[] = [
   },
   {
     value: 'project',
-    label: 'Proyecto UINexus',
+    label: 'Proyecto de Nextudio',
     helper: 'Se entrega un proyecto ya publicado. Se referencia, no se duplica.',
     deliverable: 'project',
     toolMode: 'none',
@@ -488,7 +530,7 @@ export const DELIVERABLE_LABEL: Readonly<Record<DeliverableType, string>> = {
   video: 'Video',
   ai_worklog: 'AI Worklog',
   structured: 'Respuesta estructurada',
-  project: 'Proyecto de UINexus',
+  project: 'Proyecto de Nextudio',
   code: 'Código',
   nexbook: 'NexBook',
   resource_reference: 'Recursos de la materia',
@@ -525,7 +567,7 @@ const RUNS_IN_BROWSER: LanguageCapabilities = {
 };
 
 /**
- * Se edita, pero no se ejecuta: haría falta un compilador fuera de UINexus.
+ * Se edita, pero no se ejecuta: haría falta un compilador fuera de Nextudio.
  *
  * No es una limitación temporal disfrazada. Compilar Java o C exige un proceso
  * de verdad, y ejecutarlo en el host de Next.js —el mismo que firma las subidas
@@ -622,7 +664,7 @@ export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
     extension: 'sql',
     monacoLanguage: 'sql',
     capabilities: EDITOR_ONLY,
-    executionNote: 'SQL se escribe y se entrega; UINexus no tiene una base de datos que consultar.',
+    executionNote: 'SQL se escribe y se entrega; Nextudio no tiene una base de datos que consultar.',
   },
 ];
 
@@ -791,7 +833,7 @@ export const ACADEMIC_FILE_EXTENSIONS: Readonly<
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     // Un fuente de R entregado como archivo. Se guarda y se sirve como texto:
-    // UINexus no lo ejecuta nunca (ver docs/SECURITY.md).
+    // Nextudio no lo ejecuta nunca (ver docs/SECURITY.md).
     r: 'text/plain',
     /**
      * Imágenes en un entregable de DOCUMENTO, y no es un descuido.

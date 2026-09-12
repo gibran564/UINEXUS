@@ -3,7 +3,7 @@
  *
  * ## La decisión que gobierna este archivo
  *
- * UINexus **no visita** las URL que pega la gente. Ni para sacar el título, ni
+ * Nextudio **no visita** las URL que pega la gente. Ni para sacar el título, ni
  * el favicon, ni nada. Pedir metadatos a una dirección arbitraria convierte al
  * servidor en un cliente de peticiones que elige un tercero, que es un problema
  * de seguridad con nombre propio: SSRF. Con eso se alcanzan servicios internos,
@@ -170,7 +170,7 @@ export function describeLink(raw: string): LinkDescription {
 
   if (!provider) {
     // Un proveedor desconocido NO es un problema: es el caso que hace que
-    // UINexus sobreviva a la velocidad a la que salen herramientas nuevas.
+    // Nextudio sobreviva a la velocidad a la que salen herramientas nuevas.
     return { ok: true, reason: '', domain, provider: domain, embedUrl: null, level: 1 };
   }
 
@@ -190,11 +190,11 @@ export function describeLink(raw: string): LinkDescription {
  * Atributos del iframe de un embed.
  *
  * `sandbox` sin `allow-top-navigation` ni `allow-modals`: el contenido puede
- * ejecutarse y reproducirse, pero no puede sacar a nadie de UINexus ni abrir
+ * ejecutarse y reproducirse, pero no puede sacar a nadie de Nextudio ni abrir
  * diálogos que parezcan de la plataforma.
  *
  * `allow-same-origin` es necesario y no es un agujero aquí: el iframe es
  * CROSS-origin, así que conserva el suyo propio —el de YouTube o el de Figma— y
- * no obtiene ningún acceso al de UINexus.
+ * no obtiene ningún acceso al de Nextudio.
  */
 export const EMBED_SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-presentation';

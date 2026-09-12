@@ -117,7 +117,7 @@ export class ArchiveRejected extends Error {
  *
  * El ataque clásico contra un descompresor: una entrada llamada
  * `../../../etc/passwd` o `/etc/passwd` que, al escribirse «donde dice», sale
- * del directorio de destino. UINexus no escribe estas entradas en un disco —van
+ * del directorio de destino. Nextudio no escribe estas entradas en un disco —van
  * a S3 con una clave que construye el servidor— así que el ataque no tendría
  * dónde aterrizar; se rechazan igual, porque una defensa que depende de que
  * nadie cambie el destino en el futuro no es una defensa.
@@ -190,11 +190,11 @@ export function parseManifest(raw: unknown): NexBookManifest {
 
   const manifest = raw as Partial<NexBookManifest>;
   if (manifest.format !== NEXBOOK_ARCHIVE_FORMAT) {
-    throw new ArchiveRejected('Ese archivo no es un NexBook de UINexus.');
+    throw new ArchiveRejected('Ese archivo no es un NexBook de Nextudio.');
   }
   if (typeof manifest.version !== 'number' || manifest.version > NEXBOOK_ARCHIVE_VERSION) {
     throw new ArchiveRejected(
-      'Ese .nexbook se creó con una versión más nueva de UINexus. Actualiza para abrirlo.'
+      'Ese .nexbook se creó con una versión más nueva de Nextudio. Actualiza para abrirlo.'
     );
   }
   if (
@@ -274,9 +274,15 @@ export function fromArchiveReferences(
 /**
  * Cambia todos los identificadores de asset del documento.
  *
- * En bloques Y en resultados. Olvidar los resultados dejaría las gráficas
- * apuntando a ids de la instalación de origen: imágenes rotas en cada
- * importación, y un rastro de identificadores ajenos dentro del archivo.
+ * En bloques —de imagen Y de registro de IA— y en resultados. Olvidar
+ * cualquiera de los tres dejaría esas imágenes apuntando a ids de la
+ * instalación de origen: imágenes rotas en cada importación, y un rastro de
+ * identificadores ajenos dentro del archivo.
+ *
+ * La lista de sitios donde vive un `assetId` es la misma que recorre
+ * `collectAssetIds`, y tiene que seguir siéndolo: si una función conoce un sitio
+ * que la otra no, el que sobra se exporta sin bytes o los bytes se exportan sin
+ * referencia. Hay una prueba que compara las dos.
  */
 function remapAssets(
   document: NexBookDocument,
@@ -296,9 +302,19 @@ function remapAssets(
 
   return {
     ...document,
-    blocks: document.blocks.map((block) =>
-      block.type === 'image' ? { ...block, assetId: translate(block.assetId) } : block
-    ),
+    blocks: document.blocks.map((block) => {
+      if (block.type === 'image') return { ...block, assetId: translate(block.assetId) };
+      if (block.type === 'ai_worklog' && Array.isArray(block.responseImages)) {
+        return {
+          ...block,
+          responseImages: block.responseImages.map((image) => ({
+            ...image,
+            assetId: translate(image.assetId),
+          })),
+        };
+      }
+      return block;
+    }),
     results: Object.fromEntries(
       Object.entries(document.results).map(([blockId, result]) => [
         blockId,

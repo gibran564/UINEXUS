@@ -33,6 +33,7 @@ import type {
   ExternalLinkData,
   FreeformData,
   MediaData,
+  NexBookConclusionMode,
   ProgrammingLanguage,
   ResearchData,
   ResourceRef,
@@ -149,10 +150,18 @@ export function WorklogFields({
   data,
   onChange,
   resources,
+  conclusionMode = 'optional',
 }: {
   data: AIWorklogData;
   onChange: (changes: Record<string, unknown>) => void;
   resources: AssignmentDetail['resources'];
+  /**
+   * Qué hace la actividad con la conclusión del estudiante.
+   *
+   * Ausente significa `optional`, que es lo que hacían las entregas guardadas
+   * antes de que la política existiera: se ofrecía el espacio y no se exigía.
+   */
+  conclusionMode?: NexBookConclusionMode;
 }) {
   const provider = (data.provider ?? 'Claude') as AIProvider;
   const suggestions = AI_MODEL_SUGGESTIONS[provider] ?? [];
@@ -382,17 +391,33 @@ export function WorklogFields({
         </Field>
       </div>
 
-      <Field
-        label="Tu análisis"
-        hint="Qué aprendiste, en qué se equivocó la IA, qué decidiste tú."
-      >
-        <textarea
-          rows={4}
-          value={data.studentAnalysis ?? ''}
-          onChange={(event) => onChange({ studentAnalysis: event.target.value })}
-          className="field"
-        />
-      </Field>
+      {/*
+        La conclusión, con la política que puso la docente en esta parte.
+
+        `none` la quita de la pantalla: pedirla «por si acaso» y no mirarla
+        nunca es lo que enseña a rellenar campos sin pensar. `required` se dice
+        ANTES, no al chocar con el botón de entregar. Quien la hace cumplir es
+        el servidor, que la lee de la definición de la actividad y no de lo que
+        manda el navegador.
+      */}
+      {conclusionMode !== 'none' && (
+        <Field
+          label={conclusionMode === 'required' ? 'Tu conclusión (requerida)' : 'Tu conclusión'}
+          hint={
+            conclusionMode === 'required'
+              ? 'Qué aprendiste, en qué se equivocó la IA, qué decidiste tú. Esta actividad la pide para poder entregar.'
+              : 'Opcional. Qué aprendiste, en qué se equivocó la IA, qué decidiste tú.'
+          }
+        >
+          <textarea
+            rows={4}
+            required={conclusionMode === 'required'}
+            value={data.studentAnalysis ?? ''}
+            onChange={(event) => onChange({ studentAnalysis: event.target.value })}
+            className="field"
+          />
+        </Field>
+      )}
 
       {(resources.prompts.length > 0 || resources.skills.length > 0) && (
         <fieldset>
@@ -696,7 +721,7 @@ const MEDIA_COPY: Record<
  *
  * ## Subir y enlazar, en ese orden
  *
- * Subir a UINexus es lo primero y lo evidente, porque es lo que pide una tarea
+ * Subir a Nextudio es lo primero y lo evidente, porque es lo que pide una tarea
  * que dice «entrega el reporte». El enlace externo se conserva DEBAJO y no se
  * retira: un video hecho con un avatar de IA vive en HeyGen y no tiene sentido
  * duplicarlo, y un archivo compartido en Drive por todo el equipo tampoco.
@@ -718,7 +743,7 @@ export function MediaFields({
   onChange: (changes: Record<string, unknown>) => void;
   kind: MediaData['kind'];
   hint?: string;
-  /** Con ambos, se habilita la subida a UINexus además del enlace. */
+  /** Con ambos, se habilita la subida a Nextudio además del enlace. */
   assignmentId?: string;
   stepId?: string;
 }) {
@@ -914,7 +939,7 @@ export function AcademicFileDrop({
             <span className="block truncate text-sm font-medium">
               {fileName || 'Archivo entregado'}
             </span>
-            <span className="block text-label text-success">Guardado en UINexus</span>
+            <span className="block text-label text-success">Guardado en Nextudio</span>
           </span>
           <button
             type="button"

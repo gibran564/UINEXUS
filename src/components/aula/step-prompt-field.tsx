@@ -70,7 +70,7 @@ export function StepPromptField({
 
   return (
     <fieldset>
-      <legend className="label">Prompt</legend>
+      <legend className="label">Prompt de apoyo</legend>
       <p className="hint">
         Escríbelo aquí si es de esta actividad. La biblioteca sirve para reutilizar, no es un
         requisito.
@@ -137,7 +137,7 @@ export function StepPromptField({
         />
       )}
 
-      {value.mode === 'none' && <p className="hint mt-2">Este paso no usa prompt todavía.</p>}
+      {value.mode === 'none' && <p className="hint mt-2">Esta parte no usa prompt todavía.</p>}
     </fieldset>
   );
 }
@@ -293,7 +293,7 @@ function SaveToLibrary({
         </button>
       </div>
       <p className="hint">
-        Publicar la actividad no depende de esto. El prompt ya está en el paso.
+        Publicar la actividad no depende de esto. El prompt ya está en la parte.
       </p>
     </div>
   );
@@ -376,7 +376,7 @@ function LibraryPrompt({
 
       {value.mode === 'library' && (
         <p className="text-sm text-muted">
-          Este paso usa «{value.title || 'un prompt de la biblioteca'}». Si lo corriges en la
+          Esta parte usa «{value.title || 'un prompt de la biblioteca'}». Si lo corriges en la
           biblioteca, se corrige aquí.
         </p>
       )}

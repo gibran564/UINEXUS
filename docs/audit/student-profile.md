@@ -2,7 +2,7 @@
 
 ## 1. El hallazgo que resuelve la mitad de la pregunta
 
-UINexus **ya recoge** casi todos los datos de la sidebar que se plantea como
+Nextudio **ya recoge** casi todos los datos de la sidebar que se plantea como
 hipótesis, y **no los enseña en ningún sitio**.
 
 `src/components/dashboard/profile-editor.tsx` pide, con etiqueta y validación:
@@ -170,7 +170,7 @@ de carril) que da marco a lo demás.
 |---|---|---|
 | Avatar + nombre | Sí | Confirma con qué cuenta se está (real en aulas de laboratorio compartidas) |
 | Carrera + semestre | Sí | Una línea. Da marco y usa un dato ya recogido |
-| Institución | **No** | Hoy hay una sola. Ruido hasta que UINexus sea multiinstitución |
+| Institución | **No** | Hoy hay una sola. Ruido hasta que Nextudio sea multiinstitución |
 | **Necesita tu atención (máx. 3)** | **Sí — es la razón del carril** | Lo único con fecha límite |
 | **Tus materias / grupos** | **Sí** | Filtro del muro + acceso al aula. Ya viaja en `HomePayload.courses` |
 | Contador de no revisadas por materia | Sí | Ya se calcula en `/api/aula` |

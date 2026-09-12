@@ -1,4 +1,4 @@
-# ¿Qué debería ser el inicio de UINexus?
+# ¿Qué debería ser el inicio de Nextudio?
 
 ## Punto de partida: la pregunta está mal formulada, y por una buena razón
 
@@ -46,7 +46,7 @@ galerías por curso) y el trabajo vive en `/aula`.
 - El escaparate es lo que mejor vende el producto a quien llega de fuera.
 
 **Problemas**
-- Un estudiante entra a UINexus para entregar algo o para ver qué publicó su
+- Un estudiante entra a Nextudio para entregar algo o para ver qué publicó su
   docente. Ninguna de las dos cosas está en el escaparate. Coste: **1 clic extra
   en cada sesión, para siempre.**
 - El escaparate no cambia entre semanas; el muro sí. Poner lo estático donde se
@@ -123,7 +123,7 @@ horizontal (posición fija, que no se acaba y no desaparece).
 │                   │                              │  ≥1440px           │
 │ · Identidad       │  [filtro: todas · DCU · IHC] │                    │
 │   avatar, nombre, │                              │ · Del resto de     │
-│   carrera, sem.   │  ── nuevo desde tu visita ── │   UINexus          │
+│   carrera, sem.   │  ── nuevo desde tu visita ── │   Nextudio          │
 │                   │  ▸ publicación compacta      │   3 proyectos      │
 │ · Necesita tu     │  ▸ publicación compacta      │   públicos         │
 │   atención (2–3)  │  ▸ publicación compacta      │   recientes        │
@@ -148,7 +148,7 @@ Comprobación de que cada elemento del carril se gana su sitio:
 | Necesita tu atención | Sí, en la columna | Es lo único que caduca. Fijo = nunca desaparece al hacer scroll. **Mejora su prioridad, no la reduce** |
 | Tus materias | No (sólo en `/aula`) | Con >1 materia es el filtro mental. Ya viaja en `HomePayload.courses` |
 | Identidad + carrera + semestre | No, en ningún sitio | Ya se recoge en `/dashboard/profile` y hoy se descarta. Da marco al muro |
-| Del resto de UINexus | No | Cierra el agujero de discoverability: hoy con sesión no hay camino al trabajo público |
+| Del resto de Nextudio | No | Cierra el agujero de discoverability: hoy con sesión no hay camino al trabajo público |
 
 **Ventajas**
 - El muro empieza en el píxel 0. De 1,3 a **6,0** publicaciones visibles a
