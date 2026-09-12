@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attentionBuckets,
   attentionCta,
   attentionRank,
   attentionReason,
+  teacherTaskBuckets,
   compareEvents,
   filterEventsByCourse,
   progressLabel,
@@ -175,6 +177,87 @@ describe('lo que dice el botón', () => {
     // Una actividad de un solo paso no tiene pasos que contar.
     expect(progressLabel({ done: 0, total: 1, nextStepTitle: 'X' })).toBe('');
     expect(progressLabel(null)).toBe('');
+  });
+});
+
+describe('los contadores del Inicio son filtros', () => {
+  const item = (reason: AttentionItem['reason'], assignmentId: string): AttentionItem => ({
+    assignmentId,
+    courseId: 'c',
+    courseName: 'Materia',
+    title: 'Actividad',
+    reason,
+    dueDate: null,
+    dueAt: null,
+    submissionStatus: null,
+    progress: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+  });
+
+  it('cuenta cuántas hay de cada motivo', () => {
+    const buckets = attentionBuckets([
+      item('due_today', 'a'),
+      item('due_today', 'b'),
+      item('new', 'c'),
+    ]);
+
+    expect(buckets).toEqual([
+      { key: 'due_today', label: 'Entrega hoy', count: 2 },
+      { key: 'new', label: 'Nueva actividad', count: 1 },
+    ]);
+  });
+
+  /**
+   * El orden lo marca la lista, no una tabla propia: así la prioridad se
+   * mantiene en un solo sitio —`sortAttention`— y no en dos que pueden dejar de
+   * coincidir.
+   */
+  it('respeta el orden en que llega la lista, ya ordenada por urgencia', () => {
+    const urgentFirst = sortAttention([
+      item('new', 'nueva'),
+      item('needs_changes', 'devuelta'),
+      item('due_today', 'hoy'),
+    ]);
+
+    expect(attentionBuckets(urgentFirst).map((bucket) => bucket.key)).toEqual([
+      'needs_changes',
+      'due_today',
+      'new',
+    ]);
+  });
+
+  /**
+   * Un contador único diría el mismo número que el total y al pulsarlo no
+   * cambiaría una sola fila. Un control que no hace nada es peor que ninguno.
+   */
+  it('con un solo motivo no hay nada que filtrar', () => {
+    expect(attentionBuckets([item('new', 'a'), item('new', 'b')])).toEqual([]);
+    expect(attentionBuckets([])).toEqual([]);
+  });
+
+  it('el profesorado cuenta por clase de pendiente', () => {
+    const base = {
+      courseId: 'c',
+      courseName: 'Materia',
+      assignmentId: 'a',
+      title: 'Actividad',
+      count: 1,
+      submitted: null,
+      audience: null,
+      dueAt: null,
+      dueDate: null,
+    };
+
+    const buckets = teacherTaskBuckets([
+      { ...base, kind: 'review' },
+      { ...base, kind: 'review' },
+      { ...base, kind: 'moderation' },
+    ]);
+
+    expect(buckets).toEqual([
+      { key: 'review', label: 'Por revisar', count: 2 },
+      { key: 'moderation', label: 'Aportaciones', count: 1 },
+    ]);
   });
 });
 
