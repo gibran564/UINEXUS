@@ -120,7 +120,7 @@ conviene conocer antes de tocar entregas: **RG-1**, el item de una entrega puede
 pasar de los 400 KB de DynamoDB si lleva varias Partes de laboratorio llenas; y
 **RG-2**, `reviewSubmission` no tiene concurrencia optimista, así que dos
 docentes revisando la misma entrega se pisan. Razonados en
-`docs/GRADING-ROADMAP.md` §10.
+`docs/GRADING-ROADMAP.md` §14.
 
 ---
 
