@@ -13,6 +13,7 @@ import {
   toPromptTemplate,
   toSkillResource,
 } from '@/lib/data/academic-mappers';
+import { listWorkspaceSummariesForOwner } from '@/lib/data/workspaces';
 import { listPublicationsFor } from '@/lib/server/publications';
 import type { PublicationDTO } from '@/lib/publications';
 import {
@@ -39,6 +40,7 @@ import type {
   ResourceAuthorship,
   StepEvidence,
   SubmissionRecord,
+  WorkspaceSummary,
 } from '@/lib/types';
 import { normalizeStepEvidence } from '@/lib/workflow';
 
@@ -72,6 +74,14 @@ import { normalizeStepEvidence } from '@/lib/workflow';
 
 const FEED_LIMIT = 20;
 const ATTENTION_LIMIT = 12;
+/**
+ * Cuántas prácticas se ofrecen para retomar.
+ *
+ * Cuatro, y no la lista entera: «sigue donde lo dejaste» sólo sirve mientras se
+ * recuerde haberlo dejado ahí. Pasada media docena deja de ser un atajo y se
+ * convierte en el índice de `/practicas`, que ya existe.
+ */
+const RESUME_LIMIT = 4;
 
 export interface HomePayload {
   role: 'student' | 'teacher' | 'admin';
@@ -83,6 +93,13 @@ export interface HomePayload {
   attention: AttentionItem[];
   /** Lo que el PROFESORADO tiene que atender, ya ordenado. */
   teacherTasks: TeacherTask[];
+  /**
+   * Prácticas y NexBooks propios, el último tocado primero, para retomarlos.
+   *
+   * Son de quien pide y de nadie más: salen del índice por dueño, igual que
+   * `/api/workspaces`, así que no hay forma de expresar «las de otro».
+   */
+  resume: WorkspaceSummary[];
   publications: PublicationDTO[];
   teacherUpdates: FeedEvent[];
   classroomActivity: FeedEvent[];
@@ -161,8 +178,18 @@ export async function GET(request: Request): Promise<Response> {
     const mySubmissions = await listSubmissionsByStudent(actor.uid);
     const myByAssignment = new Map(mySubmissions.map((item) => [item.assignmentId, item]));
 
-    // Compartir un proyecto también exige audiencia y aprobación estudiantil.
-    const publications = await listPublicationsFor(actor);
+    /**
+     * Las dos listas que no dependen de ninguna materia van juntas.
+     *
+     * Las prácticas son PROPIAS y viven fuera del aula: no hay que esperar a
+     * recorrer las materias para pedirlas, y encadenarlas sumaría su latencia a
+     * la de una pantalla que ya hace bastantes consultas.
+     */
+    const [publications, workspaces] = await Promise.all([
+      // Compartir un proyecto también exige audiencia y aprobación estudiantil.
+      listPublicationsFor(actor),
+      listWorkspaceSummariesForOwner(actor.uid),
+    ]);
 
     for (const { course, role } of memberships) {
       const teacherHandles = new Set(course.teachers.map((teacher) => teacher.handle));
@@ -398,6 +425,9 @@ export async function GET(request: Request): Promise<Response> {
       })),
       attention: sortAttention(attention).slice(0, ATTENTION_LIMIT),
       teacherTasks: sortTeacherTasks(teacherTasks).slice(0, ATTENTION_LIMIT),
+      // Ya vienen ordenadas por último toque desde el índice; aquí sólo se
+      // recorta. Reordenarlas otra vez sería repetir el trabajo de la consulta.
+      resume: workspaces.slice(0, RESUME_LIMIT),
       publications: publications.filter((publication) => publication.status !== 'approved'),
       // Las tareas nunca las desplaza el contenido social: van con cupo propio.
       teacherUpdates: sortEventsReservingAssignments(

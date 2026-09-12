@@ -356,6 +356,79 @@ export function summarizeSince(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Contadores del Inicio
+// ---------------------------------------------------------------------------
+
+/** Cómo se anuncia cada motivo. El texto dice el estado, no lo insinúa. */
+export const REASON_LABEL: Record<AttentionReason, string> = {
+  needs_changes: 'Requiere cambios',
+  overdue: 'Vencida',
+  due_today: 'Entrega hoy',
+  due_soon: 'Vence pronto',
+  in_progress: 'En progreso',
+  new: 'Nueva actividad',
+  upcoming: 'Programada',
+  no_deadline: 'Sin fecha límite',
+  closed: 'Entrega cerrada',
+};
+
+/** Lo mismo para el profesorado: qué clase de pendiente es. */
+export const TEACHER_KIND_LABEL: Record<TeacherTaskKind, string> = {
+  closing: 'Cierra pronto',
+  review: 'Por revisar',
+  moderation: 'Aportaciones',
+  publication: 'Publicaciones',
+};
+
+export interface Bucket<K extends string> {
+  key: K;
+  label: string;
+  count: number;
+}
+
+/**
+ * Cuántos pendientes hay de cada clase, para los contadores del Inicio.
+ *
+ * ## El orden sale de la lista, no de una tabla aparte
+ *
+ * Las listas llegan ya ordenadas por urgencia —`sortAttention` y
+ * `sortTeacherTasks`—, así que el primer elemento de cada clase marca dónde va
+ * su contador. Reordenar aquí con una prioridad propia sería mantener la misma
+ * regla en dos sitios, y la copia envejecería en cuanto alguien añadiera un
+ * motivo nuevo y se olvidara de este archivo.
+ *
+ * ## Por qué devuelve una lista vacía con un solo grupo
+ *
+ * Porque un contador único no filtra nada: diría el mismo número que el total y
+ * al pulsarlo no cambiaría una sola fila. Un control que no hace nada es peor
+ * que ningún control, así que quien lo pinta recibe la lista vacía y no pinta
+ * nada. Es la regla, no un detalle de presentación, y por eso vive aquí.
+ */
+function countBuckets<T, K extends string>(
+  items: readonly T[],
+  keyOf: (item: T) => K,
+  labels: Record<K, string>
+): Bucket<K>[] {
+  const counts = new Map<K, number>();
+  for (const item of items) {
+    const key = keyOf(item);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  if (counts.size < 2) return [];
+  return [...counts].map(([key, count]) => ({ key, label: labels[key] ?? key, count }));
+}
+
+/** Los contadores del alumnado: uno por motivo presente. */
+export function attentionBuckets(items: readonly AttentionItem[]): Bucket<AttentionReason>[] {
+  return countBuckets(items, (item) => item.reason, REASON_LABEL);
+}
+
+/** Los del profesorado: uno por clase de pendiente presente. */
+export function teacherTaskBuckets(tasks: readonly TeacherTask[]): Bucket<TeacherTaskKind>[] {
+  return countBuckets(tasks, (task) => task.kind, TEACHER_KIND_LABEL);
+}
+
 /** «hace 25 min», «hace 2 h», «hace 3 días». */
 export function relativeTime(iso: string, now: Date = new Date()): string {
   const at = new Date(iso).getTime();
