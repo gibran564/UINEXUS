@@ -14,9 +14,11 @@ actividad → trabajo → entrega → snapshot inmutable
 ```
 
 > **Estado: G0 cerrado.** El contrato de esta página es el que G1 implementa.
-> Segunda revisión: la primera versión tenía la identidad de la evaluación mal
-> resuelta —una sola clave por entrega no puede guardar la evaluación de dos
-> intentos— y el §9 de esta página explica qué cambió y por qué.
+> Ha pasado por tres revisiones y el §9 cuenta qué cambió en cada una: la segunda
+> arregló la identidad de la evaluación —una sola clave por entrega no puede
+> guardar la de dos intentos—; la tercera hizo **seguro** el contador de
+> intentos, que se había introducido con una comprobación TOCTOU y sin
+> idempotencia.
 
 ---
 
@@ -96,6 +98,24 @@ Ese es el patrón reutilizable, y **D1 lo sigue en vez de estrenar una PK+SK**.
 una trampa»*. Y `tests/unit/local-sandbox.test.ts` comprueba que
 `scripts/lib/table-definitions.mjs` e `infra/uinexus.cfn.yaml` coinciden. Todo
 índice que proponga este diseño va **en los dos sitios**, o no va.
+
+**7. El proyecto YA usa transacciones de DynamoDB.**
+`lib/server/publications.ts` publica y modera con `TransactWriteCommand` y
+`ConditionExpression`. Así que la atomicidad de D11 **no estrena nada**: reutiliza
+el patrón. Lo que no existe todavía es el tipo de item `ConditionCheck` ni el
+tratamiento de `TransactionCanceledException`, y eso sí lo incorpora G1.
+
+**8. Entregar y reentregar son LA MISMA petición.** Un solo `PUT
+/api/assignments/:id/submission` con `intent: 'submit'`. No hay ruta de
+reentrega, ni acción distinta, ni marca que las separe: la pantalla posterior a
+entregar dice literalmente *«vuelve a tu trabajo y entrega otra vez»* y el
+estudiante pulsa **el mismo botón**. Por tanto **el producto no tiene hoy ninguna
+forma de distinguir un reintento de una reentrega**, y eso hay que resolverlo
+antes de que `attempt` signifique algo (D10).
+
+Lo que salva la situación actual es que la escritura es un `PutCommand` que
+**reemplaza el item entero**: reintentar el mismo `PUT` deja el mismo registro.
+En cuanto `attempt` se incremente, esa idempotencia se pierde.
 
 ### Suite base sobre el árbol actual
 
@@ -339,33 +359,139 @@ y por qué no sirven:
 |---|---|
 | `Submission.revision` | No existe. `Submission` no tiene control de versión |
 | `updatedAt` | Cambia con cada guardado de borrador, no con la entrega |
-| `submittedAt` | **Sí** identifica el intento, y cambia exactamente cuando debe. Pero es un instante, no un número: no se puede decir «intento 2», y usar una marca de tiempo como identidad obliga a comparar cadenas para algo que quiere ser un contador |
+| `submittedAt` | Se reescribe en **cada ejecución** de un submit, reintentos incluidos. Ver la corrección de abajo |
 
-Así que se añade **un** campo, entero:
+> **Corrección a la revisión anterior de este documento.** Decía que
+> «`submittedAt` cambia exactamente cuando debe» y lo usaba como prueba de que un
+> intento se podía identificar por él. **Es falso.** Lo único que demuestra es
+> *cuándo se ejecuta el código*, no que cada ejecución sea un acto académico
+> distinto: un reintento de red vuelve a escribirlo con otra hora sin que nadie
+> haya entregado dos veces. `submittedAt` sigue sirviendo para decir «entregaste
+> el…», pero **no puede usarse como prueba de idempotencia**.
+
+Así que se añade un campo entero:
 
 ```ts
 // En Submission / SubmissionRecord
 attempt: number;   // 0 = nunca entregada. 1 = primera entrega. 2 = reentrega…
 ```
 
-- Lo sube **`upsertSubmission`, y sólo cuando `intent === 'submit'`**. Guardar un
-  borrador no lo mueve. Eso es exactamente «avanza sólo con una entrega
-  académicamente significativa».
-- **Sin migración.** `normalizeSubmission` lo completa al leer, igual que todos
-  los campos añadidos desde la iteración 2:
+#### Qué es un intento, exactamente
 
-  ```ts
-  attempt: raw.attempt ?? (raw.submittedAt ? 1 : 0)
-  ```
+**Un intento es un acto académico de entrega**: el estudiante da por terminado su
+trabajo y lo manda. No es una petición HTTP, no es una escritura y no es una
+marca de tiempo. La distinción importa porque una misma decisión suya puede
+producir varias peticiones —doble clic, reintento del navegador, respuesta
+perdida— y todas siguen siendo **una** entrega.
 
-  Y no es una suposición: una entrega anterior con `submittedAt` se entregó una
-  vez; una sin él, ninguna. El valor derivado es el correcto, no un relleno.
-- Una evaluación exige `attempt >= 1`. Coincide con lo que `reviewSubmission` ya
-  hace hoy: rechaza con 409 revisar un borrador del estudiante.
+- **Nace** en 0: una entrega que sólo se ha guardado como borrador no tiene
+  intentos.
+- **Sube** cuando llega un submit con un acto de entrega que no se había visto.
+- **No sube** al guardar un borrador, ni al reintentar el mismo acto, ni cuando
+  el profesorado revisa, pide cambios o publica una evaluación.
+- Una evaluación exige `attempt >= 1`, igual que `reviewSubmission` ya rechaza
+  hoy revisar un borrador del estudiante.
 
-> **Éste es el único cambio de esta iniciativa sobre una ruta de escritura ya
-> probada.** Es aditivo —un campo y un `+ 1`—, no una reestructuración de
-> `Submission`, y sin él la identidad de la evaluación no se puede resolver.
+#### El problema: hoy no hay forma de distinguir un reintento
+
+Del hallazgo 8: entregar y reentregar son **la misma petición**, y el producto no
+lleva ningún dato que las separe. Así que `if (intent === 'submit') attempt += 1`
+convierte un doble clic en dos intentos, y deja una evaluación publicada
+apuntando a un intento que nadie hizo.
+
+**No hay ningún mecanismo reutilizable en el repositorio para esto.** Se declara,
+como pedía el encargo, y se diseña el mínimo.
+
+#### La idempotencia mínima: un token por acto de entrega
+
+Se descartaron primero las alternativas más baratas, porque **ninguna funciona**:
+
+| Alternativa | Por qué no sirve |
+|---|---|
+| Condicionar por `status` (`draft → submitted` sube, `submitted → submitted` no) | Una reentrega legítima sale casi siempre de `submitted`: es el caso que la pantalla invita a hacer. Dejaría de contar justo lo que hay que contar |
+| Comparar el contenido | Un estudiante puede reentregar lo mismo a propósito, y un reintento tras editar lleva contenido distinto. Falla en los dos sentidos |
+| `submittedAt` | Lo reescribe el propio reintento (corrección de arriba) |
+
+Queda una: que **el cliente diga de qué acto se trata**.
+
+```ts
+// En el cuerpo del PUT, obligatorio cuando intent === 'submit'
+submitToken: string        // opaco, generado por el cliente
+
+// En Submission / SubmissionRecord
+lastSubmitToken: string | null
+```
+
+El token se genera **al abrir la confirmación de entrega**, que ya existe
+(`workflow-runner.tsx`, el paso «Sí, entregar»). Un acto de entrega, un token.
+Reintentar ese envío reutiliza el mismo; volver a pulsar «Entregar actividad»
+más tarde genera otro.
+
+```
+token === lastSubmitToken   →  es el MISMO acto  →  attempt se queda igual
+token !== lastSubmitToken   →  es un acto NUEVO  →  attempt + 1
+```
+
+No es «confiar en el cliente»: el token no concede permisos ni decide nada que
+el servidor no pueda comprobar. Sólo dice «esto es lo mismo que te mandé hace un
+segundo», y lo peor que puede hacer un cliente mentiroso es contar mal **sus
+propios** intentos.
+
+#### La escritura, condicionada
+
+El incremento se lee y se escribe en la misma operación condicional, para que dos
+peticiones simultáneas no calculen ambas sobre el mismo valor:
+
+```
+PutCommand(item con attempt ya calculado)
+  ConditionExpression:
+       attribute_not_exists(id)          -- primera entrega de esta persona
+    OR attribute_not_exists(#attempt)    -- registro legacy, todavía sin campo
+    OR #attempt = :readAttempt           -- nadie lo movió desde que lo leí
+```
+
+Si falla, se relee y se decide otra vez con el estado fresco. **Es importante que
+sea un `PutCommand` de item completo y no un `ADD attempt 1`**: el proyecto
+escribe entregas reemplazando el item entero, así que el valor se calcula en el
+servidor y se escribe como número, sin depender de que el atributo existiera.
+
+#### Registros legacy: los dos casos, distinguidos
+
+Al leer:
+
+```ts
+attempt: raw.attempt ?? (raw.submittedAt ? 1 : 0)
+```
+
+No es un relleno, es derivación exacta: una entrega anterior con `submittedAt` se
+entregó una vez; una sin él, ninguna.
+
+| Registro legacy | Lectura | Primer submit posterior | Resultado |
+|---|---|---|---|
+| `attempt` ausente · `submittedAt` **presente** | `1` | token nuevo ⇒ `1 + 1` | **`attempt = 2`** ✅ |
+| `attempt` ausente · `submittedAt` **ausente** | `0` | token nuevo ⇒ `0 + 1` | **`attempt = 1`** ✅ |
+
+La escritura persiste el valor calculado y, de paso, deja el registro ya
+normalizado. **Cero migración**: cada entrega se pone al día la primera vez que
+alguien la toca, que es la estrategia del proyecto desde la iteración 2.
+
+La rama `attribute_not_exists(#attempt)` de la condición existe precisamente para
+esto: sin ella, la condición `#attempt = :readAttempt` fallaría siempre sobre un
+registro legacy, que no tiene el atributo.
+
+#### Dos submits simultáneos
+
+| Caso | Qué pasa | Resultado |
+|---|---|---|
+| **Mismo token** (doble clic, reintento) | Ambas leen `attempt = 1`. La primera escribe `2` con `lastSubmitToken = T`. La segunda encuentra `token === lastSubmitToken` y **no incrementa** | `attempt = 2` ✅ |
+| **Mismo token, carrera exacta** (ninguna vio a la otra) | Ambas calculan `2`; la condición deja pasar a una y rechaza a la otra, que relee y ya ve el token | `attempt = 2` ✅ |
+| **Tokens distintos** (dos reentregas de verdad) | La primera escribe `2`. La segunda falla la condición, relee, ve `attempt = 2` y su token distinto | `attempt = 3` ✅ |
+
+Nunca sale un `3` de un solo acto, que es el fallo que había que impedir.
+
+> **Éste y `lastSubmitToken` son los únicos cambios de esta iniciativa sobre una
+> ruta de escritura ya probada.** Son aditivos —dos campos y una condición—, no
+> una reestructuración de `Submission`, y sin ellos `attempt` no es seguro.
 
 ### D11 · La carrera entrega ↔ evaluación: 409, nunca reasignar
 
@@ -384,15 +510,75 @@ invariante que falta es otra:
 > **Invariante A** — al guardar y al publicar, el `attempt` que la evaluación
 > dice estar evaluando tiene que seguir siendo el `attempt` actual de la entrega.
 
-El cliente manda el `attempt` que abrió. El servidor lee la entrega y compara:
+#### Comprobarla leyendo NO sirve
+
+La revisión anterior de este documento decía «el servidor lee la entrega y
+compara». Eso es un TOCTOU de manual:
 
 ```
-grade.attempt === submission.attempt   →  se procede
-grade.attempt  <  submission.attempt   →  409
+1. GET Submission           → attempt = 1
+2. comprobar attempt === 1  → cierto
+3. el estudiante reentrega  → attempt = 2
+4. escribir la evaluación del attempt 1   ← la comprobación ya es falsa
 ```
 
-Copy: **«La entrega cambió mientras la estabas evaluando. Recarga para revisar la
-versión actual.»**
+La condición era verdad cuando se leyó y mentira cuando se escribió. **La
+garantía tiene que estar en la escritura, no antes.**
+
+#### La operación: una transacción, dos condiciones
+
+El proyecto ya usa `TransactWriteCommand` con `ConditionExpression`
+(`lib/server/publications.ts`, hallazgo 7), así que esto reutiliza el patrón. Lo
+nuevo para G1 es el item `ConditionCheck` y el tratamiento de la cancelación.
+
+**Al actualizar una evaluación existente:**
+
+```
+TransactWriteCommand
+ ├─ [0] ConditionCheck  TABLES.submissions   Key: { id: submissionId }
+ │        ConditionExpression: '#attempt = :expectedAttempt'
+ │
+ └─ [1] Update          TABLES.grades        Key: { id: `${submissionId}#${attempt}` }
+          ConditionExpression: '#revision = :expectedRevision'
+          UpdateExpression:    'SET … , #revision = #revision + :one'
+```
+
+**Al crear la primera evaluación de un intento:**
+
+```
+TransactWriteCommand
+ ├─ [0] ConditionCheck  TABLES.submissions
+ │        ConditionExpression: '#attempt = :expectedAttempt'
+ │
+ └─ [1] Put             TABLES.grades
+          ConditionExpression: 'attribute_not_exists(id)'
+```
+
+Las dos condiciones y la escritura viven en **una sola operación**: DynamoDB las
+evalúa juntas y, si cualquiera falla, **no escribe nada**. No hay ventana entre
+comprobar y escribir porque no hay dos momentos.
+
+Se aplica igual **al guardar el borrador y al publicar**. Sólo al publicar no
+basta: un borrador guardado contra un intento que ya cambió también está
+evaluando otra cosa.
+
+#### Distinguir los dos conflictos, sin releer
+
+`TransactionCanceledException` trae `CancellationReasons`, **un elemento por
+item, en el mismo orden que `TransactItems`**. Eso basta para saber cuál falló:
+
+| Índice con `ConditionalCheckFailed` | Causa | Respuesta |
+|---|---|---|
+| `[0]` — el `ConditionCheck` de la entrega | El estudiante reentregó | **409** · «La entrega cambió mientras la estabas evaluando. Recarga para revisar la versión actual.» |
+| `[1]` — la escritura de la evaluación | Otra sesión docente guardó antes | **409** · «Esta evaluación cambió en otra sesión. Recarga antes de continuar.» |
+| `[1]` en una creación (`attribute_not_exists`) | Ya existe una evaluación de ese intento | Se relee y se reintenta como actualización |
+
+**No hace falta releer para distinguirlos**, que es la otra ventaja de meter las
+dos condiciones en la misma transacción: el error dice cuál cedió. Si algún día
+los dos índices fallan a la vez, manda el `[0]`: la entrega cambió, y eso es lo
+que el docente necesita saber primero.
+
+Copy y códigos quedan así, y nunca last-write-wins.
 
 Qué **no** se hace, y es lo importante:
 
@@ -576,10 +762,11 @@ interface GradingConfig {
 // Assignment gana UN campo. Ausente ⇒ { mode: 'none', maxScore: null, rubric: null }.
 // grading: GradingConfig
 
-// ---- Entrega: gana UN campo --------------------------------------------
+// ---- Entrega: gana DOS campos ------------------------------------------
 
 // En Submission / SubmissionRecord (D10):
-// attempt: number   // 0 = nunca entregada; sube sólo al entregar
+// attempt: number                    // 0 = nunca entregada; sube por ACTO de entrega
+// lastSubmitToken: string | null     // el acto que produjo el intento actual
 
 // ---- Evaluación: item propio en `uinexus-grades` -----------------------
 
@@ -632,9 +819,21 @@ uinexus-grades
   GSI bySubmission submissionId (HASH) · attempt (RANGE)   → el histórico
 ```
 
-Va en `scripts/lib/table-definitions.mjs` **y** en `infra/uinexus.cfn.yaml`:
-`tests/unit/local-sandbox.test.ts` comprueba que coinciden, y R13 dejó escrito lo
-que cuesta declarar un índice que no existe.
+#### Los cuatro sitios que G1 actualiza JUNTOS
+
+R13 costó un riesgo por declarar un índice que no existía. La tabla y su GSI van,
+en el mismo cambio, a:
+
+| Archivo | Qué añade |
+|---|---|
+| `src/lib/aws/config.ts` | `TABLES.grades` y `INDEXES.gradesBySubmission` |
+| `scripts/lib/table-definitions.mjs` | La definición para el sandbox local |
+| `infra/uinexus.cfn.yaml` | La misma tabla en la plantilla de AWS |
+| `tests/unit/local-sandbox.test.ts` | Ya compara los dos anteriores: **fallará solo** si uno se olvida |
+
+La cuarta fila es la que hace que esto no dependa de acordarse. Además, sin la
+tabla en `table-definitions.mjs` las pruebas de integración de G1 no tendrían
+dónde escribir, así que el olvido se nota en el primer `npm run test:integration`.
 
 ### Topes
 
@@ -682,12 +881,31 @@ Queda **una**:
 | Verbo | Quién | Qué toca | `attempt` | Efecto sobre la evaluación |
 |---|---|---|---|---|
 | **Guardar** | estudiante | su entrega (`status: 'draft'`) | **no sube** | ninguno |
-| **Entregar** | estudiante | su entrega (`status: 'submitted'`, `submittedAt`) | **+1** | ninguno directo; el intento nuevo nace sin evaluación |
-| **Reentregar** | estudiante | lo mismo | **+1** | la evaluación anterior deja de ser vigente **por derivación** (D15); no se escribe |
+| **Entregar** | estudiante | su entrega (`status: 'submitted'`, `submittedAt`, `lastSubmitToken`) | **+1** si el token es nuevo | ninguno directo; el intento nuevo nace sin evaluación |
+| **Reintentar ese envío** | el cliente, solo | lo mismo, reescrito igual | **no sube** (token repetido) | ninguno |
+| **Reentregar** | estudiante | lo mismo, con token nuevo | **+1** | la evaluación anterior deja de ser vigente **por derivación** (D15); no se escribe |
 | **Evaluar** | docente | `SubmissionGrade` `draft` | no | crea el item con el snapshot (D2) o actualiza el del intento |
 | **Publicar** | docente | `status: 'published'`, `publishedAt` | no | el estudiante la ve |
 | **Actualizar publicada** | docente | contenido + `updatedAt` + `revision` | no | el estudiante ve la nota nueva y que cambió (D14) |
+| **Revisar / pedir cambios** (ruta antigua) | docente | `Submission.status`, `teacherNote` | **no sube** | ninguno; son mecanismos separados (D5) |
 | **Supersede** | *nadie* | — | — | no es una acción: es `grade.attempt < submission.attempt` (D15) |
+
+### Transiciones de estado, y cuál cuenta como intento
+
+| Desde | Acción | `attempt` |
+|---|---|---|
+| *(sin entrega)* | guardar borrador | 0 → **0** |
+| *(sin entrega)* o `draft` | primer submit | 0 → **1** |
+| `submitted` | reintento del mismo submit (token repetido) | 1 → **1** |
+| `submitted` | reentrega (token nuevo) | 1 → **2** |
+| `reviewed` | reentrega | n → **n+1** |
+| `needs_changes` | reentrega | n → **n+1** |
+| cualquiera | guardar borrador | sin cambio |
+| cualquiera | el docente revisa, pide cambios o publica | sin cambio |
+
+El estado **no** decide el incremento: lo decide el token (D10). `submitted →
+submitted` es a la vez el reintento y la reentrega, y por eso `status` no puede
+distinguirlos.
 
 ---
 
@@ -695,11 +913,17 @@ Queda **una**:
 
 | | Qué carrera | Cómo | Fallo |
 |---|---|---|---|
-| **`revision` de la evaluación** (D9) | evaluación ↔ evaluación · dos docentes | `ConditionExpression: '#revision = :expected'` | 409 «Esta evaluación cambió en otra sesión. Recarga antes de continuar.» |
-| **`attempt` de la entrega** (D11) | evaluación ↔ entrega evaluada · el estudiante reentrega | comparar `grade.attempt` con `submission.attempt` al guardar **y** al publicar | 409 «La entrega cambió mientras la estabas evaluando. Recarga para revisar la versión actual.» |
+| **`revision` de la evaluación** (D9) | evaluación ↔ evaluación · dos docentes | `ConditionExpression: '#revision = :expected'` sobre la escritura, item `[1]` | 409 «Esta evaluación cambió en otra sesión. Recarga antes de continuar.» |
+| **`attempt` de la entrega** (D11) | evaluación ↔ entrega evaluada · el estudiante reentrega | `ConditionCheck` sobre la entrega, item `[0]` de **la misma transacción** | 409 «La entrega cambió mientras la estabas evaluando. Recarga para revisar la versión actual.» |
+| **`lastSubmitToken`** (D10) | entrega ↔ entrega · el propio cliente repite | comparar el token, y escribir condicionado a `#attempt` | no es un 409: el reintento **tiene éxito** y no cuenta un intento de más |
 
-Ninguna sustituye a la otra: la primera vigila el objeto que se escribe, la
-segunda el objeto que se está juzgando.
+Las tres son independientes. Las dos primeras viajan en la **misma operación
+atómica**, así que ninguna puede quedar cierta al comprobar y falsa al escribir;
+la tercera protege el otro extremo del ciclo, donde quien repite no es un docente
+sino el propio navegador del estudiante.
+
+Ninguna sustituye a otra: la primera vigila el objeto que se escribe, la segunda
+el objeto que se está juzgando, la tercera cuántas veces se entregó.
 
 ---
 
@@ -715,9 +939,13 @@ segunda el objeto que se está juzgando.
 - **RG-1** (el techo de 400 KB), **RG-2** (la concurrencia de la revisión
   antigua) y **R14** (las imágenes del snapshot).
 
-Única excepción, declarada: **`Submission` gana el campo `attempt`** y
-`upsertSubmission` lo incrementa al entregar (D10). Es aditivo y normalizado al
-leer. Sin él no hay forma de decir qué se evaluó.
+Única excepción, declarada: **`Submission` gana `attempt` y `lastSubmitToken`**,
+y `upsertSubmission` los escribe al entregar, con la condición de D10. Son
+aditivos y normalizados al leer. Sin `attempt` no hay forma de decir qué se
+evaluó; sin el token, `attempt` no es seguro.
+
+`GET /api/assignments/:id/submission` y la pantalla de entrega ganan el
+`submitToken`, que es el mismo cambio visto desde el cliente.
 
 Y no se construye: panel docente, historial de versiones de entrega, historial de
 cambios de evaluación, comentarios inline, autograding, IA que califique, plagio,
@@ -730,7 +958,8 @@ estadísticas, export institucional, competencias, badges, ranking, gamificació
 | Qué | Cómo sobrevive |
 |---|---|
 | Actividad sin `grading` | `{ mode: 'none', maxScore: null, rubric: null }` al leer |
-| Entrega anterior sin `attempt` | `raw.attempt ?? (raw.submittedAt ? 1 : 0)`. Derivado exacto, no relleno |
+| Entrega anterior sin `attempt` | `raw.attempt ?? (raw.submittedAt ? 1 : 0)`. Derivado exacto, no relleno. La primera escritura posterior lo persiste ya normalizado (D10) |
+| Entrega anterior sin `lastSubmitToken` | Se lee `null`, que no coincide con ningún token: la siguiente entrega cuenta como acto nuevo, que es lo correcto |
 | Entrega sin evaluación | La lectura devuelve `null`; la pantalla dice «Pendiente de revisión» |
 | Entrega ya `reviewed` con `teacherNote` | Se sigue viendo igual. La evaluación es otra cosa, encima |
 | Workflow legacy (`LEGACY_STEP_ID`) | Un criterio puede apuntar a `'main'` como a cualquier Parte |
@@ -758,7 +987,9 @@ El servidor decide, siempre:
 
 **Datos que el servidor acepta**: `attempt`, `expectedRevision`,
 `generalFeedback`, `criteria[].criterionId`, `criteria[].selectedLevelId`,
-`criteria[].comment` y, sólo en `direct`, `score`.
+`criteria[].comment` y, sólo en `direct`, `score`. En la ruta de entrega,
+además, `submitToken` — opaco, sin privilegios, y que sólo puede hacer que el
+estudiante cuente mal sus propios intentos (RG-9).
 **Datos que el servidor deriva**: `points`, `score` en `rubric`, `maxScore`, el
 snapshot entero, `reviewedBy`, `reviewerName`, `lastEditedBy`, `status`,
 `createdAt`, `updatedAt`, `publishedAt`, `revision`, `id`.
@@ -779,6 +1010,17 @@ snapshot entero, `reviewedBy`, `reviewerName`, `lastEditedBy`, `status`,
 | 8 | Dos reglas de niveles incompatibles | Una sola: orden estrictamente descendente (§3) |
 | 9 | Editar una publicada, sin UX definida | Acción propia, confirmación, autoría conservada (**D14**) |
 | 10 | `reviewedAt` en la evaluación | Retirado: chocaba con el de `Submission`. `createdAt`/`updatedAt`/`publishedAt` (**D14**) |
+
+### Tercera revisión: `attempt` seguro
+
+| # | Antes | Ahora |
+|---|---|---|
+| 11 | D11 comprobaba el intento **leyendo** antes de escribir | TOCTOU. Ahora es una `TransactWriteCommand` con `ConditionCheck` sobre la entrega y la condición de `revision` sobre la evaluación, en **una sola operación** (**D11**) |
+| 12 | Los dos 409 no se distinguían | `CancellationReasons` mapea por índice: `[0]` entrega, `[1]` evaluación. Sin releer (**D11**) |
+| 13 | «`submittedAt` cambia exactamente cuando debe» | **Falso y corregido.** Un reintento lo reescribe: prueba cuándo corre el código, no que sea otro acto (**D10**) |
+| 14 | `if (intent === 'submit') attempt += 1` | Insuficiente: entregar y reentregar son la misma petición y nada las separa. Ahora un `submitToken` por acto de entrega decide el incremento (**D10**) |
+| 15 | La transición legacy no estaba analizada | Los dos casos distinguidos por `submittedAt`, y la escritura es un `PutCommand` de item completo —nunca un `ADD` sobre un atributo ausente— (**D10**) |
+| 16 | Nada decía dónde declarar la tabla | Los cuatro archivos que G1 toca juntos, con el test que lo vigila (§3) |
 
 ---
 
@@ -878,7 +1120,7 @@ Fases **de esta iniciativa**. No continúan la numeración de Nextudio.
 | | | Se cierra cuando |
 |---|---|---|
 | **G0** ✅ | Auditoría y diseño | Este documento, con la suite base verde |
-| **G1** | Modelo, persistencia, rutas | Tipos, esquemas, tabla + GSI en los dos sitios, `attempt`, `revision`/409, invariante A, permisos por integración |
+| **G1** | Modelo, persistencia, rutas | Tipos, esquemas, tabla + GSI en **los cuatro archivos** (§3), `attempt` + `submitToken`, `revision`/409, invariante A **en transacción**, permisos por integración |
 | **G2** | Configuración en el creador | Los tres modos se guardan y releen; rúbrica válida e inválida |
 | **G3** | Revisión docente | Borrador, publicación, corrección, los dos conflictos, salto a la Parte, responsive y teclado |
 | **G4** | Vista del estudiante | Publicada sí, borrador no, superada no; los tres modos |
@@ -918,6 +1160,9 @@ Especificadas desde aquí para que no se decidan improvisando.
 | 14 | **Dos docentes**: A y B abren `revision 3`; A guarda → 4; B guarda con `expectedRevision 3` | **409** | integración · G1 |
 | 15 | **Docente vs reentrega**: docente abre intento 1; estudiante entrega → intento 2; docente publica intento 1 | **409**, y la evaluación del 1 intacta | integración · G1 |
 | 16 | Lo mismo, pero **guardando borrador** en vez de publicar | **409** también | integración · G1 |
+| 15b | **Atomicidad, no lectura previa**: el `attempt` cambia entre la lectura y la escritura de la evaluación | La escritura **no ocurre** y sale 409. Se prueba moviendo `Submission.attempt` **después** de que la ruta haya leído y **antes** de la transacción, no simulando una comprobación previa | integración · G1 |
+| 15c | Los dos conflictos a la vez: `attempt` cambiado **y** `revision` obsoleta | 409, y el mensaje es el de la **entrega** (índice `[0]` manda) | integración · G1 |
+| 15d | `CancellationReasons` mapea por índice | `[0]` → mensaje de entrega; `[1]` → mensaje de evaluación. Sin releer para distinguirlos | integración · G1 |
 | 17 | **Rúbrica cambiada a media corrección**: draft con A; la actividad pasa a B; se publica | Se publica **con A**, entera | integración · G1 |
 | 18 | Reentrega tras evaluación publicada | La del intento 1 existe y no es vigente; el 2 sale «Pendiente de revisión» | integración · G5 |
 | 19 | Estudiante pide la evaluación en borrador | No la recibe | integración · G1 |
@@ -926,6 +1171,15 @@ Especificadas desde aquí para que no se decidan improvisando.
 | 22 | Evaluar una entrega en `draft` del estudiante (`attempt: 0`) | Rechazo | integración · G1 |
 | 23 | Corregir una publicada | Sube `revision`, `publishedAt` **no** se mueve, `updatedAt` sí, autoría conservada | integración · G1 |
 | 24 | Entrega anterior sin `attempt` con `submittedAt` | Se lee `attempt: 1` | unidad · G5 |
+| 24b | **Legacy ya entregado**: `attempt` ausente, `submittedAt` presente → reentrega | Se **persiste** `attempt = 2`, no 1 | integración · G5 |
+| 24c | **Legacy nunca entregado**: `attempt` y `submittedAt` ausentes → primer submit | Se persiste `attempt = 1`. No se confunde con el anterior | integración · G5 |
+| 24d | **Reintento del primer submit**: borrador → submit → se pierde la respuesta → el cliente repite con el **mismo** token | Sigue en `attempt = 1` | integración · G1 |
+| 24e | **Reintento de una reentrega**: `reviewed` en `attempt 1` → reentrega → reintento con el mismo token | Sigue en `attempt = 2`, no 3 | integración · G1 |
+| 24f | **Dos submits simultáneos, mismo token** | `attempt = 2`. Nunca 3 | integración · G1 |
+| 24g | **Dos submits simultáneos, tokens distintos** (dos reentregas reales) | `attempt = 3`: son dos actos | integración · G1 |
+| 24h | Submit con `intent: 'submit'` **sin** `submitToken` | Rechazo: el token es obligatorio al entregar | integración · G1 |
+| 24i | Guardar borrador repetidamente | `attempt` no se mueve | integración · G1 |
+| 24j | El docente revisa, pide cambios o publica | `attempt` no se mueve | integración · G1 |
 | 25 | **Recorrido simple**: docente 85/100 + feedback → borrador → el estudiante NO lo ve → publica → el estudiante ve 85/100 | verde | e2e · G3/G4 |
 | 26 | **Recorrido con rúbrica**: crear actividad con rúbrica → el estudiante entrega → elegir niveles → el total se calcula → publicar → el estudiante ve criterios y comentarios | verde | e2e · G3/G4 |
 | 27 | **Recorrido de reentrega**: entregar → evaluar → publicar → reentregar → queda pendiente | verde | e2e · G5 |
@@ -946,7 +1200,9 @@ Especificadas desde aquí para que no se decidan improvisando.
 | **RG-5** | R14: las imágenes del snapshot no se sirven al profesorado | **DOCUMENTADO.** No se abre aquí |
 | **RG-6** | El snapshot duplica la rúbrica en cada evaluación | **ACEPTADO.** ~30 KB en el peor caso, en su propia tabla |
 | **RG-7** *(nuevo)* | Cambiar la rúbrica a media corrección deja a dos estudiantes evaluados con rúbricas distintas | **ACEPTADO y avisado** (D2). La alternativa reescribe notas ya comunicadas |
-| **RG-8** *(nuevo)* | `attempt` se incrementa en `upsertSubmission`, una ruta ya probada | **ACEPTADO.** Aditivo, normalizado al leer, cubierto por los casos 15, 16, 18 y 24 |
+| **RG-8** | `attempt` y `lastSubmitToken` se escriben en `upsertSubmission`, una ruta ya probada | **ACEPTADO.** Aditivos, normalizados al leer, cubiertos por los casos 15–16, 18 y 24–24j |
+| **RG-9** *(nuevo)* | La idempotencia depende de que el cliente reutilice el `submitToken` de un acto y genere uno nuevo en el siguiente | **ACEPTADO.** Un cliente que lo hiciera mal sólo cuenta mal **sus propios** intentos: el token no concede permisos ni decide nada que el servidor no compruebe. La alternativa —deducirlo del contenido o del estado— falla en los dos sentidos (D10) |
+| **RG-10** *(nuevo)* | Dos reentregas **realmente** simultáneas con tokens distintos dejan una sola entrega almacenada, pero cuentan dos intentos | **ACEPTADO.** El contenido guardado es el de la que ganó, y `attempt = 3` describe bien «hubo otro acto». Contar de menos sería peor: dejaría una evaluación publicada apuntando a un trabajo que ya cambió |
 
 ---
 
@@ -970,8 +1226,13 @@ La iniciativa **no está terminada** hasta que se cumplen las dieciocho:
 13. La evaluación anterior no desaparece.
 14. La evaluación anterior no se muestra como vigente.
 15. Una pantalla docente vieja no puede publicar contra una reentrega nueva
-    (409).
-16. Dos sesiones docentes concurrentes están protegidas (409).
+    (409), y la garantía está **en la escritura**: la condición sobre la entrega
+    y la escritura de la evaluación son una sola operación atómica, no un
+    «leo, compruebo, escribo».
+16. Dos sesiones docentes concurrentes están protegidas (409), y los dos
+    conflictos se distinguen sin releer.
+16b. Un mismo acto de entrega no produce dos intentos, ocurra doble clic,
+    reintento de red o respuesta perdida.
 17. Rúbrica y Partes se relacionan por ids estables; legacy sigue funcionando sin
     migración; autorización y validación son server-side.
 18. Responsive y teclado dentro del alcance, y los E2E cubren el ciclo completo.
