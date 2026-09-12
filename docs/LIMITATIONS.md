@@ -165,7 +165,7 @@ que añadir: una tarea que recorra los proyectos y reponga las rutas que falten.
 
 ### Largo plazo
 
-11. **UINexus Apps.** Proyectos con backend en contenedores aislados sobre Cloud
+11. **Nextudio Apps.** Proyectos con backend en contenedores aislados sobre Cloud
    Run, con cuotas duras de CPU y red y sin acceso a la red interna. La
    arquitectura ya lo contempla: `projectType` es un enum extensible y la ficha
    ya está separada de la ejecución.
@@ -180,7 +180,7 @@ Y se mantiene: chat, mensajería, seguidores, feed algorítmico, comentarios,
 "me gusta", insignias, gamificación, editor de código integrado, ejecución
 arbitraria de Node.js, microservicios, Kubernetes.
 
-UINexus publica y exhibe proyectos. Cada una de esas funciones tiene un producto
+Nextudio publica y exhibe proyectos. Cada una de esas funciones tiene un producto
 mejor que la haría, y ninguna hace que un alumno publique su página más rápido.
 
 
@@ -428,7 +428,7 @@ está probado. Unificarlos sería migrar entregas ya calificadas.
 
 Se editan con resaltado, pero no hay vista previa en vivo en el editor académico.
 Para ver un proyecto web hay que publicarlo, que es lo que lo lleva al origen
-aislado. Una vista previa en la propia página de UINexus sería ejecutar HTML del
+aislado. Una vista previa en la propia página de Nextudio sería ejecutar HTML del
 alumnado en el origen privilegiado, que es exactamente lo que §1 prohíbe.
 
 ### La tabla `uinexus-workspaces` hay que crearla
@@ -490,9 +490,12 @@ salidas» todavía: hay que borrar los bloques o reducirlos.
 
 ### Bloques: sólo texto y código
 
-No hay `ImageBlock`, `SpreadsheetBlock`, `TableBlock`, `ChartBlock` ni `AIBlock`,
-y tampoco están declarados en el tipo. Un tipo que ninguna pantalla sabe pintar
-produce documentos que nadie puede abrir.
+No hay `ImageBlock`, `SpreadsheetBlock`, `TableBlock`, `ChartBlock` ni
+`AIWorklogBlock`, y tampoco están declarados en el tipo. Un tipo que ninguna
+pantalla sabe pintar produce documentos que nadie puede abrir.
+
+*(Vigente en la iteración 8. `image` y `spreadsheet` llegaron en la 9 y
+`ai_worklog` en la 12; `ChartBlock` sigue fuera.)*
 
 ### Se mueven con botones, no arrastrando
 
@@ -589,12 +592,72 @@ tiene celdas que un lector de pantalla pueda anunciar.
 Las fórmulas cubren aritmética, comparaciones, rangos y una veintena de
 funciones. **No hay referencias entre hojas**, ni matrices, ni fechas.
 
-### La hoja no habla con Python ni con R
+### La hoja SÍ habla con Python y con R, con tres condiciones
 
-`SpreadsheetBridge` existe y está probado, pero **no está conectado a los
-kernels**. `sheet("Ventas")` no existe en ningún lenguaje y no se anuncia en
-ninguna parte de la interfaz. La abstracción está puesta para que conectarlo no
-obligue a tocar los motores.
+Desde la Fase 3.5 existe `nex.sheet("Ventas")` en Python y `nex_sheet("Ventas")`
+en R, más `nex.image(...)` y `nex.output(...)`. Lo que **no** hace:
+
+**1 · Las referencias tienen que ser LITERALES.** Esto funciona:
+
+```python
+ventas = nex.sheet("Ventas")
+```
+
+y esto no:
+
+```python
+nombre = "Ventas"
+ventas = nex.sheet(nombre)      # error explicado, no datos vacíos
+```
+
+Los datos se preparan **antes** de ejecutar, leyendo el fuente de la celda: es
+lo que permite transferir sólo lo que hace falta en vez de serializar el NexBook
+entero hacia el Worker. La alternativa —que el Worker pida datos a mitad de
+ejecución— exige `SharedArrayBuffer` y `Atomics.wait`, que a su vez exigen
+aislamiento por origen (COOP/COEP) que Nextudio no tiene.
+
+**2 · No hay recálculo automático.** Editar la hoja **no** vuelve a ejecutar
+nada. El modelo es explícito: editas los datos, ejecutas el bloque, y ese bloque
+lee el estado actual. No hay grafo reactivo y no va a haberlo.
+
+**3 · Un nombre duplicado es un error, no una elección.** Dos hojas llamadas
+«Datos» hacen que `nex.sheet("Datos")` falle nombrando a las dos. Elegir la
+primera en silencio significaría que añadir una hoja cambia el resultado de una
+celda que nadie tocó. `nex.sheet_by_id("...")` nunca es ambiguo.
+
+### El lector de XLSX es propio, y no cubre todo Excel
+
+Está escrito sobre `fflate` en vez de delegarse a una biblioteca (la auditoría
+de SheetJS, ExcelJS y `read-excel-file` está en `lib/spreadsheet/xlsx.ts`). Lee
+hojas, texto, números, booleanos, fechas, celdas vacías y las fórmulas que el
+motor propio sabe evaluar.
+
+**Lo que NO hace, y avisa de ello al importar:** macros y VBA, Power Query,
+tablas dinámicas, conexiones externas, enlaces a otros libros, gráficas
+embebidas y objetos. Nada de eso se ejecuta ni se decodifica: esas partes del
+archivo sencillamente no se abren. **Importar un `.xlsx` no genera tráfico de
+red.**
+
+Una fórmula que no se puede convertir **no se inventa ni se evalúa**: se guarda
+el último valor que calculó Excel —el `.xlsx` distingue `<f>` de `<v>`— y se
+avisa de que ese valor **no se actualizará** si cambian sus datos.
+
+Tampoco se admiten `.xls` antiguos, `.ods`, ni codificaciones distintas de UTF-8
+en CSV.
+
+### Un texto que diga «verdadero» llega al código como booleano
+
+Al cruzar hacia Python o R, las celdas cuyo texto sea `VERDADERO`, `FALSO`,
+`TRUE` o `FALSO` se convierten en booleanos. Es lo que hace útil una columna
+importada de Excel, y el precio es que una celda cuyo contenido sea literalmente
+esa palabra también se convierte. La hoja sigue mostrando el texto: la
+inferencia ocurre sólo en el puente, no en el motor de fórmulas.
+
+### El código recibe hasta 5 000 filas de una hoja o de un output
+
+Más que suficiente para una práctica y muy por debajo de lo que costaría
+serializar una hoja entera hacia el Worker en cada ejecución. El tope de la hoja
+en sí sigue siendo 200 filas; éste acota lo que **cruza**.
 
 ### Las gráficas dependen de que la subida funcione
 
@@ -615,6 +678,49 @@ Enseña los resultados que el autor guardó. No hay botón de ejecutar, porque
 ofrecerlo significaría descargar un runtime en el navegador de cualquiera que
 abra un enlace.
 
+### NexIA registra; no ejecuta IA
+
+El bloque `ai_worklog` **no llama a ningún modelo**. No hay proveedor, no hay
+clave de API, no hay BYOK, no hay streaming, no hay RAG y no hay agentes.
+Tampoco hay detección automática de uso de IA ni cálculo de «porcentaje
+generado»: esas dos cosas no se pueden medir de forma fiable, y una cifra
+inventada en un expediente académico es peor que no tener ninguna.
+
+### El registro de IA sólo admite texto, imagen y enlace
+
+Como evidencia de la respuesta se aceptan texto/Markdown, hasta ocho capturas
+PNG/JPEG/WebP y un enlace HTTP(S) a la conversación. **No se admite archivo
+genérico** —PDF, DOCX, ZIP—: exigiría otra lista blanca de MIME, otro límite de
+tamaño y otra decisión sobre cómo se sirve al publicar. Está pendiente, no
+improvisado.
+
+### `resourcesUsed` pierde su significado al exportar
+
+`AIWorklogData.resourcesUsed` guarda ids internos de Skills, prompts y recursos
+de **una materia**. Al publicar o exportar un NexBook, la lista blanca lo emite
+**vacío**: fuera de esa materia esos ids no significan nada, y dentro son un mapa
+de qué existe en ella.
+
+La consecuencia honesta es que **esa información semántica no viaja**. Convertir
+los ids a nombres legibles exigiría resolverlos contra la materia dentro de la
+frontera de publicación —con qué permisos, qué pasa con un recurso borrado, qué
+pasa si el documento se exporta años después— y eso es una decisión aparte. Hoy
+se pierde, y se dice.
+
+### La vista docente de una entrega no pinta las imágenes del snapshot
+
+Es anterior a NexIA y afecta a **todos** los bloques con imagen: `ImageBlock`,
+las gráficas de una ejecución y las capturas de un registro de IA. La vista
+docente (`NexBookEvidence`) recibe el snapshot sin forma de resolver assets,
+porque los bytes cuelgan del prefijo del estudiante y la ruta de lectura
+(`/api/nexbooks/:id/assets/:assetId`) exige ser su dueño. Servirlas al
+profesorado necesita una ruta autorizada nueva, y ésa es una decisión de
+seguridad con su propio diseño.
+
+Lo que sí hace el registro de IA es **decirlo**: donde hay una captura que no se
+puede pintar aquí, se escribe su texto alternativo y el aviso, en vez de dejar el
+hueco vacío y hacer creer que no había ninguna.
+
 ### `ChartBlock` no existe
 
 Una gráfica generada por código se guarda como **imagen**, no como datos. Eso
@@ -627,7 +733,38 @@ Se exporta e importa a sí mismo. No hay `.ipynb`, ni `.qmd`, ni Markdown, ni PD
 Y un `.nexbook` importado no trae `data/` ni `outputs/`: el contenedor los
 contempla y la implementación sólo usa `assets/`.
 
-### Los recorridos autenticados siguen sin probarse a mano
+### El sandbox local no tiene S3
+
+`npm run dev:local` levanta DynamoDB Local y el emulador de Firebase Auth, pero
+AWS no tiene emulador de S3 aquí. Consecuencia: **subir imágenes a un NexBook
+falla en el sandbox**, y con ellas `nex.image(...)` desde el código. Todo lo que
+no toca S3 —hojas, código, outputs, entregas, publicaciones— funciona. Ver
+`docs/LOCAL-DEVELOPMENT.md`.
+
+### webR no arranca en cualquier navegador embebido
+
+webR crea un Worker **anidado**, y no todos los navegadores incrustados lo
+admiten: fallan con «An error occurred initialising the webR PostMessageChannel
+worker», también con código R plano. Es la misma razón por la que R tampoco se
+puede ejecutar bajo Node en la suite.
+
+> **Comprobado al cerrar la Fase 6.** En un navegador basado en Chromium el
+> Worker anidado arranca y R corre: se ejecutó `r-runner.worker.js` contra un
+> `LabDataset` de una hoja y `nex_sheet("Ventas")` devolvió un `data.frame` con
+> sus tres filas, `sum(df$total)` dio 360 y `nex_sheets()` listó el catálogo.
+> En la misma ejecución `download.file()`, `install.packages()` y `url()`
+> siguieron enmascarados con su mensaje. El fallo de arriba es de ciertos
+> navegadores incrustados, no del producto.
+
+### Los recorridos autenticados: resuelto en la Fase 3.5
+
+> **Esta sección describía el estado hasta la iteración 12 y se conserva como
+> historial.** Desde la Fase 3.5 existe `npm run dev:local`, que levanta el
+> emulador de Firebase Auth y DynamoDB Local con una cuenta docente y otra de
+> estudiante, y con él ya se recorrieron a mano Aula, la materia, la actividad y
+> NexLab ejecutando código sobre datos reales. Ver `docs/LOCAL-DEVELOPMENT.md`.
+>
+> Lo que sigue siendo cierto: **Playwright no se añadió**, y S3 no está emulado.
 
 Las rutas están cubiertas por **51 pruebas de integración** contra DynamoDB Local
 —privacidad, concurrencia, plantilla frente a copia, aislamiento entre
@@ -649,3 +786,234 @@ Y volvió a costar tiempo en esta iteración. Tras `npm run runtimes` el navegad
 puede seguir sirviendo el Worker anterior desde su caché. La comprobación que
 funciona es pedir el bundle con un parámetro que rompa la caché y buscar dentro
 el cambio esperado, antes de concluir nada sobre el comportamiento.
+
+---
+
+## 12. Limitaciones del creador docente (Fase 4)
+
+### Una actividad de una parte puede guardarse de dos formas distintas
+
+Y eso es deliberado, no un descuido. Si la parte cabe entera en la
+representación anterior —responder, campos, registro de IA, proyecto, enlace— la
+actividad se guarda como se guardaba antes, para que abrir y volver a guardar
+una tarea de 2025 no la convierta en otra cosa. Si no cabe —laboratorio, código,
+archivo, imagen, video, sin entrega— se guarda como actividad por partes.
+
+La consecuencia visible: dos actividades que al profesorado le parecen igual de
+simples pueden tener `type` distinto. El resumen previo a publicar lo dice en
+llano («Se guardará en su forma sencilla de siempre» / «como una actividad de N
+partes») en vez de esconderlo.
+
+La consecuencia invisible, y la que costó una regresión: **la pantalla del
+estudiante tiene que decidir por `assignment.type`, no contando pasos.** La
+lectura sintetiza un paso para las actividades anteriores, así que contar
+confunde «una parte» con «ninguna».
+
+### El título de una parte se completa solo
+
+`workflowStepSchema` exige un título por paso. La interfaz lo ofrece como
+opcional, porque pedírselo a quien sólo quiso decir «que trabajen en el
+laboratorio» sería pedir dos veces lo mismo. `namedForWorkflow` lo rellena al
+guardar: con el título de la actividad si hay una sola parte, con el nombre de su
+intención si hay varias. La pantalla avisa de cuál va a ser antes de publicar.
+
+### Un proceso no puede volver a ser una actividad sencilla
+
+Aunque se quede con una sola parte. La evidencia de lo entregado se indexa por el
+id de la parte, y devolverla a la forma anterior la haría leerse con el paso
+sintético `main`: todo lo entregado dejaría de encontrarse. No hay interfaz para
+hacerlo y `deriveActivity` lo impide.
+
+### `resource_reference` ya no se puede elegir
+
+Sigue siendo un entregable válido del modelo y las actividades que lo usan
+abren, se editan y se guardan sin perderlo; simplemente dejó de merecer una
+tarjeta en el catálogo. Se muestra etiquetado como «versión anterior». Si alguien
+elige otra cosa en ese desplegable, lo cambia: es una acción explícita, no una
+conversión silenciosa.
+
+### La vista previa no monta el laboratorio
+
+Describe lo que el estudiante encontrará —que se abrirá un NexLab con la
+plantilla, y que los bloques marcados como no editables se leen pero no se
+tocan—, pero no lo renderiza. Montarlo obligaría a pedirle al servidor la
+plantilla, y una vista previa no debería crear nada. La plantilla real se ve
+desde «Preparar NexLab», que es donde se edita.
+
+### Las pruebas E2E del aula dependen de `next dev`
+
+> **Matizado en la Fase 6.** Desde entonces existe además
+> `npm run test:e2e:prod`, que sirve la compilación real; lo que no puede
+> cubrir es el aula, y la razón está en §14.
+
+`npm run test:e2e` corre contra el sandbox local, que sirve con `next dev` y
+compila bajo demanda. Es más lento que un `next start` y por eso los plazos son
+holgados, pero prueba el mismo entorno en el que se desarrolla. No cubre
+producción, y no cubre nada que necesite S3 —imágenes de NexLab, materiales
+subidos— porque el sandbox no tiene almacén de objetos.
+
+### La barra de navegación desborda 3 px a 375 px
+
+Hallazgo de esta fase, **anterior a ella y fuera de su alcance**: a 375 px de
+ancho, `app-shell/navbar.tsx` deja el documento con `scrollWidth` de 378 px por
+el botón del menú. Afecta a todas las pantallas, no sólo al creador. El creador
+en sí no desborda: medido, `main` termina exactamente en 375 px.
+
+---
+
+## 13. Limitaciones de la experiencia del estudiante (Fase 5)
+
+### Una Parte de laboratorio se completa por EXISTIR, no por tener contenido
+
+Abrir el NexLab de una Parte crea la copia del estudiante, y eso ya cuenta como
+«Completada». Es la misma regla que aplica el servidor al dejar entregar, y
+mantenerla igual en los dos sitios es lo que impide que el botón de entregar y
+el estado de la Parte se contradigan.
+
+Exigir «suficiente contenido» sería decidir cuándo un trabajo está bien hecho, y
+eso es calificar. Nextudio no califica.
+
+### «Ya la hice» se guarda en la nota de la Parte
+
+Una Parte que no pide entrega no tiene forma de completarse sola, así que la
+casilla escribe una frase en `note` —el campo que ya existía para lo que quiera
+decir quien la hace, y el único que la entrega ya contaba como contenido—.
+
+Consecuencia: borrar la nota devuelve la Parte a «Sin empezar». La casilla no
+pisa una nota escrita a mano, pero tampoco puede distinguir «la borré por error»
+de «ya no la he hecho».
+
+### El progreso no es un porcentaje
+
+Es un conteo: «2 de 4 partes completadas». Las Partes no tienen peso, así que un
+50 % sería una precisión inventada. Si alguna vez existe ponderación real, el
+conteo se sustituye; hasta entonces, dice sólo lo que se sabe.
+
+### A un estudiante no se le dice QUIÉN hace las otras Partes
+
+En una actividad repartida, las Partes que no le tocan se ven —existen y forman
+parte de la actividad— pero sin estado y sin nombre: «La hace otra persona». No
+es una decisión de esta fase: el servidor nunca manda al alumnado los
+responsables de un paso (ver `toAssignment`), y esta pantalla no iba a ser la
+excepción que abriera ese dato.
+
+### La conclusión obligatoria DENTRO de un NexLab sólo la comprueba el servidor
+
+Un bloque de registro de IA marcado como obligatorio en la plantilla de la
+docente se exige al entregar, leyendo la plantilla. El navegador no la tiene, así
+que ese rechazo llega del servidor y no aparece en «Todavía falta» antes de
+intentarlo. El mensaje dice la Parte y qué falta.
+
+La conclusión de una Parte de NexIA —que es otra cosa— sí se comprueba en los
+dos sitios, y las dos cuentas están fijadas por pruebas.
+
+### ~~La barra de navegación sigue desbordando 3 px a 375 px~~ — RESUELTO en la Fase 6
+
+> Se conserva el enunciado porque explica de dónde venía. La causa era la barra
+> global, no el contenido del estudiante: `main` terminaba exactamente en
+> 375 px. Corregido en la Fase 6; ver §14.
+
+---
+
+## 14. Cierre: qué está resuelto y qué queda (Fase 6)
+
+La última fase del roadmap revisó todo lo anterior. Esta sección dice en qué
+quedó cada cosa, para que nadie tenga que reconstruirlo leyendo commits.
+
+### Resuelto en la Fase 6
+
+**El desbordamiento de 375 px.** La barra de navegación dejaba el documento con
+`scrollWidth` de 378 px en TODAS las pantallas, porque la barra es global. Con
+sesión conviven ahí la marca, la búsqueda, publicar, la cuenta y el menú, y en
+un teléfono de 360 px eso sumaba 18 px más de los que hay. Corregido en la
+causa: menos separación por debajo de `sm` y la marca sin su nombre por debajo
+de 400 px —el enlace lo sigue diciendo para quien no ve la pantalla—. Lo vigila
+`tests/e2e/responsive.spec.ts`, que mide ocho anchos en dieciséis pantallas.
+
+**El avance docente rechazaba una actividad de una sola Parte.** La pestaña
+«Avance por parte» se ofrecía para cualquier actividad por partes y el servidor
+respondía 409 «esta actividad no tiene varios pasos» cuando sólo había una.
+Contaba pasos en vez de mirar el tipo. Corregido.
+
+**La exportación se quedaba vacía en una actividad por partes.**
+`flattenSubmission` sólo conocía los cinco tipos anteriores, así que el Markdown
+para IA, el CSV y el visor docente devolvían «Respuesta: (sin respuesta)» encima
+de un laboratorio entero. Ahora lee cada Parte con el aplanador de su entregable.
+
+**Una variable de origen vacía tiraba la compilación.** `NEXT_PUBLIC_*_ORIGIN`
+se leía con `??`, que sólo cae en `undefined`: una cadena vacía —lo que deja un
+panel de despliegue al borrar un valor— llegaba a `new URL('')` y reventaba con
+`Invalid URL`, un error que no nombra la variable. Lo encontró el sandbox
+compilado.
+
+**`isSingleStep()` se retiró.** Devolvía `workflow.length <= 1` y ya no
+respondía a la pregunta que su nombre sugiere. No lo usaba nadie; dejarlo era
+dejar la trampa cargada.
+
+**R22 se cerró con una señal real.** Una Parte de laboratorio ya no se completa
+por existir la copia, sino por llevar trabajo dentro: la copia nace en revisión
+1 y sólo sube al guardar. No es una heurística ni una medida de calidad —eso
+sería calificar—, es el dato que el almacenamiento ya llevaba.
+
+### Aceptado: se queda así, y por qué
+
+**«Ya la hice» vive en `note` (R23).** Una Parte que no pide entrega no tiene
+forma de completarse sola. La marca se guarda en `note`, el único campo del
+modelo que ya contaba como contenido y que pertenece a quien hace la Parte.
+
+Consecuencia, y está probada para que sea decisión y no sorpresa: **borrar la
+nota devuelve la Parte a «Sin empezar»**. La casilla no pisa una nota escrita a
+mano —se deshabilita— pero no puede distinguir «la borré por error» de «ya no la
+he hecho». Inventar un campo persistido para una casilla habría sido añadir
+estado al modelo para no aceptar una consecuencia menor.
+
+**El título de una Parte se completa solo (R20).** El modelo exige un título por
+paso; la interfaz lo ofrece como opcional. `namedForWorkflow` lo rellena al
+guardar: con el título de la actividad si hay una sola Parte, con el nombre de
+su intención si hay varias. **Nunca pisa un título escrito**, y volver a guardar
+no renombra —el relleno es idempotente—. Probado.
+
+**El progreso es un conteo, no un porcentaje.** Las Partes no tienen peso.
+
+**A un estudiante no se le dice quién hace las otras Partes.** Las ve, sin
+estado y sin nombre. El servidor nunca le manda los responsables de un paso.
+
+**La conclusión obligatoria DENTRO de un NexLab sólo la comprueba el servidor.**
+Exige leer la plantilla docente, que el navegador no tiene. Ese rechazo llega al
+entregar y no aparece antes en «Todavía falta». La conclusión de una Parte de
+NexIA —que es otra cosa— sí se comprueba en los dos sitios.
+
+**Las vulnerabilidades de `npm audit` no se arreglaron.** Son 21, y todas las
+correcciones disponibles son saltos mayores: `tar` 6→7, `vitest` 3→5,
+`firebase-tools` 14→15, `firebase-admin` 13→14, `next` 15→16. Ninguna afecta a
+código de producción por una vía alcanzable: `tar` y `firebase-tools` son de
+desarrollo (descarga de DynamoDB Local y emuladores), `vitest` es el runner, y
+las de `firebase-admin` vienen de clientes de Google Cloud que este proyecto no
+usa —Firebase aquí sólo verifica identidad—. Actualizar cinco dependencias
+mayores en la fase de endurecimiento introduce más riesgo del que elimina. Queda
+anotado para decidirlo como trabajo propio.
+
+### Pendiente, después del roadmap
+
+**Las referencias del laboratorio tienen que ser literales (R16).** Los datos se
+preparan ANTES de ejecutar, leyendo el fuente, así que `nex_sheet(nombre)` con
+una variable sólo encuentra la hoja si ese texto aparece literal en alguna parte
+de la celda. Comprobado en navegador al cerrar la Fase 6: con un nombre
+construido (`paste0("Ven", "tas")`) no devuelve datos vacíos ni silencio, lanza
+«No se preparó ningún dato para "Ventas". Las referencias tienen que ser texto
+literal…». Resolverlo de otra forma exigiría `SharedArrayBuffer` + COOP/COEP,
+que Nextudio no tiene.
+
+**La suite compilada no cubre el aula.** `npm run test:e2e:prod` sirve la
+compilación real pero sin base de datos, porque con `NODE_ENV=production` la
+guarda de `lib/aws/config.ts` queda inlineada por webpack y rechaza el endpoint
+local. Cubrir el aula contra un build de producción exigiría un DynamoDB
+alcanzable con credenciales reales —es decir, infraestructura— o debilitar la
+guarda. Lo primero es una decisión de coste; lo segundo no se hace.
+
+**No hay S3 local.** Las imágenes de un NexBook y los materiales subidos siguen
+sin poder probarse en el sandbox. Fallan con un error legible, no en silencio.
+
+**La barra de navegación no se rediseñó.** Se corrigió el desbordamiento donde
+estaba la causa, pero a 360 px la barra sigue apretada: marca, búsqueda,
+publicar, cuenta y menú. Si crece un control más, volverá a no caber.

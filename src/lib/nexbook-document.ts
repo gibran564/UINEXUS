@@ -25,6 +25,19 @@ export function collectAssetIds(document: NexBookDocument): string[] {
 
   for (const block of document.blocks) {
     if (block.type === 'image' && block.assetId) found.add(block.assetId);
+    /**
+     * Las capturas de un registro de IA cuentan igual que cualquier otra imagen.
+     *
+     * Olvidarlas aquí no sería un fallo cosmético: esta función es la que
+     * AUTORIZA la lectura de un asset y la que decide qué entra en el ZIP al
+     * exportar. Una captura fuera de esta lista daría 404 en la publicación y se
+     * perdería al exportar, y nadie sabría por qué.
+     */
+    if (block.type === 'ai_worklog') {
+      for (const image of block.responseImages ?? []) {
+        if (image.assetId) found.add(image.assetId);
+      }
+    }
   }
 
   for (const result of Object.values(document.results)) {
@@ -58,6 +71,10 @@ export function imageMimeTypeFor(
 ): NexBookImageMimeType | null {
   for (const block of document.blocks) {
     if (block.type === 'image' && block.assetId === assetId) return block.mimeType;
+    if (block.type === 'ai_worklog') {
+      const image = (block.responseImages ?? []).find((item) => item.assetId === assetId);
+      if (image) return image.mimeType;
+    }
   }
   for (const result of Object.values(document.results)) {
     for (const output of result.outputs) {

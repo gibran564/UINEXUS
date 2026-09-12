@@ -1,6 +1,6 @@
-# Estrategia de seguridad — UINexus
+# Estrategia de seguridad — Nextudio
 
-El problema de fondo: **UINexus aloja y ejecuta código que no controla**, subido
+El problema de fondo: **Nextudio aloja y ejecuta código que no controla**, subido
 por decenas de estudiantes, algunos de los cuales lo generaron con IA sin leerlo.
 Todo lo demás se deriva de ahí.
 
@@ -21,7 +21,7 @@ CSP; lo impide la política de mismo origen.
 
 **Decisión: dominio registrable distinto, no subdominio.** Se descartó
 `projects.uinexus.mx` a propósito. Un subdominio comparte el dominio padre y
-puede escribir cookies con `Domain=.uinexus.mx` ("cookie tossing"): hoy UINexus
+puede escribir cookies con `Domain=.uinexus.mx` ("cookie tossing"): hoy Nextudio
 no usa cookies de sesión —Firebase Auth guarda el token en IndexedDB, aislado
 por origen completo— pero el día que se añada una, el subdominio se convierte
 en un agujero y la migración ya no será barata. Se elige el límite correcto
@@ -91,7 +91,7 @@ incrustados— y se muestra con `sandbox="allow-scripts"`.
 
 La garantía la da lo que **no** está en ese atributo. Sin `allow-same-origin` el
 documento recibe un **origen opaco**: sin cookies, sin `localStorage`, sin
-acceso al documento padre. El JavaScript se ejecuta y no tiene nada de UINexus
+acceso al documento padre. El JavaScript se ejecuta y no tiene nada de Nextudio
 que leer. Tampoco puede navegar la ventana de arriba ni abrir ventanas, porque
 `allow-top-navigation` y `allow-popups` tampoco están.
 
@@ -209,7 +209,7 @@ Honestamente:
 
 1. **Proyectos entre sí.** Comparten origen; A puede leer el `localStorage` de B.
 2. **Phishing visual.** Un proyecto puede dibujar una pantalla de login idéntica
-   a la de UINexus. No obtendría credenciales reales (`form-action 'self'`
+   a la de Nextudio. No obtendría credenciales reales (`form-action 'self'`
    impide enviarlas fuera, y no hay campos reales que capturar), pero la
    apariencia es imitable. Mitigación real: moderación y reportes.
 3. **Contenido ilegal o abusivo.** Se resuelve con personas, no con cabeceras:
@@ -290,7 +290,7 @@ es que lleguen y se oculten.
 
 ### Skills: por qué los comandos no se sanean
 
-UINexus no ejecuta nunca el contenido de una Skill. No hay `exec`, ni shell, ni
+Nextudio no ejecuta nunca el contenido de una Skill. No hay `exec`, ni shell, ni
 PowerShell, ni terminal remota, ni instalación automática, ni descarga de
 ejecutables. Los comandos se guardan tal cual y se pintan como código con un
 botón de copiar.
@@ -309,6 +309,72 @@ referenciados pertenecen a la materia de la tarea. Sin esa comprobación, conoce
 un id bastaría para colgar en una tarea el prompt de otro grupo, y la biblioteca
 de una materia dejaría de ser suya. Se aplica también a los recursos que un
 AI Worklog declara haber usado.
+
+### El registro de uso de IA no abre superficie nueva (iteración 12)
+
+El bloque `ai_worklog` de un NexBook (NexIA) **no ejecuta nada**: no llama a
+ningún modelo, no guarda claves de API y no transmite prompts a ningún servicio.
+Lo que sí hace es viajar por las tres fronteras por las que un documento sale de
+la plataforma —snapshot de entrega, publicación y `.nexbook`—, así que se le
+aplica la misma regla que a todo lo demás:
+
+- **`publishableWorklogBlock` lo reconstruye campo a campo.** Ni `{ ...block }`
+  ni `{ ...worklog }`. Un campo que alguien añada al modelo mañana **no** sale
+  hasta que se añada ahí, y añadirlo es el momento de preguntarse si debería.
+- **`resourcesUsed` sale vacío.** Son ids internos de Skills, prompts y recursos
+  de una materia: fuera de ella no significan nada y dentro son un mapa de qué
+  existe. Vacío y no ausente, para que lo exportado siga validando.
+- **`conversationUrl` pasa por `safeMarkdownUrl`**: sólo `http` y `https`. No se
+  inspeccionan los parámetros de servicios externos buscando «secretos» —no se
+  puede saber cuáles lo son, y la persona decidió registrar ese enlace—. Una URL
+  firmada de Nextudio no puede llegar ahí: ese campo lo escribe quien rellena el
+  formulario, y el esquema exige HTTP(S).
+- **Las capturas son referencias, nunca bytes**, y usan el almacén de assets de
+  siempre: misma clave por persona, mismos MIME (PNG, JPEG, WebP; **sin SVG**) y
+  la misma regla de que **la autorización de lectura la da el DOCUMENTO que
+  referencia el asset**, no el asset. `collectAssetIds` e `imageMimeTypeFor`
+  conocen el sitio nuevo: si no lo conocieran, una publicación serviría de llave
+  para leer imágenes que no forman parte de ella.
+
+Lo fijan pruebas que inyectan un UID, un token de Firebase, una credencial de
+AWS, una cookie y una URL firmada dentro del bloque y comprueban que ninguno
+aparece en la publicación ni en el archivo exportado.
+
+### Datos del NexBook dentro del sandbox (iteración 13)
+
+El código del alumnado puede leer hojas, imágenes y outputs del documento
+(`nex.sheet`, `nex.image`, `nex.output`). Eso amplía **qué** puede leer un
+Worker; no amplía **hasta dónde** puede llegar.
+
+```
+correcto:   S3 → ruta autorizada → navegador con sesión → Data Bridge → Worker
+prohibido:  Worker → fetch → S3 / internet
+```
+
+- **El Worker sigue sin red.** `jsglobals` es un objeto vacío y congelado, así
+  que `js.fetch`, `js.XMLHttpRequest`, `js.WebSocket` y `js.EventSource` no
+  existen para Python; en R siguen enmascarados `install.packages`,
+  `download.file`, `url()` y `webr::install`. Hay una prueba que prepara datos y
+  comprueba que **con ellos delante** la red sigue sin existir.
+- **Nunca cruza una URL firmada ni una clave de S3.** No es que se filtren: el
+  tipo `LabDataset` **no tiene ese campo**. Los bytes de una imagen los descarga
+  el hilo principal por `/api/nexbooks/:id/assets/:assetId`, que comprueba que el
+  documento sea de quien pregunta **y** que lo referencie.
+- **`sanitizeWorkerRun` reconstruye el dataset campo a campo**, igual que el
+  resto del mensaje, aunque venga de una función que ya lo construye. Una
+  garantía que depende de que la función de al lado siga comportándose bien no es
+  una garantía.
+- **El Data Bridge no es una puerta lateral.** Sólo expone lo que la celda
+  referenció explícitamente: no hay forma de leer el DOM, el estado de React,
+  cookies, el token de Firebase, otro NexBook, otro usuario ni el sistema de
+  archivos. La superficie de `nex` es exactamente nueve métodos, y hay una prueba
+  que la enumera.
+- **Importar un `.xlsx` no abre la red.** El lector es propio (`fflate`) y sólo
+  decodifica `workbook.xml`, `styles.xml`, `sharedStrings.xml` y las hojas.
+  Macros, VBA, Power Query, conexiones externas y enlaces a otros libros **no se
+  abren**: se detectan por el nombre de la entrada para poder avisar, y nada más.
+  Sin parser de XML general, XXE y la expansión de entidades no tienen dónde
+  ocurrir; una prueba mete un `<!ENTITY>` y comprueba que se queda como texto.
 
 
 ## Workflows y recursos colaborativos (iteración 4)
@@ -346,7 +412,7 @@ pasó con lo suyo.
 
 ### Enlaces externos
 
-UINexus **no visita** las URL que se pegan. Pedir metadatos a un sitio arbitrario
+Nextudio **no visita** las URL que se pegan. Pedir metadatos a un sitio arbitrario
 convierte al servidor en un cliente de peticiones arbitrarias (SSRF). El dominio
 de una tarjeta se calcula en el navegador a partir del texto.
 
@@ -385,7 +451,7 @@ El embed sólo se ofrece para proveedores con URL de incrustación documentada y
 cuando la URL concreta tiene la forma correcta: construir el `src` de un iframe a
 partir de texto sin comprobar sería inyectar en la página lo que escriba un
 tercero. El `sandbox` no concede `allow-top-navigation` ni `allow-modals`, así
-que el contenido ajeno no puede sacar a nadie de UINexus ni abrir diálogos que
+que el contenido ajeno no puede sacar a nadie de Nextudio ni abrir diálogos que
 parezcan de la plataforma.
 
 ### Archivos académicos
@@ -414,7 +480,7 @@ Nada se borra en cascada. Ver la tabla de retención en CHECKPOINTS.md.
 
 ### Un token válido de Firebase NO es una autorización
 
-Firebase Authentication acepta cualquier cuenta de Google. UINexus, no: la
+Firebase Authentication acepta cualquier cuenta de Google. Nextudio, no: la
 comunidad son los correos `@itdurango.edu.mx` más una allowlist docente
 explícita (`ALLOWED_SPECIAL_EMAILS`). La regla vive en **un solo sitio**,
 `lib/identity.ts`, y la aplican los dos lados:
@@ -444,7 +510,7 @@ treinta endpoints es una comprobación que en alguno se olvida.
 
 ### Acceso por teléfono: retirado
 
-UINexus autoriza sobre el CORREO institucional. Un número de teléfono no puede
+Nextudio autoriza sobre el CORREO institucional. Un número de teléfono no puede
 demostrar pertenencia a `@itdurango.edu.mx`, y una sesión creada por SMS llegaba
 sin correo: exactamente el caso que la política no puede evaluar. Se retiró
 —no se deshabilitó a medias— del proveedor de sesión, del formulario y de
@@ -506,7 +572,7 @@ decisión, no un olvido.
 
 ## Código del alumnado (iteración 5)
 
-UINexus **no ejecuta** el código que se entrega. Ni `exec`, ni `spawn`, ni
+Nextudio **no ejecuta** el código que se entrega. Ni `exec`, ni `spawn`, ni
 `Rscript` en el host de Next.js. Ejecutar código arbitrario en el mismo proceso
 que firma las subidas a S3 y lee la base de datos es regalar la plataforma a
 quien entregue el `system()` correcto —y un entorno académico es justo donde más
@@ -514,7 +580,7 @@ gente va a probarlo—.
 
 Lo que hay es un **adaptador** (`lib/code-runner.ts`) que define qué tendría que
 cumplir un sandbox externo: fuera del host, tiempo máximo, salida acotada, sin
-red, sin acceso a las variables de entorno de UINexus, y **sin ningún hueco
+red, sin acceso a las variables de entorno de Nextudio, y **sin ningún hueco
 donde quepa un comando** —el cliente elige qué código, nunca qué se ejecuta—.
 Sin `UINEXUS_CODE_RUNNER_URL` y `UINEXUS_CODE_RUNNER_TOKEN` no hay ejecutor, la
 interfaz no ofrece ejecutar y la tarea se entrega igual. La ejecución nunca es
@@ -526,7 +592,7 @@ y otro origen. Es texto que se muestra; no es un programa que corra.
 ## Ejecución de R y Python (iteración 6)
 
 El código del alumnado ahora **se ejecuta**. Sigue sin ejecutarse en ningún
-servidor de UINexus.
+servidor de Nextudio.
 
 ### Dónde corre, y por qué eso es la defensa
 
@@ -836,7 +902,7 @@ la forma clásica de burlar una comprobación de prefijo.
 `XMLHttpRequest`, `WebSocket`, `EventSource` e `importScripts` siguen
 desapareciendo enteros, y `indexedDB` y `caches` también. Lo que queda alcanzable
 son archivos estáticos públicos que ese mismo Worker ya descargó para arrancar:
-no hay forma de sacar datos ni de tocar la API de UINexus.
+no hay forma de sacar datos ni de tocar la API de Nextudio.
 
 Sigue sin ser la primera capa. La primera es que Python recibe un `jsglobals`
 vacío y congelado, así que el código del alumnado no tiene ni siquiera un `fetch`
@@ -954,7 +1020,7 @@ abrirlo».
 Las dos mentiras posibles sobre el tamaño quedan cubiertas: declarar mucho lo
 filtra la cabecera, declarar poco lo revienta la descompresión.
 
-UINexus no escribe estas entradas en un disco —van a S3 con una clave que
+Nextudio no escribe estas entradas en un disco —van a S3 con una clave que
 construye el servidor—, así que hoy el zip slip no tendría dónde aterrizar. Se
 rechaza igual: una defensa que depende de que nadie cambie el destino en el
 futuro no es una defensa.
@@ -981,3 +1047,129 @@ separación `uinexus.mx` / `projects.uinexus.mx`.
 
 El mensaje que viaja al Worker no creció: sigue llevando `{ language, source,
 executionOptions, mode }` y su prueba de conteo de claves sigue en pie.
+
+---
+
+## La evolución a Nextudio (fases 1–6)
+
+Ninguna de las seis fases introdujo un modelo de seguridad nuevo. Lo que sigue
+son las fronteras que se AÑADIERON, y una revisión de las que ya estaban.
+
+### Búsqueda global (Fase 2)
+
+La paleta no es una fuente de datos: consulta las mismas rutas que ya existían,
+con los mismos permisos. Un recurso que no se podía leer por su ruta tampoco
+aparece aquí, porque la búsqueda no tiene una ruta propia que saltárselos.
+
+Lo que se buscó explícitamente al revisarla: que un resultado no revele la
+EXISTENCIA de algo que no se puede abrir. Como los resultados se construyen
+sobre lecturas ya autorizadas, no hay ninguna consulta que devuelva títulos de
+cosas ajenas.
+
+### NexIA: la publicación va por lista blanca (Fase 3)
+
+Publicar un NexBook con un registro de uso de IA no serializa el bloque: lo
+RECONSTRUYE campo por campo (`publishableDocument`). Es una lista blanca, no un
+filtro de exclusión, y la diferencia importa: un campo nuevo en el modelo no se
+publica por defecto —hay que añadirlo a la lista— en vez de filtrarse hasta que
+alguien se acuerde de excluirlo.
+
+Lo que NO sale, y hay pruebas para cada uno:
+
+```
+resourcesUsed        qué prompts y skills de la materia se usaron
+ownerUid             y ningún otro identificador interno
+conclusionMode       la política académica no es del documento público
+propiedades ajenas   lo que no está en la lista, no viaja
+```
+
+`conclusionMode` merece su propia línea. La política la pone el profesorado en
+la parte; se lee de la definición de la actividad, **nunca** del cuerpo que
+manda el navegador. Enviar `conclusionMode: 'none'` en la evidencia no salta la
+regla —el esquema acepta el campo porque es legítimo en un documento, y el
+servidor lo ignora al decidir—. También se comprueba borrar el bloque: tampoco
+es la forma de no contestarlo.
+
+### Data Interop: el puente no abrió el sandbox (Fase 3.5)
+
+Los datos de una hoja se inyectan en el preludio del Worker antes de ejecutar.
+El código del alumnado sigue sin poder salir: `fetch`, `XMLHttpRequest`,
+`WebSocket`, `EventSource`, el DOM, `localStorage`, el token de Firebase y
+cualquier cliente de AWS siguen fuera de su alcance, y siguen probados.
+
+Lo que el puente añade es un objeto con datos ya resueltos. No añade una vía de
+lectura: el código no puede pedir la hoja de otro documento porque no hay
+ninguna función que reciba un identificador ajeno.
+
+**XLSX.** El lector es propio y abre exactamente tres partes del ZIP: el libro,
+las hojas y las cadenas compartidas. Macros, VBA, Power Query, enlaces externos
+y cualquier otra parte se ignoran sin abrirse. No hay `DOMParser`, así que no
+hay XXE. Lo no soportado se avisa; nunca se inventa.
+
+### El sandbox local no puede tocar producción (Fase 3.5)
+
+Dos guardianes, y cada función pública de la semilla llama al suyo:
+
+```
+requireLocalSandbox()    prefijo de tablas reservado Y endpoint HTTP loopback
+requireLocalFirebase()   proyecto demo-* Y emulador declarado Y sin cuenta de servicio
+```
+
+El interruptor que abre el endpoint local exige además
+`NODE_ENV === 'development'`. Y `NODE_ENV` en Next es una constante de
+COMPILACIÓN: webpack la sustituye dentro del bundle, así que en un build de
+producción la rama que permitiría otro endpoint **no existe en el código**. No
+es una comprobación que se pueda desactivar en caliente; es una rama eliminada.
+
+Alcance exacto de esa garantía: cubre la variable de Nextudio. El SDK de AWS
+honra además las suyas (`AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_DYNAMODB`), que
+este código no lee y no puede desactivar sin romper despliegues legítimos —un
+endpoint de PrivateLink se configura exactamente así—. No se intenta cerrar
+porque no hay nada que cerrar: quien escribe variables de entorno en un
+despliegue ya controla ese despliegue. Lo que la guarda impide es lo otro, y sí
+importa: que un interruptor pensado para desarrollo, presente en el repositorio
+y fácil de copiar por error, redirija la base de datos de producción.
+
+### La plantilla y la copia del estudiante (fases 4 y 5)
+
+```
+plantilla docente     t + sha256(assignmentId, stepId)
+copia del estudiante  i + sha256(assignmentId, stepId, uid)
+```
+
+Los dos identificadores son deterministas, así que «una copia por persona y
+paso» es aritmética y no una consulta seguida de una escritura, que es donde se
+cuelan los duplicados.
+
+Quién recibe qué lo decide el **servidor** por el rol, no el navegador: la misma
+URL devuelve la plantilla al profesorado y su copia al alumnado. Pedir la URL de
+la plantilla como estudiante devuelve su copia; escribir en ella responde 404,
+indistinguible de «no existe».
+
+Al entregar, el servidor puede recoger el laboratorio que el navegador no mandó
+(`lib/server/student-labs.ts`). Sólo mira los de **quien entrega** y sólo los
+pasos que le corresponden: sin esa comprobación, la copia de otra persona podría
+acabar dentro de una entrega ajena. Hay una prueba que lo intenta.
+
+### La entrega congela una copia (Fase 5)
+
+Lo que se califica es el snapshot que viajó en la evidencia, no el documento
+vivo. Seguir trabajando después de entregar cambia el NexLab y no cambia la
+entrega. Está probado por integración y por un recorrido de navegador en el que
+el estudiante edita después de entregar y la docente sigue viendo lo entregado.
+
+La copia NO se reescribe de forma continua, y ésa es la razón: un autoguardado
+del snapshot haría que el congelado dejara de existir sin que nadie lo notara.
+
+### Lo que se volvió a comprobar y sigue igual
+
+| Invariante | Dónde vive |
+|---|---|
+| Un estudiante sólo escribe en SU entrega | el id se deriva del UID del token |
+| «No existe» y «no es tuyo» responden lo mismo | 404 en NexBooks, workspaces y proyectos |
+| Concurrencia optimista | `revision` + `ConditionExpression` + 409 con la versión que ganó |
+| Markdown sin HTML crudo | `MarkdownContent`; `javascript:` y `data:` rechazados por esquema |
+| Archivos por lista blanca | extensión, tipo declarado y tamaño, antes de firmar |
+| Claves de S3 que emitió este servidor | `isAcademicFileKeyFor` al guardar una entrega |
+| El profesorado no entrega sus propias tareas | 403 explícito en la ruta |
+| Fecha límite con el reloj del SERVIDOR | `assertOpenForSubmission` |

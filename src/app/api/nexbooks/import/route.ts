@@ -23,7 +23,7 @@ import { HttpError, errorResponse, requireWriter } from '@/lib/server/session';
  *
  * El archivo no lleva `ownerUid` —el exportador no lo escribe— y aunque lo
  * llevara no se leería: el dueño sale del token, igual que en cualquier otra
- * escritura de UINexus. Un formato de intercambio donde el archivo pudiera
+ * escritura de Nextudio. Un formato de intercambio donde el archivo pudiera
  * declarar a quién pertenece sería un formato donde se puede escribir en la
  * cuenta de otro.
  *

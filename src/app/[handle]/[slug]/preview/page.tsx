@@ -19,7 +19,7 @@ export const metadata: Metadata = {
  *
  * Existe porque en una materia de UX/UI la pregunta más frecuente al revisar
  * un trabajo es "¿y cómo se ve en el celular?". La barra superior deja claro
- * dónde termina UINexus y dónde empieza el proyecto.
+ * dónde termina Nextudio y dónde empieza el proyecto.
  */
 export default async function PreviewPage({
   params,

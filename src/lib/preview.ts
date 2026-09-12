@@ -6,7 +6,7 @@ import { extensionOf } from './files';
  *
  * El problema: en el paso 3 los archivos todavía están en el navegador, no en
  * el origen aislado, así que no hay un sitio seguro donde ejecutarlos. Meter
- * el HTML del alumno en el DOM de UINexus con `allow-same-origin` le daría
+ * el HTML del alumno en el DOM de Nextudio con `allow-same-origin` le daría
  * acceso a la sesión de Firebase de esa misma persona: un archivo copiado de
  * cualquier plantilla podría robarle el token.
  *
@@ -14,7 +14,7 @@ import { extensionOf } from './files';
  * locales incrustados — y se muestra en un marco con `sandbox` SIN
  * `allow-same-origin`. Esa ausencia es la que protege: el navegador le da al
  * documento un origen OPACO, así que no hay cookies, ni localStorage, ni acceso
- * al documento padre. Aunque el JavaScript se ejecute, no tiene nada de UINexus
+ * al documento padre. Aunque el JavaScript se ejecute, no tiene nada de Nextudio
  * que leer.
  *
  * Antes el sandbox era `""`, que además prohíbe los scripts. Más estricto, sí,

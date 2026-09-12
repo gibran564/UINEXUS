@@ -3,12 +3,15 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Notice } from '@/components/aula/aula-ui';
+import { partActionLabel } from '@/lib/activity-builder';
 import {
   downloadNexBookArchive,
+  nexBookAssetBytes,
   nexBookAssetUrl,
   patchNexBook,
   uploadNexBookAsset,
   useApi,
+  type AssignmentDetail,
 } from '@/lib/aula-client';
 import type { NexBook, NexBookDocument } from '@/lib/types';
 import { NexBookShare } from './nexbook-share';
@@ -19,7 +22,7 @@ import { NexBookStudio } from './nexbook-studio';
  *
  * ## El autoguardado y la revisión
  *
- * Mismo contrato que el resto de UINexus —800 ms tras la última pulsación— pero
+ * Mismo contrato que el resto de Nextudio —800 ms tras la última pulsación— pero
  * con una pieza más: cada guardado manda la REVISIÓN que esta pestaña cree
  * tener. Si otra pestaña guardó mientras, el servidor responde 409 con el
  * documento que ganó y aquí se dice exactamente eso, en vez de sobrescribirlo.
@@ -147,9 +150,16 @@ export function NexBookPage({ nexbookId }: { nexbookId: string }) {
   return (
     <div>
       <header className="border-b border-line pb-4">
-        <Link href="/practicas" className="meta no-underline hover:underline">
-          ← Mis prácticas
-        </Link>
+        {data.nexbook.context.type === 'workflow' ? (
+          <AcademicContext
+            assignmentId={data.nexbook.context.assignmentId}
+            stepId={data.nexbook.context.stepId}
+          />
+        ) : (
+          <Link href="/practicas" className="meta no-underline hover:underline">
+            ← Mis espacios
+          </Link>
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <label className="min-w-0 flex-1">
             <span className="sr-only">Nombre del NexBook</span>
@@ -161,7 +171,13 @@ export function NexBookPage({ nexbookId }: { nexbookId: string }) {
             />
           </label>
         </div>
-        <p className="mt-1 text-sm text-muted">NexBook · privado</p>
+        {/* «NexLab» dice DÓNDE estás; «NexBook» diría qué formato tiene el
+            archivo, que es lo que importa al exportar y no al trabajar. */}
+        <p className="mt-1 text-sm text-muted">
+          {data.nexbook.context.type === 'workflow'
+            ? 'NexLab · trabajo de una actividad'
+            : 'NexLab · privado'}
+        </p>
       </header>
 
       {saveState === 'conflict' && (
@@ -178,6 +194,7 @@ export function NexBookPage({ nexbookId }: { nexbookId: string }) {
           onChange={(next) => edit({ document: next })}
           uploadAsset={(file, contentType) => uploadNexBookAsset(nexbookId, file, contentType)}
           assetUrl={(assetId, mimeType) => nexBookAssetUrl(nexbookId, assetId, mimeType)}
+        assetBytes={(assetId, mimeType) => nexBookAssetBytes(nexbookId, assetId, mimeType)}
           toolbar={
             <div className="flex items-center gap-2">
               <SaveIndicator state={saveState} error={saveError} />
@@ -187,6 +204,44 @@ export function NexBookPage({ nexbookId }: { nexbookId: string }) {
           }
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * De qué actividad es este laboratorio, y cómo volver a ella.
+ *
+ * Un NexLab académico abierto a pantalla completa es la misma ruta que un
+ * laboratorio personal, y sin esto diría «← Mis espacios»: quien lo abriera
+ * desde su actividad se encontraría trabajando «en un documento» sin ninguna
+ * pista de a qué pertenece ni por dónde se vuelve. La instancia SIGUE VINCULADA
+ * a su actividad —`NexBookContext` la lleva—, así que sólo hay que decirlo.
+ *
+ * Se lee de la actividad, que el servidor ya sirve con sus permisos: si esta
+ * persona no tuviera acceso, no habría llegado hasta aquí. Mientras carga —o si
+ * la actividad ya no existe— se dice lo único cierto, que esto es trabajo de una
+ * actividad, en vez de inventar un enlace que podría no llevar a ninguna parte.
+ */
+function AcademicContext({ assignmentId, stepId }: { assignmentId: string; stepId: string }) {
+  const { data } = useApi<AssignmentDetail>(`/api/assignments/${assignmentId}`);
+
+  if (!data) return <p className="meta">Trabajo de una actividad</p>;
+
+  const part = data.assignment.workflow.find((step) => step.id === stepId);
+  const partName = part ? part.title || partActionLabel(part) : '';
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Link
+        href={`/aula/${data.courseId}/tareas/${assignmentId}`}
+        className="meta no-underline hover:underline"
+      >
+        ← Volver a la actividad
+      </Link>
+      <p className="meta">
+        {data.courseName} › {data.assignment.title}
+        {partName ? ` › ${partName}` : ''}
+      </p>
     </div>
   );
 }

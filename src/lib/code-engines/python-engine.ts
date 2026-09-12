@@ -6,6 +6,8 @@ import {
   type CodeExecutionMode,
 } from './engine-contract';
 import { pythonDisplayModule } from './python-display';
+import { pythonLabModule } from './python-lab';
+import type { LabDataset } from '../lab/dataset';
 import { requiredPythonPackages } from './python-packages';
 import { NEXBOOK_LIMITS } from '../constants';
 import type { BrowserExecutionOptions, BrowserTableCell } from '../browser-code-runner-protocol';
@@ -124,7 +126,8 @@ export function createPythonEngine(options: PythonEngineOptions): CodeEngine {
     async run(
       source: string,
       runOptions: BrowserExecutionOptions,
-      mode: CodeExecutionMode = 'isolated'
+      mode: CodeExecutionMode = 'isolated',
+      lab?: LabDataset
     ): Promise<CodeEngineRun> {
       const pyodide = await boot();
       const output = new LimitedOutput(runOptions.maxOutputChars);
@@ -157,6 +160,19 @@ export function createPythonEngine(options: PythonEngineOptions): CodeEngine {
          * a un `ImportError` seco, que haría pensar que el paquete no existe.
          */
         await loadRequiredPackages(pyodide, source, output);
+
+        /**
+         * La API del laboratorio se instala DESPUÉS de limpiar y ANTES del
+         * fuente.
+         *
+         * Después de limpiar, porque en modo aislado `clearNamespace` se lleva
+         * todo lo que no empiece por `__` y se llevaría también `nex`. Antes del
+         * fuente, porque la celda lo usa en su primera línea.
+         *
+         * Y sólo cuando hay datos: una celda que no menciona la API no paga ni
+         * la serialización ni un nombre más en su espacio global.
+         */
+        if (lab) await pyodide.runPythonAsync(pythonLabModule(lab));
 
         const value = await pyodide.runPythonAsync(source);
         emitRichValue(pyodide, value, output);

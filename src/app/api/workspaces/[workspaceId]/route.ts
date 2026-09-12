@@ -28,7 +28,7 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
     const { workspaceId } = await params;
 
     const record = await getOwnWorkspace(workspaceId, actor.uid);
-    if (!record) throw new HttpError(404, 'Esa práctica no existe.');
+    if (!record) throw new HttpError(404, 'Ese espacio no existe.');
 
     return Response.json({ workspace: toWorkspace(record) });
   } catch (caught) {
@@ -50,7 +50,7 @@ export async function PATCH(request: Request, { params }: Params): Promise<Respo
      * pisara el guardado bueno.
      */
     const record = await updateOwnWorkspace(workspaceId, actor.uid, changes);
-    if (!record) throw new HttpError(404, 'Esa práctica no existe.');
+    if (!record) throw new HttpError(404, 'Ese espacio no existe.');
 
     return Response.json({ workspace: toWorkspace(record) });
   } catch (caught) {
@@ -64,7 +64,7 @@ export async function DELETE(request: Request, { params }: Params): Promise<Resp
     const { workspaceId } = await params;
 
     const removed = await deleteOwnWorkspace(workspaceId, actor.uid);
-    if (!removed) throw new HttpError(404, 'Esa práctica no existe.');
+    if (!removed) throw new HttpError(404, 'Ese espacio no existe.');
 
     return Response.json({ ok: true });
   } catch (caught) {

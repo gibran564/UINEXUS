@@ -73,7 +73,7 @@ export function LinkCard({
             `sandbox` acotado, `referrerPolicy` sin origen y carga perezosa. El
             contenido es de un tercero: puede ejecutarse dentro de su propio
             origen, pero no puede navegar la pestaña ni abrir diálogos que
-            parezcan de UINexus.
+            parezcan de Nextudio.
           */}
           <iframe
             src={link.embedUrl}
@@ -91,7 +91,7 @@ export function LinkCard({
         <p className="hint">
           {link.provider === link.domain
             ? 'Se abre en una pestaña nueva.'
-            : `${link.provider} no permite mostrarse dentro de UINexus. Se abre en una pestaña nueva.`}
+            : `${link.provider} no permite mostrarse dentro de Nextudio. Se abre en una pestaña nueva.`}
         </p>
       )}
     </div>

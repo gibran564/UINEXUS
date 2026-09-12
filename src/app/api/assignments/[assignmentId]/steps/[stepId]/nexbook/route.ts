@@ -116,7 +116,7 @@ async function ensureTemplate(
   const created = await createNexBook({
     id: templateId,
     ownerUid,
-    title: 'Plantilla del paso',
+    title: 'Plantilla de la parte',
     context: { type: 'workflow', assignmentId, stepId, role: 'template' },
     visibility: 'private',
     document: emptyNexBookDocument([

@@ -573,7 +573,7 @@ export function PublishFlow({
               />
               <p className="hint">
                 Una captura de tu proyecto. Si no subes ninguna, generamos una portada con la
-                retícula de UINexus. Máximo {formatBytes(LIMITS.maxCoverBytes)}.
+                retícula de Nextudio. Máximo {formatBytes(LIMITS.maxCoverBytes)}.
               </p>
             </div>
           </div>

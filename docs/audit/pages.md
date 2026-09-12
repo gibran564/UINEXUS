@@ -1,4 +1,4 @@
-# Mapa de pantallas de UINexus
+# Mapa de pantallas de Nextudio
 
 Construido leyendo `src/app/**` (App Router) y comprobando contra la versión
 desplegada en `https://uinex.vercel.app`. Fecha: 2026-09-06.

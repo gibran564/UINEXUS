@@ -10,6 +10,15 @@
       ],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "uinexus-local",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:local"
+      ],
+      "port": 3000
     }
   ]
 }

@@ -182,7 +182,7 @@ export async function signInWithGoogle(): Promise<User> {
 // Teléfono (SMS): retirado a propósito
 //
 // Existía un inicio de sesión por SMS y se ha retirado, no deshabilitado a
-// medias. La razón es de fondo: UINexus autoriza sobre el CORREO institucional
+// medias. La razón es de fondo: Nextudio autoriza sobre el CORREO institucional
 // —`isInstitutionalEmail`, con su allowlist docente—, y un número de teléfono
 // no demuestra pertenencia a `@itdurango.edu.mx`. Una sesión creada por SMS
 // llegaba sin correo, así que era exactamente el caso que la política no puede

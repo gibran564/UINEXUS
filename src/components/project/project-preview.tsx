@@ -70,7 +70,7 @@ export function ProjectPreview({
       )}
 
       <div className="overflow-hidden rounded-md border border-line bg-sunken">
-        {/* Barra del visor: recuerda que lo de dentro no es UINexus. */}
+        {/* Barra del visor: recuerda que lo de dentro no es Nextudio. */}
         <div className="flex items-center gap-3 border-b border-line bg-surface px-3 py-2">
           <span className="flex gap-1.5" aria-hidden="true">
             <span className="h-2.5 w-2.5 rounded-full border border-line-strong" />

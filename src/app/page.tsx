@@ -18,7 +18,7 @@ export const revalidate = 300;
  *
  * ## Por qué el reparto ocurre en el navegador y no en el servidor
  *
- * La sesión de UINexus es un ID token de Firebase en memoria del navegador, no
+ * La sesión de Nextudio es un ID token de Firebase en memoria del navegador, no
  * una cookie: el servidor de esta página NO sabe quién pide (ver la nota de
  * `lib/aula-client.ts`). Un `redirect()` server-side necesitaría una cookie de
  * sesión, que es un cambio de arquitectura de autenticación, no de portada.

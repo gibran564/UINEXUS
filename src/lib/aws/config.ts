@@ -1,7 +1,7 @@
 /**
  * Configuración de AWS.
  *
- * UINexus usa Firebase SÓLO para identidad (Authentication). Los datos y los
+ * Nextudio usa Firebase SÓLO para identidad (Authentication). Los datos y los
  * archivos viven en AWS:
  *
  *   Firebase Auth   →  quién eres (ID token)
@@ -50,7 +50,21 @@ export const INDEXES = {
   projectsByOwner: 'byOwner',
   projectsByPath: 'byPath',
   projectsByStatus: 'byStatus',
-  coursesBySlug: 'bySlug',
+  /**
+   * Aquí hubo un `coursesBySlug: 'bySlug'` y se retiró en la Fase 3.5 (R13).
+   *
+   * Nombraba un índice que **no existe**: `CoursesTable` de
+   * `infra/uinexus.cfn.yaml` no declara ningún GSI. No rompía nada porque
+   * ninguna ruta lo usaba —`getCourseBySlug` lista las materias y filtra en
+   * memoria, que con las de una institución es correcto—, pero una constante que
+   * nombra un índice inexistente es una trampa: quien la viera la usaría, y
+   * fallaría en PRODUCCIÓN con «the table does not have the specified index».
+   *
+   * Se retiró la constante y NO se creó el índice. Crear infraestructura para
+   * justificar una constante muerta es exactamente al revés; si algún día hace
+   * falta buscar materias por slug con una `Query`, se añade el GSI a la
+   * plantilla y la constante vuelve con él.
+   */
   assignmentsByCourse: 'byCourse',
   submissionsByAssignment: 'byAssignment',
   submissionsByStudent: 'byStudent',
@@ -142,12 +156,47 @@ export const awsClientConfig = {
  * la variable no existe y el SDK conserva su resolución normal de endpoints.
  */
 const configuredDynamoEndpoint = process.env.UINEXUS_DYNAMODB_ENDPOINT?.trim() || undefined;
+
+/**
+ * Los DOS runtimes que pueden apuntar a un DynamoDB que no es el de AWS.
+ *
+ * Cada uno exige un `NODE_ENV` concreto Y un interruptor propio, y ninguno de
+ * los dos `NODE_ENV` puede ser `production`. Eso significa que en un despliegue
+ * no existe NINGUNA combinación de las variables propias de este proyecto que
+ * active esta puerta: ni exportando `UINEXUS_LOCAL_SANDBOX`, ni
+ * `UINEXUS_INTEGRATION_TESTS`, ni las dos. Lo fija una prueba.
+ *
+ * ## El alcance exacto de esa garantía
+ *
+ * Cubre la puerta de Nextudio, no todas las formas de reconfigurar el SDK. El
+ * SDK de AWS resuelve su propio endpoint y honra sus propias variables
+ * estándar (`AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_DYNAMODB`), que este código
+ * no lee ni puede desactivar sin romper despliegues legítimos —un endpoint de
+ * PrivateLink se configura exactamente así—.
+ *
+ * No se intenta cerrarlo, y la razón es que no hay nada que cerrar: quien puede
+ * escribir variables de entorno en un despliegue ya controla ese despliegue. Lo
+ * que esta guarda impide es otra cosa, y sí importa: que el interruptor del
+ * sandbox —pensado para desarrollo, presente en el repositorio y fácil de
+ * copiar por error a un panel de despliegue— llegue nunca a redirigir la base
+ * de datos de producción.
+ *
+ *   integración  NODE_ENV=test         + UINEXUS_INTEGRATION_TESTS=true
+ *   sandbox      NODE_ENV=development  + UINEXUS_LOCAL_SANDBOX=true
+ *
+ * El sandbox existe desde la Fase 3.5 para poder recorrer la aplicación
+ * AUTENTICADA sin tocar producción —la deuda que arrastraban todas las
+ * iteraciones anteriores—. Ver `docs/LOCAL-DEVELOPMENT.md`.
+ */
 const integrationRuntime =
   process.env.NODE_ENV === 'test' && process.env.UINEXUS_INTEGRATION_TESTS === 'true';
 
-if (configuredDynamoEndpoint && !integrationRuntime) {
+const localSandboxRuntime =
+  process.env.NODE_ENV === 'development' && process.env.UINEXUS_LOCAL_SANDBOX === 'true';
+
+if (configuredDynamoEndpoint && !integrationRuntime && !localSandboxRuntime) {
   throw new Error(
-    'UINEXUS_DYNAMODB_ENDPOINT sólo se admite en el runner explícito de integración.'
+    'UINEXUS_DYNAMODB_ENDPOINT sólo se admite en el runner de integración o en el sandbox local.'
   );
 }
 

@@ -64,7 +64,7 @@ function bearerToken(request: Request): string | null {
  *
  * ## Que el token sea auténtico no basta
  *
- * Firebase Authentication acepta cualquier cuenta de Google; UINexus, no. Un
+ * Firebase Authentication acepta cualquier cuenta de Google; Nextudio, no. Un
  * token criptográficamente válido de un Gmail personal es exactamente eso: la
  * prueba de que esa persona existe, no de que pertenezca al ITD. La política
  * institucional se aplica AQUÍ, sobre `decoded.email` y ANTES de leer el perfil

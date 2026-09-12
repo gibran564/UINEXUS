@@ -7,7 +7,7 @@ import { AssignmentEditor } from '@/components/aula/assignment-editor';
  * visitas que acaban en la pantalla de iniciar sesion.
  */
 export const metadata: Metadata = {
-  title: 'Nueva tarea',
+  title: 'Nueva actividad',
   robots: { index: false, follow: false },
 };
 

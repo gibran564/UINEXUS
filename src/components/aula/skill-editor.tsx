@@ -161,7 +161,7 @@ export function SkillEditor({
           {skillId ? 'Editar Skill' : 'Nueva Skill'}
         </Heading>
         <p className="mt-2 max-w-prose text-muted">
-          Una Skill aquí es una ficha: explica qué hace, dónde está y cómo se instala. UINexus no
+          Una Skill aquí es una ficha: explica qué hace, dónde está y cómo se instala. Nextudio no
           ejecuta nada de lo que escribas: los comandos se muestran para copiarlos.
         </p>
 

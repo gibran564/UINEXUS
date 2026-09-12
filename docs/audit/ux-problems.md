@@ -9,7 +9,7 @@ Escala:
 
 ## Nota sobre la ausencia de P0
 
-**No se ha encontrado ningún problema P0.** Ninguna función de UINexus está rota:
+**No se ha encontrado ningún problema P0.** Ninguna función de Nextudio está rota:
 se puede publicar, entregar, moderar, explorar y compartir un proyecto. Los
 problemas de este informe son de densidad, jerarquía, consistencia y arquitectura
 de información, no de funcionamiento.
@@ -224,7 +224,7 @@ una vez resuelto UX-04.
 El muro sólo enseña las materias propias. El escaparate —lo que da sentido a
 «publicar y compartir»— queda a un enlace de navbar que compite con «Inicio» y
 «Aula».
-**Solución**: carril derecho con «Del resto de UINexus» (≥1440 px), o un pie de
+**Solución**: carril derecho con «Del resto de Nextudio» (≥1440 px), o un pie de
 muro con 3 proyectos públicos recientes. Dificultad: media.
 
 ### UX-18 · La cola de moderación vive dentro del muro

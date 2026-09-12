@@ -4,7 +4,7 @@ import { LoginForm } from '@/components/auth/login-form';
 
 export const metadata: Metadata = {
   title: 'Iniciar sesión',
-  description: 'Entra a UINexus para publicar y administrar tus proyectos.',
+  description: 'Entra a Nextudio para publicar y administrar tus proyectos.',
   robots: { index: false, follow: true },
 };
 

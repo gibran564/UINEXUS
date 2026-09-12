@@ -102,7 +102,7 @@ export function ProjectShell({
           style={{ boxShadow: 'var(--shadow-pop)' }}
         >
           <LogoMark size={17} />
-          UINexus
+          Nextudio
         </button>
 
         {open && (

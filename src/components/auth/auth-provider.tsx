@@ -47,7 +47,7 @@ const DEMO_SESSION: SessionUser = {
 const DEMO_KEY = 'uinexus-demo-session';
 
 /**
- * Sesión de UINexus.
+ * Sesión de Nextudio.
  *
  * Toda la conversación con Firebase Auth pasa por `lib/firebase/auth.ts`: este
  * componente decide QUÉ hacer con la sesión, no CÓMO hablar con Firebase. Así
@@ -69,7 +69,7 @@ const DEMO_KEY = 'uinexus-demo-session';
  * respondiendo 403 y sin ninguna salida visible.
  *
  * El acceso por teléfono se retiró de la sesión: un número no demuestra
- * pertenencia a `@itdurango.edu.mx`, que es sobre lo que UINexus autoriza. Ver
+ * pertenencia a `@itdurango.edu.mx`, que es sobre lo que Nextudio autoriza. Ver
  * CHECKPOINTS.md para cómo volvería, ya como segundo factor de una cuenta
  * institucional verificada.
  */
@@ -83,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearError = useCallback(() => setError(null), []);
 
   /**
-   * Descarta una sesión que Firebase autenticó pero UINexus no admite.
+   * Descarta una sesión que Firebase autenticó pero Nextudio no admite.
    *
    * La sesión de Firebase ya se cerró en `resolveRestoredSession`; aquí sólo se
    * limpia el estado local y se lleva a `/login` con el motivo en la URL. La

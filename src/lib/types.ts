@@ -1,6 +1,6 @@
 import type { PublicationReference } from './publications';
 /**
- * Modelo de dominio de UINexus.
+ * Modelo de dominio de Nextudio.
  *
  * Convención de privacidad: existen dos formas del proyecto.
  *  - `ProjectRecord`  vive en el servidor y contiene `ownerId` (UID de Firebase)
@@ -138,7 +138,7 @@ export interface ExploreFilters {
 // ---------------------------------------------------------------------------
 // Capa académica (iteración 2)
 //
-// UINexus deja de ser sólo un hosting de proyectos: pasa a modelar
+// Nextudio deja de ser sólo un hosting de proyectos: pasa a modelar
 // Materia → Grupo → Tareas → Entregas. La convención de privacidad es la misma
 // que en proyectos y no se relaja aquí: los tipos `*Record` viven en el
 // servidor y llevan UID de Firebase; los DTO que viajan al navegador
@@ -168,7 +168,7 @@ export type AssignmentStatus = 'draft' | 'published' | 'closed';
 /**
  * Cómo se reparte el trabajo de una actividad.
  *
- * `shared` es la respuesta de UINexus al documento compartido de Drive, pero
+ * `shared` es la respuesta de Nextudio al documento compartido de Drive, pero
  * NO imita su mecánica: no hay edición simultánea del mismo texto. Cada
  * persona escribe SU aportación y la vista conjunta se compone al leer. Así no
  * hay conflictos que resolver ni texto que se pise, que es el problema real de
@@ -382,6 +382,19 @@ export interface StepDeliverable {
   starterCode?: string;
   /** Si la interfaz puede ofrecer ejecución dentro de un sandbox aislado. */
   executionEnabled?: boolean;
+  /**
+   * Sólo cuando `type === 'ai_worklog'`: si se le pide una conclusión.
+   *
+   * Es la MISMA política que `NexBookAIWorklogBlock.conclusionMode` y usa el
+   * mismo tipo a propósito: un registro de uso de IA pide lo mismo tanto si es
+   * el entregable de la parte como si es un bloque dentro de un NexLab. Lo que
+   * el estudiante escribe sigue yendo a `AIWorklogData.studentAnalysis`; aquí no
+   * hay un segundo campo de conclusión, sólo quién la exige.
+   *
+   * Opcional por compatibilidad: las partes guardadas antes no lo traen y
+   * significan «opcional», que es lo que hacían.
+   */
+  conclusionMode?: NexBookConclusionMode | null;
 }
 
 /**
@@ -509,7 +522,7 @@ export type EmbedLevel = 0 | 1 | 2 | 3;
 // ---------------------------------------------------------------------------
 // Materiales de la tarea
 //
-// El tercer concepto de archivo de UINexus, y el que faltaba. Son DOS cosas
+// El tercer concepto de archivo de Nextudio, y el que faltaba. Son DOS cosas
 // distintas y no se mezclan:
 //
 //   Submission / StepEvidence  →  lo que ENTREGA el alumnado. Privado por
@@ -531,7 +544,7 @@ export type EmbedLevel = 0 | 1 | 2 | 3;
  *    cálculo con la tabla vacía.
  *  · `resource` se consulta: el caso de estudio, el dataset, el ejemplo.
  *
- * Es una etiqueta para quien lo lee, no una regla: UINexus no comprueba que la
+ * Es una etiqueta para quien lo lee, no una regla: Nextudio no comprueba que la
  * plantilla se devuelva. Distinguirlas ahorra la pregunta «¿esto lo tengo que
  * entregar?» en la pantalla del alumnado.
  */
@@ -661,7 +674,7 @@ export type AIProvider = 'ChatGPT' | 'Claude' | 'Gemini' | 'Copilot' | 'Other';
 export type TextFormat = 'markdown' | 'plain_text';
 
 export interface AITextResult {
-  /** Fuente original. UINexus no la resume, corrige, traduce ni reordena. */
+  /** Fuente original. Nextudio no la resume, corrige, traduce ni reordena. */
   content: string;
   format: TextFormat;
 }
@@ -687,7 +700,7 @@ export interface AIWorklogData {
   /**
    * Recursos de la materia que el estudiante dice haber usado (§28).
    * OPCIONAL y sin verificar: es un registro académico, no una comprobación
-   * técnica. UINexus no sabe —ni puede saber— si alguien instaló de verdad una
+   * técnica. Nextudio no sabe —ni puede saber— si alguien instaló de verdad una
    * Skill; lo que aporta es que quede escrito junto al prompt y al modelo.
    *
    * Los AI Worklogs anteriores a la iteración 3 no lo tienen y se leen como
@@ -724,7 +737,7 @@ export interface FreeformData {
  * Un archivo o medio entregado (§18, §19).
  *
  * Se guarda una URL, no bytes. Cubre el caso real —HeyGen, YouTube, Drive, un
- * enlace de descarga— sin inventar almacenamiento: subir un MP4 a UINexus
+ * enlace de descarga— sin inventar almacenamiento: subir un MP4 a Nextudio
  * necesitaría un prefijo propio en S3 y una ruta de firma que hoy no existen, y
  * §18 pide documentar esa infraestructura antes que improvisarla. Está anotado
  * en CHECKPOINTS.md.
@@ -735,7 +748,7 @@ export interface MediaData {
   /** Enlace externo: HeyGen, YouTube, Drive… Vacío si se subió el archivo. */
   url: string;
   /**
-   * Clave del archivo en S3, cuando se subió a UINexus.
+   * Clave del archivo en S3, cuando se subió a Nextudio.
    *
    * Convive con `url` a propósito: §19 pide admitir las dos formas, y para un
    * video hecho con un avatar de IA el enlace suele ser lo natural. La clave la
@@ -770,7 +783,7 @@ export interface ResourceSelectionData {
  * lo que permite ejecutarlo tal cual. Pedir sólo una de las dos empeora uno de
  * los dos usos reales.
  *
- * UINexus NO ejecuta este código en ningún momento (ver docs/SECURITY.md). Se
+ * Nextudio NO ejecuta este código en ningún momento (ver docs/SECURITY.md). Se
  * guarda como texto y se muestra como texto.
  */
 export interface CodeData {
@@ -955,10 +968,10 @@ export interface StudentCourseSummary {
 // ---------------------------------------------------------------------------
 // Biblioteca de Skills (iteración 3)
 //
-// Una Skill en UINexus es una FICHA ACADÉMICA, no software que la plataforma
+// Una Skill en Nextudio es una FICHA ACADÉMICA, no software que la plataforma
 // ejecute: explica qué hace una habilidad de IA, dónde vive, con qué
 // herramientas funciona, cómo se instala y cómo se usa. Los comandos que
-// contiene son contenido educativo que se muestra y se copia. UINexus no los
+// contiene son contenido educativo que se muestra y se copia. Nextudio no los
 // ejecuta nunca, por ninguna vía. Ver docs/SECURITY.md.
 // ---------------------------------------------------------------------------
 
@@ -1198,7 +1211,7 @@ export interface CourseResourceRecord
 // Workspace de programación (iteración 7)
 //
 // Un sitio donde escribir código que NO es una entrega. Hasta ahora todo el
-// código de UINexus vivía dentro de `stepEvidence[stepId]` de una entrega, lo
+// código de Nextudio vivía dentro de `stepEvidence[stepId]` de una entrega, lo
 // que significaba que para probar cinco líneas de Python había que tener una
 // actividad abierta con fecha límite.
 //
@@ -1287,7 +1300,7 @@ export interface WorkspaceRecord extends Workspace {
 // ---------------------------------------------------------------------------
 // NexBook (iteración 8)
 //
-// El documento computacional de UINexus: explicación, código ejecutable y
+// El documento computacional de Nextudio: explicación, código ejecutable y
 // resultados en un mismo sitio reproducible.
 //
 // ## Qué NO es
@@ -1425,6 +1438,89 @@ export interface NexBookSpreadsheetBlock {
   editableByStudent?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// AI Worklog como bloque (NexIA, iteración 12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Evidencia visual de la respuesta de una IA, POR REFERENCIA.
+ *
+ * Es la misma idea que `NexBookImageBlock`: los bytes viven en el almacén de
+ * assets y el bloque lleva el identificador. No hay un segundo almacén ni un
+ * segundo prefijo para NexIA; una captura de ChatGPT y una foto insertada en el
+ * documento son el mismo problema técnico y se resuelven con el mismo mecanismo.
+ *
+ * `alt` se pide por la misma razón que allí: un registro académico que sólo se
+ * puede leer mirando deja fuera a quien use un lector de pantalla.
+ */
+export interface NexBookAIWorklogImage {
+  assetId: string;
+  mimeType: NexBookImageMimeType;
+  alt: string;
+  caption?: string;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Qué exige la actividad como reflexión del estudiante.
+ *
+ * Actúa sobre `AIWorklogData.studentAnalysis`, que YA EXISTE. No hay un segundo
+ * campo de conclusión: cambiar la etiqueta de un campo no es razón para
+ * duplicarlo, y dos campos de «tu análisis» garantizan que la mitad de los
+ * registros acabe rellenando el equivocado.
+ *
+ * ```
+ * none      no se pide
+ * optional  se pide y no bloquea
+ * required  hace falta para poder ENTREGAR
+ * ```
+ *
+ * `required` se aplica al ENTREGAR, nunca al guardar: un borrador a medias
+ * tiene que poder autoguardarse, o escribir el registro se vuelve imposible.
+ * Ver `api/assignments/[assignmentId]/submission/route.ts`.
+ */
+export type NexBookConclusionMode = 'none' | 'optional' | 'required';
+
+/**
+ * El registro de uso de IA, como bloque de un NexBook.
+ *
+ * ## No es una IA
+ *
+ * Nextudio no llama a ningún modelo, no guarda claves de API, no transmite
+ * prompts a ningún sitio y no genera texto. Este bloque DOCUMENTA lo que una
+ * persona hizo con una herramienta de fuera: qué usó, para qué, qué le contestó,
+ * qué aprovechó, qué cambió, qué descartó y qué concluyó. Ver
+ * `docs/NEXTUDIO-ROADMAP.md` §D6.
+ *
+ * ## `AIWorklogData` va ANIDADO, no aplanado
+ *
+ * Los once campos del registro ya existen con ese nombre y esa semántica en el
+ * entregable `ai_worklog` de siempre, y `normalizeAIResult()` y
+ * `aiWorklogToMarkdown()` ya saben leerlos. Anidando, un entregable legacy y un
+ * bloque llevan LITERALMENTE el mismo objeto: no hay mapeo que mantener, no hay
+ * dos verdades, y las pruebas de `ai-worklog-markdown.test.ts` siguen valiendo.
+ * Aplanarlos habría creado una segunda forma del mismo registro, y la segunda
+ * es siempre la que se queda atrás.
+ */
+export interface NexBookAIWorklogBlock {
+  id: string;
+  type: 'ai_worklog';
+  /** El registro, con la MISMA forma que el entregable de siempre. */
+  worklog: AIWorklogData;
+  /** Capturas de la respuesta. Referencias, nunca bytes. */
+  responseImages?: NexBookAIWorklogImage[];
+  /** Qué pide la docente como reflexión. Se aplica sobre `studentAnalysis`. */
+  conclusionMode?: NexBookConclusionMode;
+  /**
+   * Ausente significa `true`, igual que en los demás bloques. Una plantilla
+   * docente puede dejar fijados la herramienta y el objetivo y abrir el resto;
+   * el contrato es el mismo que en `markdown`, `code` y `spreadsheet`, y no uno
+   * distinto por tratarse de IA.
+   */
+  editableByStudent?: boolean;
+}
+
 /**
  * Los bloques declarados.
  *
@@ -1432,14 +1528,16 @@ export interface NexBookSpreadsheetBlock {
  * miembro y un `case`. No se declara ninguno antes de existir: un tipo que
  * ninguna pantalla sabe pintar produce documentos que nadie puede abrir. Por eso
  * `image` y `spreadsheet` entran en la iteración 9 —con su renderizador, su
- * almacén y su exportación— y `AIBlock` y `ChartBlock` siguen sin estar aquí:
+ * almacén y su exportación—, `ai_worklog` entra en la 12 con lo mismo más su
+ * snapshot de entrega y su lista blanca, y `ChartBlock` sigue sin estar aquí:
  * ver `docs/NEXBOOK.md`.
  */
 export type NexBookBlock =
   | NexBookMarkdownBlock
   | NexBookCodeBlock
   | NexBookImageBlock
-  | NexBookSpreadsheetBlock;
+  | NexBookSpreadsheetBlock
+  | NexBookAIWorklogBlock;
 
 export type NexBookBlockType = NexBookBlock['type'];
 
@@ -1493,7 +1591,7 @@ export type NexBookCellValue = string | number | boolean | null;
  * Datos tabulares, ESTRUCTURADOS.
  *
  * No es el HTML que imprima pandas ni el texto que imprima R: son columnas y
- * filas, y quien las pinta es UINexus. Aceptar HTML de la biblioteca habría
+ * filas, y quien las pinta es Nextudio. Aceptar HTML de la biblioteca habría
  * significado renderizar marcado que genera el código del alumnado, que es justo
  * lo que `MarkdownContent` lleva todo el proyecto evitando.
  */
@@ -1530,7 +1628,7 @@ export interface NexBookImageOutput {
   alt?: string;
 }
 
-/** Los tipos de imagen que UINexus almacena. Sin SVG: ver `docs/SECURITY.md`. */
+/** Los tipos de imagen que Nextudio almacena. Sin SVG: ver `docs/SECURITY.md`. */
 export type NexBookImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp';
 
 /** Un valor JSON, para lo que no es ni texto ni tabla ni imagen. */

@@ -12,7 +12,15 @@ import {
   assignmentInputSchema,
   httpUrlSchema,
 } from '../../src/lib/academic-schemas';
-import { assignment, course, submission, worklogData, UID } from './academic-fixtures';
+import {
+  assignment,
+  course,
+  step,
+  stepEvidence,
+  submission,
+  worklogData,
+  UID,
+} from './academic-fixtures';
 
 const publicAssignment = () =>
   toAssignment(assignment(), { viewerRole: 'teacher', roster: course().students });
@@ -190,5 +198,139 @@ describe('validación de lo que se guarda', () => {
 
   it('una tarea sin título no se guarda', () => {
     expect(assignmentInputSchema.safeParse({ title: 'ab', type: 'research' }).success).toBe(false);
+  });
+});
+
+/**
+ * Una actividad POR PARTES no tiene una forma: tiene una por parte.
+ *
+ * Antes, aplanar una entrega así caía en el aplanador de entrega libre y
+ * devolvía «Respuesta: (sin respuesta)» sobre un laboratorio entero. Es la
+ * misma ceguera que la regresión de la Fase 4 —una pantalla que no distingue
+ * una actividad por partes— pero en la capa de LECTURA, que es la que alimenta
+ * la exportación, el CSV y el visor docente.
+ */
+describe('aplanado de una actividad por partes', () => {
+  const byParts = () =>
+    toAssignment(
+      assignment({
+        type: 'workflow',
+        workflow: [
+          step({
+            id: 'lab',
+            title: 'Tu laboratorio',
+            deliverables: [{ type: 'nexbook', required: true, hint: '', questions: [] }],
+          }),
+          step({
+            id: 'ia',
+            title: 'Registrar uso de IA',
+            deliverables: [{ type: 'ai_worklog', required: true, hint: '', questions: [] }],
+          }),
+          step({
+            id: 'cierre',
+            title: 'Tu conclusión',
+            deliverables: [{ type: 'text', required: true, hint: '', questions: [] }],
+          }),
+        ],
+      }),
+      { viewerRole: 'teacher', roster: course().students }
+    );
+
+  const delivered = () =>
+    toSubmission(
+      submission({
+        type: 'workflow',
+        stepEvidence: {
+          lab: stepEvidence({
+            stepId: 'lab',
+            note: 'Me costó la hoja.',
+            data: {
+              nexbookId: 'i1',
+              revision: 4,
+              title: 'Ventas',
+              submittedAt: '2026-09-05T10:00:00.000Z',
+              snapshot: {
+                formatVersion: 1,
+                blocks: [
+                  { id: 'b1', type: 'markdown', source: 'Las ventas suben en Q4.' },
+                  { id: 'b2', type: 'code', language: 'python', source: 'print(1)' },
+                ],
+                results: {},
+              },
+            } as never,
+          }),
+          ia: stepEvidence({
+            stepId: 'ia',
+            toolName: 'Claude',
+            data: worklogData({ objective: 'Comparar métodos' }) as never,
+          }),
+          cierre: stepEvidence({
+            stepId: 'cierre',
+            data: { text: 'Me quedo con el símplex.', links: [] } as never,
+          }),
+        },
+      })
+    );
+
+  it('lee cada Parte con el aplanador de SU entregable', () => {
+    const fields = flattenSubmission(delivered(), [], byParts().workflow);
+    const byLabel = (group: string, label: string) =>
+      fields.find((field) => field.group === group && field.label === label)?.value;
+
+    expect(byLabel('Tu laboratorio', 'Laboratorio')).toBe('Ventas');
+    expect(byLabel('Tu laboratorio', 'Texto del laboratorio')).toContain('Las ventas suben');
+    expect(byLabel('Registrar uso de IA', 'Objetivo')).toBe('Comparar métodos');
+    expect(byLabel('Tu conclusión', 'Respuesta')).toBe('Me quedo con el símplex.');
+  });
+
+  it('conserva la herramienta declarada y la nota de cada Parte', () => {
+    const fields = flattenSubmission(delivered(), [], byParts().workflow);
+    expect(
+      fields.find((field) => field.label === 'Herramienta declarada')
+    ).toMatchObject({ group: 'Registrar uso de IA', value: 'Claude' });
+    expect(fields.find((field) => field.label === 'Nota del estudiante')).toMatchObject({
+      group: 'Tu laboratorio',
+      value: 'Me costó la hoja.',
+    });
+  });
+
+  it('una Parte sin entregar se dice, no desaparece', () => {
+    const partial = toSubmission(
+      submission({ type: 'workflow', stepEvidence: {} })
+    );
+    const fields = flattenSubmission(partial, [], byParts().workflow);
+
+    expect(fields.map((field) => field.group)).toEqual([
+      'Tu laboratorio',
+      'Registrar uso de IA',
+      'Tu conclusión',
+    ]);
+    expect(fields.every((field) => field.value === '')).toBe(true);
+  });
+
+  it('la exportación en Markdown ya no sale vacía', () => {
+    const text = exportMarkdown({
+      assignment: byParts(),
+      courseName: 'Investigación de Operaciones',
+      submissions: [delivered()],
+    });
+
+    expect(text).toContain('Tu laboratorio');
+    expect(text).toContain('Las ventas suben en Q4.');
+    expect(text).toContain('Comparar métodos');
+    // Y el encabezado dice qué es, en vez de quedarse en `undefined`.
+    expect(text).toContain('Actividad por partes');
+    expect(text).not.toContain('undefined');
+  });
+
+  it('el CSV pone una columna por Parte y campo', () => {
+    const csv = exportCsv({
+      assignment: byParts(),
+      courseName: 'Investigación de Operaciones',
+      submissions: [delivered()],
+    });
+
+    expect(csv).toContain('Tu laboratorio — Laboratorio');
+    expect(csv).toContain('Tu conclusión — Respuesta');
   });
 });

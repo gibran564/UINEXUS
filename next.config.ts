@@ -41,6 +41,20 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  /**
+   * Dónde compila Next, configurable SÓLO por entorno.
+   *
+   * `next dev`, `next build` y `next start` comparten `.next` y se pisan: un
+   * build lanzado con el servidor de desarrollo vivo puede reventar a mitad, y
+   * diagnosticarlo cuesta porque el error habla de un chunk y no de la causa.
+   * Costó un build fallido en la Fase 4.
+   *
+   * El sandbox de producción local (`npm run prod:local`) compila en su propio
+   * directorio y deja `.next` para el desarrollo. La variable NO se define en
+   * producción, así que allí sigue siendo `.next` exactamente como antes: esto
+   * separa entornos locales, no diverge del despliegue.
+   */
+  distDir: process.env.UINEXUS_DIST_DIR || '.next',
   reactStrictMode: true,
   poweredByHeader: false,
   images: {
@@ -59,7 +73,7 @@ const nextConfig: NextConfig = {
          * Los runtimes de Python y R.
          *
          * `same-origin` impide que otro sitio se los lleve como recurso: son
-         * 60 MB de WebAssembly servidos desde la infraestructura de UINexus y
+         * 60 MB de WebAssembly servidos desde la infraestructura de Nextudio y
          * no hay ninguna razón para que los cargue nadie más.
          *
          * A propósito SIN `Cache-Control` propio. Las rutas no llevan hash de

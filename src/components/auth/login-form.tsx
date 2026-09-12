@@ -23,7 +23,7 @@ type Mode = 'signin' | 'signup' | 'reset';
  * contraseña está un clic más adentro para no convertir la pantalla en un muro
  * de opciones. Nunca se pide iniciar sesión para explorar.
  *
- * El acceso por SMS se retiró: UINexus autoriza sobre el correo institucional y
+ * El acceso por SMS se retiró: Nextudio autoriza sobre el correo institucional y
  * un teléfono no puede demostrarlo (ver `lib/firebase/auth.ts`).
  */
 interface LoginFormProps {
@@ -54,7 +54,7 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
   const [localError, setLocalError] = useState<string | null>(null);
 
   /**
-   * Se llegó aquí porque UINexus descartó una sesión con un correo ajeno.
+   * Se llegó aquí porque Nextudio descartó una sesión con un correo ajeno.
    *
    * El motivo se lee UNA vez y se borra de la dirección: si se quedara, volver
    * atrás en el historial —o compartir el enlace— repetiría un aviso que ya no
@@ -154,7 +154,7 @@ export function LoginForm({ initialMode = 'signin' }: LoginFormProps) {
       ? 'Crea tu cuenta institucional'
       : mode === 'reset'
         ? 'Recupera tu contraseña'
-        : 'Entra a UINexus';
+        : 'Entra a Nextudio';
 
   const subheading =
     mode === 'signup'

@@ -7,8 +7,8 @@ import {
 } from '@/lib/data/academic-mappers';
 import { errorResponse, readJson, requireWriter } from '@/lib/server/session';
 import { requireCourseContext } from '@/lib/server/course-access';
+import { resourceVisibleTo } from '@/lib/server/resource-visibility';
 import { createCourseResource } from '@/lib/server/academic-writes';
-import type { ResourceStatus } from '@/lib/types';
 
 /**
  * La biblioteca de la materia, entera (§6, §41).
@@ -30,15 +30,11 @@ import type { ResourceStatus } from '@/lib/types';
  *
  * El filtrado ocurre aquí, antes de serializar. Lo que alguien no puede ver no
  * llega a su navegador.
+ *
+ * La regla vive en `lib/server/resource-visibility.ts` desde que existe la
+ * búsqueda global: las dos pantallas tienen que enseñar exactamente lo mismo, y
+ * la única forma de garantizarlo es que llamen a la misma función.
  */
-
-function visibleTo(
-  role: 'teacher' | 'student',
-  handle: string
-): (item: { status: ResourceStatus; author: { handle: string } | null }) => boolean {
-  if (role === 'teacher') return () => true;
-  return (item) => item.status === 'approved' || item.author?.handle === handle;
-}
 
 export async function GET(
   request: Request,
@@ -55,7 +51,7 @@ export async function GET(
       listCourseResources(courseId),
     ]);
 
-    const visible = visibleTo(role, actor.profile.handle);
+    const visible = resourceVisibleTo(role, actor.profile.handle);
 
     const promptDtos = prompts.map(toPromptTemplate).filter(visible);
     const skillDtos = skills.map(toSkillResource).filter(visible);

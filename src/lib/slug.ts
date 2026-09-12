@@ -13,11 +13,26 @@ export function slugify(input: string): string {
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,59}$/;
 export const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{2,23}$/;
 
-/** Palabras que no pueden ser handle porque chocan con rutas de la plataforma. */
+/**
+ * Palabras que no pueden ser handle porque chocan con rutas de la plataforma o
+ * con el nombre del producto.
+ *
+ * `uinexus` sigue aquí y no se quita al cambiar la marca: liberarlo permitiría
+ * a cualquiera registrar `@uinexus` y hacerse pasar por la plataforma anterior,
+ * que es exactamente el problema que la lista viene a evitar. Un nombre
+ * reservado se AÑADE; no se devuelve.
+ *
+ * Se añaden sólo los nombres del producto, y sólo los que nadie podría estar
+ * usando ya: esta lista la comprueba también el esquema del perfil, así que
+ * reservar retroactivamente una palabra común dejaría a quien la tuviera sin
+ * poder guardar su propio perfil. `nexia` se reservará cuando NexIA exista, tras
+ * comprobar que no lo tiene nadie.
+ */
 const RESERVED_HANDLES = new Set([
   'explore', 'courses', 'about', 'login', 'logout', 'publish', 'dashboard',
-  'admin', 'api', 'settings', 'help', 'terms', 'privacy', 'uinexus', 'www',
+  'admin', 'api', 'settings', 'help', 'terms', 'privacy', 'www',
   'projects', 'static', 'assets', 'new', 'edit', 'search', 'signup', 'signin',
+  'nextudio', 'nexlab', 'nexcode', 'uinexus',
 ]);
 
 export function isReservedHandle(handle: string): boolean {
@@ -41,7 +56,7 @@ export function parseHandleParam(param: string): string | null {
   return HANDLE_PATTERN.test(handle) ? handle : null;
 }
 
-/** El chrome de UINexus se oculta sólo en la ruta exacta del Project Shell. */
+/** El chrome de Nextudio se oculta sólo en la ruta exacta del Project Shell. */
 export function isProjectShellPath(pathname: string): boolean {
   const parts = pathname.split('/').filter(Boolean);
   return (

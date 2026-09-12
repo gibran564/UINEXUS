@@ -10,7 +10,7 @@ import type { NexBookSheetData } from '../types';
  * Porque las fórmulas las escribe el alumnado y se guardan en un documento que
  * otra persona puede abrir. Convertir `=A1+B2` en JavaScript y evaluarlo sería
  * ejecutar texto de terceros en la sesión de quien lo lee: exactamente el
- * agujero que el resto de UINexus evita renderizando Markdown sin HTML crudo.
+ * agujero que el resto de Nextudio evita renderizando Markdown sin HTML crudo.
  *
  * Este intérprete sólo sabe hacer aritmética y llamar a las funciones de una
  * lista cerrada. No hay acceso a variables, ni a objetos del navegador, ni forma

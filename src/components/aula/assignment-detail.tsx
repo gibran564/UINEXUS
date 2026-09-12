@@ -2,12 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import {
-  ASSIGNMENT_TYPES,
-  DELIVERABLE_LABEL,
-  SUBMISSION_STATUS_HELP,
-  stepActionLabel,
-} from '@/lib/constants';
+import { SUBMISSION_STATUS_HELP } from '@/lib/constants';
+import { activityState, type StudentWork } from '@/lib/student-activity';
 import {
   deleteAssignment,
   useApi,
@@ -21,9 +17,9 @@ import {
   Crumbs,
   DueDate,
   Notice,
-  SubmissionBadge,
   TypeChip,
 } from './aula-ui';
+import { ActivityStateChip, WorkOverview } from './student-work';
 import { AssignmentMaterials } from './assignment-materials';
 import { CopyButton } from './copy-button';
 import { CollaborativeDocument } from './collaborative-view';
@@ -83,7 +79,6 @@ export function AssignmentDetail({
 
 function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId: string }) {
   const { assignment, submission } = data;
-  const typeOption = ASSIGNMENT_TYPES.find((option) => option.value === assignment.type);
   const closedByStatus = assignment.status === 'closed';
   /**
    * Pasada la fecha límite la entrega está cerrada, y se dice ANTES de entrar:
@@ -94,9 +89,14 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
   const pastDue = isPastDue(assignment);
   const closed = closedByStatus || pastDue;
   const isShared = assignment.collaborationMode === 'shared';
-  const isWorkflow = assignment.workflow.length > 1;
 
-  /** Los pasos que le tocan. `myStepIds` lo decide el servidor. */
+  /**
+   * Las partes que le tocan. `myStepIds` lo decide el servidor.
+   *
+   * La lista SIEMPRE tiene al menos una: una actividad anterior a los procesos
+   * se lee con un paso sintetizado. Por eso «Tu trabajo» sirve igual para las
+   * dos, y por eso nada de esta pantalla cuenta pasos para decidir qué pintar.
+   */
   const mineSteps = new Set(data.myStepIds);
   const myWorkflowSteps = assignment.workflow.filter((step) => mineSteps.has(step.id));
 
@@ -115,22 +115,49 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
       return [{ groupId: question.groupId, title: question.group ?? question.prompt }];
     });
 
-  const actionLabel = submission
-    ? submission.status === 'draft'
-      ? 'Continuar tarea'
-      : 'Ver o editar mi entrega'
-    : (typeOption?.action ?? 'Comenzar tarea');
+  /**
+   * Lo que lleva hecho, para poder decirlo en la ficha y no sólo dentro del
+   * recorrido. `myLabs` cuenta los laboratorios ya abiertos, que se guardan en
+   * su propio documento y pueden tener trabajo antes de que la entrega tenga
+   * ninguna copia.
+   */
+  const work: StudentWork = {
+    evidence: submission?.stepEvidence ?? {},
+    labs: new Set(data.myLabs),
+  };
+  const state = activityState({
+    status: submission?.status ?? null,
+    submittedAt: submission?.submittedAt ?? null,
+    dueAt: assignment.dueAt,
+    parts: myWorkflowSteps,
+    work,
+  });
+  const delivered = submission?.status !== undefined && submission.status !== 'draft';
+
+  const actionLabel = delivered
+    ? 'Ver o cambiar lo que entregué'
+    : state === 'not_started'
+      ? 'Empezar'
+      : 'Continuar';
 
   return (
     <article className="mt-4 max-w-3xl">
+      {/*
+        El encabezado responde, sin desplazarse, a «¿qué es esto y para
+        cuándo?». Nada de controles: lo primero que ve alguien que abre una
+        actividad no puede ser un formulario.
+      */}
       <header className="border-b border-line pb-6">
-        <h1 className="font-display text-h1">{assignment.title}</h1>
+        <p className="meta">
+          {data.courseName}
+          {data.teacherName ? ` · ${data.teacherName}` : ''}
+        </p>
+        <h1 className="mt-1 font-display text-h1">{assignment.title}</h1>
         <p className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted">
-          <TypeChip type={assignment.type} />
+          <ActivityStateChip state={state} />
           <span>
             Entrega: <DueDate value={assignment.dueDate} dueAt={assignment.dueAt} />
           </span>
-          <SubmissionBadge status={submission?.status ?? null} />
         </p>
       </header>
 
@@ -153,67 +180,47 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
       )}
 
       {/*
-        Los materiales van ANTES de los pasos y del botón de entrega: son lo
-        primero que hace falta abrir para poder empezar, y buscarlos después de
-        haber leído las instrucciones es exactamente el momento equivocado.
+        Material para CONSULTAR, con ese título y no otro.
+
+        Lo que se consulta y lo que se entrega no pueden parecer lo mismo:
+        confundir la plantilla que repartió la docente con el archivo que hay
+        que devolver es el malentendido más caro que puede tener esta pantalla.
+        Por eso el material va aquí, dicho como material, y lo que hay que
+        hacer va abajo bajo «Tu trabajo».
       */}
-      <AssignmentMaterials
-        assignmentId={assignment.id}
-        materials={assignment.materials}
-        canManage={false}
-      />
-
-      {assignment.resourceLinks.length > 0 && (
+      {(assignment.materials.length > 0 || assignment.resourceLinks.length > 0) && (
         <section className="mt-8">
-          <h2 className="font-display text-h3">Recursos</h2>
-          <ul className="mt-3 space-y-2">
-            {assignment.resourceLinks.map((link) => (
-              <li key={link.url}>
-                {/*
-                  `noopener` y `noreferrer` no son decorativos: son enlaces que
-                  escribió otra persona y se abren en otra pestaña.
-                */}
-                <a
-                  href={link.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-secondary btn-sm"
-                >
-                  {link.label || link.url} ↗
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {isWorkflow && (
-        <section className="mt-8">
-          <h2 className="font-display text-h3">Los pasos</h2>
-          <p className="mt-1 text-sm text-muted">
-            {myWorkflowSteps.length === assignment.workflow.length
-              ? 'Esta actividad tiene varios pasos. Los haces en orden.'
-              : `De los ${assignment.workflow.length} pasos, te tocan ${myWorkflowSteps.length}.`}
+          <h2 className="font-display text-h3">Material para consultar</h2>
+          <p className="mt-1 text-sm text-subtle">
+            Lo que te da tu docente para hacer la actividad. No es lo que tienes que entregar.
           </p>
-          <ol className="mt-4 space-y-2">
-            {myWorkflowSteps.map((step, index) => (
-              <li key={step.id} className="panel flex flex-wrap items-center gap-3 p-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-label tabular-nums">
-                  {index + 1}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium">{step.title}</span>
-                  <span className="block text-label text-subtle">
-                    {stepActionLabel(step.actionType)}
-                    {step.tool.toolNames.length > 0 && ` · ${step.tool.toolNames.join(', ')}`}
-                    {' · '}
-                    {DELIVERABLE_LABEL[step.deliverables[0]?.type ?? 'none']}
-                    {!step.required && ' · opcional'}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ol>
+
+          <AssignmentMaterials
+            assignmentId={assignment.id}
+            materials={assignment.materials}
+            canManage={false}
+          />
+
+          {assignment.resourceLinks.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {assignment.resourceLinks.map((link) => (
+                <li key={link.url}>
+                  {/*
+                    `noopener` y `noreferrer` no son decorativos: son enlaces que
+                    escribió otra persona y se abren en otra pestaña.
+                  */}
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary btn-sm"
+                  >
+                    {link.label || link.url} ↗
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 
@@ -242,20 +249,31 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
         </section>
       )}
 
+      {/*
+        Tu trabajo: qué hay que hacer y por dónde va.
+
+        Es la misma pieza que usa el recorrido, en modo lectura. Que sea la
+        misma importa: si la ficha y el recorrido contaran las partes con dos
+        códigos distintos, acabarían diciendo cosas distintas sobre lo mismo.
+      */}
       <section className="mt-8">
-        <h2 className="font-display text-h3">Tipo de entrega</h2>
-        <p className="mt-2 text-muted">{typeOption?.label}</p>
-        <p className="mt-1 text-sm text-subtle">{typeOption?.helper}</p>
+        <WorkOverview parts={assignment.workflow} mine={mineSteps} work={work} />
       </section>
 
       <RecommendedResources resources={data.resources} courseId={courseId} />
 
-      {submission && (
+      {delivered && submission && (
+        <DeliveredPanel
+          submission={submission}
+          hasLab={myWorkflowSteps.some(
+            (step) => step.deliverables[0]?.type === 'nexbook'
+          )}
+        />
+      )}
+
+      {submission?.status === 'draft' && (
         <div className="mt-8">
-          <Notice tone={submission.status === 'needs_changes' ? 'error' : 'info'}>
-            {SUBMISSION_STATUS_HELP[submission.status]}
-            {submission.teacherNote && ` — «${submission.teacherNote}»`}
-          </Notice>
+          <Notice>{SUBMISSION_STATUS_HELP.draft}</Notice>
         </div>
       )}
 
@@ -263,7 +281,7 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
         {closed ? (
           <Notice>
             {closedByStatus
-              ? 'Esta tarea ya está cerrada. No se admiten más entregas.'
+              ? 'Esta actividad ya está cerrada. No se admiten más entregas.'
               : `Entrega cerrada. La fecha límite fue el ${formatDueLabel(assignment)}.`}
           </Notice>
         ) : (
@@ -272,7 +290,7 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
               href={`/aula/${courseId}/tareas/${assignment.id}/entrega`}
               className="btn btn-primary btn-lg"
             >
-              {isWorkflow ? 'Comenzar la actividad' : isShared ? 'Comenzar mi parte' : actionLabel}
+              {actionLabel}
             </Link>
             {isShared && (
               <Link
@@ -286,6 +304,78 @@ function StudentView({ data, courseId }: { data: AssignmentDetailData; courseId:
         )}
       </div>
     </article>
+  );
+}
+
+/**
+ * Después de entregar.
+ *
+ * Dice las tres cosas que hacen falta y que antes no estaban: que se entregó,
+ * CUÁNDO, y qué se puede hacer a partir de ahí.
+ *
+ * Lo de «volver a entregar» no se inventa: el servidor ya lo permite —al
+ * entregar otra vez el estado vuelve a «Entregado» y la revisión anterior se
+ * invalida, porque lo revisado ya no es esto (ver `upsertSubmission`)—. Si no
+ * lo permitiera, aquí no habría botón, y decirlo es mejor que un botón que
+ * falla.
+ *
+ * Lo de la copia personal tampoco: es el flujo que ya existe en el laboratorio
+ * («Copiar a mis espacios»). Lo único que faltaba era explicar la consecuencia
+ * antes de que alguien la descubra por su cuenta: que la copia es suya y que la
+ * entrega no se mueve.
+ */
+function DeliveredPanel({
+  submission,
+  hasLab,
+}: {
+  submission: NonNullable<AssignmentDetailData['submission']>;
+  hasLab: boolean;
+}) {
+  const when = submission.submittedAt ? new Date(submission.submittedAt) : null;
+
+  return (
+    <section className="panel mt-8 p-5" aria-labelledby="ya-entregada">
+      <h2 id="ya-entregada" className="font-display text-h3">
+        {submission.status === 'needs_changes' ? 'Tu docente pidió cambios' : 'Actividad entregada'}
+      </h2>
+
+      {/*
+        La frase va SIN punto final: en español de México la hora termina en
+        «p. m.», y añadirle un punto deja dos seguidos.
+      */}
+      {when && !Number.isNaN(when.getTime()) && (
+        <p className="mt-2 text-sm text-muted">
+          Entregaste el{' '}
+          <time dateTime={submission.submittedAt ?? ''}>{when.toLocaleString('es-MX')}</time>
+        </p>
+      )}
+
+      <p className="mt-2 text-sm text-muted">{SUBMISSION_STATUS_HELP[submission.status]}</p>
+
+      {submission.teacherNote && (
+        <div className="mt-3">
+          <Notice tone={submission.status === 'needs_changes' ? 'error' : 'info'}>
+            Comentario de tu docente: «{submission.teacherNote}»
+          </Notice>
+        </div>
+      )}
+
+      <div className="mt-4 border-t border-line pt-4 text-sm text-muted">
+        <p className="font-medium text-fg">Qué puedes hacer ahora</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li>
+            Si quieres cambiar algo, vuelve a tu trabajo y entrega otra vez. Tu docente verá la
+            versión nueva.
+          </li>
+          {hasLab && (
+            <li>
+              Puedes seguir trabajando en tu laboratorio o hacerte una copia personal: lo que
+              entregaste queda tal y como estaba y no cambia.
+            </li>
+          )}
+        </ul>
+      </div>
+    </section>
   );
 }
 
@@ -375,7 +465,7 @@ function TeacherView({
   const submissions = useApi<SubmissionsPage>(`/api/assignments/${assignment.id}/submissions`);
   const [confirming, setConfirming] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
-  const isWorkflow = assignment.workflow.length > 1;
+  const isWorkflow = assignment.type === 'workflow';
   const isShared = assignment.collaborationMode === 'shared';
 
   const [tab, setTab] = useState<'document' | 'submissions' | 'steps'>(
@@ -503,7 +593,7 @@ function TeacherView({
           <div className="mt-8 border-b border-line">
             <div role="tablist" aria-label="Secciones de la actividad" className="tab-row">
               {[
-                ...(isWorkflow ? [{ value: 'steps' as const, label: 'Avance por paso' }] : []),
+                ...(isWorkflow ? [{ value: 'steps' as const, label: 'Avance por parte' }] : []),
                 ...(isShared ? [{ value: 'document' as const, label: 'Vista conjunta' }] : []),
                 { value: 'submissions' as const, label: 'Entregas' },
               ].map((item) => (

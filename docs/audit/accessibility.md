@@ -6,7 +6,7 @@ fórmula de luminancia relativa de WCAG 2.x, no estimados a ojo.
 
 ## Resumen
 
-UINexus tiene una base de accesibilidad **muy por encima de la media** de un
+Nextudio tiene una base de accesibilidad **muy por encima de la media** de un
 proyecto académico: foco visible que nunca se elimina, `:focus-visible` global,
 enlace de salto, `prefers-reduced-motion`, `prefers-contrast: more`, campos de
 16 px en móvil para evitar el zoom de iOS, objetivos táctiles de 44 px por
@@ -21,7 +21,7 @@ Los problemas encontrados son tres, y dos de ellos son **sistémicos**.
 
 ## A-01 · P1 · Los bordes no llegan a 3:1 (WCAG 1.4.11)
 
-El lenguaje visual de UINexus sustituye deliberadamente las sombras por filetes
+El lenguaje visual de Nextudio sustituye deliberadamente las sombras por filetes
 de 1 px: «filetes de 1px en vez de sombras» (`globals.css`). Esa decisión hace
 que **el borde sea el único límite visible de cada componente**, y por tanto
 sujeto al criterio 1.4.11 Non-text Contrast (3:1) allí donde identifica un

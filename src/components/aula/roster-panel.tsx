@@ -310,7 +310,7 @@ function EnrollBox({ courseId, onEnrolled }: { courseId: string; onEnrolled: () 
         Inscribir a alguien
       </h2>
       <p className="mt-1 text-sm text-muted">
-        Busca por nombre o por su usuario de UINexus. Para el grupo entero es más rápido el
+        Busca por nombre o por su usuario de Nextudio. Para el grupo entero es más rápido el
         código de la materia.
       </p>
 

@@ -16,6 +16,10 @@ const config = [
   {
     ignores: [
       '.next/**',
+      // La compilación del sandbox local (`npm run prod:local`). Es la misma
+      // salida de `next build` en otro directorio: linterla son treinta mil
+      // avisos sobre código generado.
+      '.next-local/**',
       'node_modules/**',
       'functions/lib/**',
       'functions/node_modules/**',

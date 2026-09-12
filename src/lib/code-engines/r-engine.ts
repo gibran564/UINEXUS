@@ -6,6 +6,8 @@ import {
   type CodeExecutionMode,
 } from './engine-contract';
 import { NEXBOOK_LIMITS } from '../constants';
+import { rLabPrelude } from './r-lab';
+import type { LabDataset } from '../lab/dataset';
 import type { BrowserExecutionOptions, BrowserTableCell } from '../browser-code-runner-protocol';
 
 /**
@@ -31,7 +33,7 @@ interface CapturedValue {
  * webR NO es una biblioteca que se ejecute donde se la llama: la clase `WebR`
  * es un proxy, y R corre en un Worker propio que webR arranca por su cuenta.
  * Este motor se instancia dentro de `workers/r-runner.worker.ts`, así que hay
- * un Worker anidado. Es a propósito: cuando UINexus termina SU Worker por
+ * un Worker anidado. Es a propósito: cuando Nextudio termina SU Worker por
  * tiempo excedido, el algoritmo de terminación del estándar arrastra a los
  * Workers hijos, y con ellos al R que se quedó dando vueltas. Un `webR.close()`
  * cooperativo no sirve para eso: si R está en un bucle infinito no hay nadie
@@ -45,7 +47,7 @@ interface CapturedValue {
  * `PostMessage` explícito y no `Automatic`. El canal automático prefiere
  * `SharedArrayBuffer`, que exige que la página esté aislada por origen
  * (COOP/COEP), y si no lo está cae a un canal que necesita un Service Worker
- * registrado. Ninguna de las dos cosas es cierta en UINexus, y descubrirlo en
+ * registrado. Ninguna de las dos cosas es cierta en Nextudio, y descubrirlo en
  * tiempo de ejecución sería descubrirlo en la clase de alguien.
  *
  * ## Paquetes y red
@@ -192,7 +194,8 @@ export function createREngine(options: REngineOptions): CodeEngine {
     async run(
       source: string,
       runOptions: BrowserExecutionOptions,
-      mode: CodeExecutionMode = 'isolated'
+      mode: CodeExecutionMode = 'isolated',
+      lab?: LabDataset
     ): Promise<CodeEngineRun> {
       const webR = await boot();
       const output = new LimitedOutput(runOptions.maxOutputChars);
@@ -212,6 +215,15 @@ export function createREngine(options: REngineOptions): CodeEngine {
        * así que un entorno de mentira daría una falsa sensación de aislamiento.
        */
       if (mode === 'isolated') await clearGlobalEnv(webR);
+
+      /**
+       * El prólogo del laboratorio, DESPUÉS de limpiar y ANTES de la celda.
+       *
+       * `evalRVoid` y no dentro del `captureR` de abajo: definir la API no es
+       * salida del programa, y meterla en la captura llenaría la consola de
+       * quien ejecuta con el eco de doscientas líneas de `data.frame`.
+       */
+      if (lab) await webR.evalRVoid(rLabPrelude(lab));
 
       // El refugio libera de golpe todo lo que R reservó durante ESTA
       // ejecución. Sin él, veinte ejecuciones seguidas van dejando objetos

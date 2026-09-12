@@ -292,7 +292,7 @@ Detalles medidos:
   usa exactamente así).
 - **`>1280 px` no existe** en todo el proyecto: sólo hay dos `xl:` en el código
   (ambos en el navbar, para el conmutador de tema) y ningún `2xl:`. Nada en
-  UINexus reacciona por encima de 1280 px.
+  Nextudio reacciona por encima de 1280 px.
 
 ---
 
@@ -342,7 +342,7 @@ Ordenadas por relación efecto/esfuerzo.
 No todo esto está mal. Lo que sigue es bueno y un rediseño no debe romperlo:
 
 - **La regla de prioridad.** «Las tareas ganan espacio al contenido social,
-  siempre» es la decisión de producto correcta y distingue a UINexus de un feed
+  siempre» es la decisión de producto correcta y distingue a Nextudio de un feed
   social. Lo que cambia es *cómo* se paga: con posición fija, no con altura.
 - **El orden explicable.** `ATTENTION_ORDER` en `lib/home-feed.ts` deriva la
   prioridad de `dueAt`, del estado de la entrega y del avance del workflow. Sin

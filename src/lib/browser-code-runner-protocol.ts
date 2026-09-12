@@ -1,4 +1,5 @@
 import type { CodeRunStatus } from './code-runner-contract';
+import type { LabDataset, LabTable } from './lab/dataset';
 
 /**
  * El único lenguaje que hablan los Workers de ejecución.
@@ -42,6 +43,17 @@ export type CodeWorkerRequest =
       executionOptions: BrowserExecutionOptions;
       /** Ausente significa `isolated`: el comportamiento de siempre. */
       mode?: BrowserExecutionMode;
+      /**
+       * Los datos del NexBook que ESTA celda pidió (iteración 13).
+       *
+       * Ausente es el caso normal: una actividad de código, una celda que no
+       * menciona la API del laboratorio, cualquier ejecución aislada. Cuando
+       * viene, es un `LabDataset` —un tipo CERRADO de tablas, bytes de imagen y
+       * mensajes— construido en el hilo principal a partir de lo que el fuente
+       * referencia. No hay hueco para una URL firmada, una clave de S3, un uid ni
+       * un token: ver `lib/lab/dataset.ts`.
+       */
+      lab?: LabDataset;
     }
   /** Vacía el estado de la sesión sin tirar el runtime. */
   | { type: 'reset'; id: number };
@@ -112,7 +124,8 @@ export function sanitizeWorkerRun(
   language: BrowserRuntimeLanguage,
   source: string,
   executionOptions: BrowserExecutionOptions,
-  mode: BrowserExecutionMode = 'isolated'
+  mode: BrowserExecutionMode = 'isolated',
+  lab?: LabDataset
 ): Extract<CodeWorkerRequest, { type: 'run' }> {
   return {
     type: 'run',
@@ -121,6 +134,58 @@ export function sanitizeWorkerRun(
     source,
     executionOptions: { maxOutputChars: executionOptions.maxOutputChars },
     mode,
+    /**
+     * El dataset se reconstruye campo a campo, igual que el resto del mensaje.
+     *
+     * Podría pasarse tal cual —ya viene de `resolveLabDataset`, que lo
+     * construye—, y precisamente por eso se vuelve a montar aquí: esta función
+     * es la ÚNICA frontera que garantiza qué llega al Worker, y una garantía que
+     * depende de que la función de al lado siga comportándose bien no es una
+     * garantía. El día que `LabDataset` gane un campo, hay que añadirlo aquí, y
+     * añadirlo es el momento de preguntarse si debería cruzar.
+     */
+    ...(lab ? { lab: sanitizeLabDataset(lab) } : {}),
+  };
+}
+
+/** El dataset, campo a campo. Ver la nota de arriba. */
+function sanitizeLabDataset(lab: LabDataset): LabDataset {
+  const table = (item: LabTable): LabTable => ({
+    id: item.id,
+    name: item.name,
+    columns: [...item.columns],
+    rows: item.rows.map((row) => [...row]),
+  });
+
+  return {
+    catalog: {
+      sheets: lab.catalog.sheets.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        rows: entry.rows,
+        columns: entry.columns,
+      })),
+      images: lab.catalog.images.map((entry) => ({ id: entry.id, name: entry.name })),
+      outputs: lab.catalog.outputs.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        rows: entry.rows,
+        columns: entry.columns,
+      })),
+    },
+    sheets: lab.sheets.map(table),
+    outputs: lab.outputs.map(table),
+    images: lab.images.map((image) => ({
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      base64: image.base64,
+    })),
+    problems: lab.problems.map((problem) => ({
+      kind: problem.kind,
+      reference: problem.reference,
+      message: problem.message,
+    })),
   };
 }
 

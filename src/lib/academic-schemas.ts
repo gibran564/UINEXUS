@@ -170,7 +170,7 @@ export const programmingLanguageSchema = z
  * Código entregado en un paso.
  *
  * `code` NO lleva `trim`: la sangría es parte del programa. Tampoco se valida
- * como código ni se interpreta —UINexus no lo ejecuta en ningún momento—, sólo
+ * como código ni se interpreta —Nextudio no lo ejecuta en ningún momento—, sólo
  * se acota su tamaño, que es la única propiedad que puede hacer daño aquí.
  */
 export const codeDataSchema = z.object({
@@ -182,6 +182,16 @@ export const codeDataSchema = z.object({
     .default(''),
   fileName: z.string().trim().max(200).default(''),
 });
+
+/**
+ * Si se pide una conclusión al estudiante sobre su uso de la IA.
+ *
+ * Vive aquí arriba porque lo usan DOS sitios: el entregable de una parte
+ * (`stepDeliverableSchema`) y el bloque de un NexLab (`aiWorklogBlockSchema`).
+ * Es a propósito el mismo esquema: la política es la misma pregunta académica
+ * en los dos casos, y duplicarla obligaría a acordarse de cambiar las dos.
+ */
+export const nexBookConclusionModeSchema = z.enum(['none', 'optional', 'required']);
 
 export const deliverableTypeSchema = z.enum([
   'none',
@@ -252,12 +262,23 @@ export const stepDeliverableSchema = z
     // Sin trim: la sangría y los saltos son parte del programa inicial.
     starterCode: z.string().max(ACADEMIC_LIMITS.codeMax).default(''),
     executionEnabled: z.boolean().default(false),
+    /**
+     * Si el registro de uso de IA pide conclusión. Se reutiliza el esquema de
+     * `NexBookAIWorklogBlock`: es la misma política, no un segundo concepto.
+     */
+    conclusionMode: nexBookConclusionModeSchema.nullish(),
   })
   .transform((deliverable) => ({
     ...deliverable,
     codeMode: deliverable.type === 'code' ? (deliverable.codeMode ?? DEFAULT_CODE_MODE) : null,
     starterCode: deliverable.type === 'code' ? deliverable.starterCode : '',
     executionEnabled: deliverable.type === 'code' ? deliverable.executionEnabled : false,
+    /**
+     * Fuera de un registro de IA no describe nada. Dentro, ausente significa
+     * «opcional»: es lo que hacían las partes guardadas antes de que existiera.
+     */
+    conclusionMode:
+      deliverable.type === 'ai_worklog' ? (deliverable.conclusionMode ?? 'optional') : null,
   }));
 
 export const toolChoiceSchema = z.object({
@@ -654,7 +675,7 @@ export const exportFormatSchema = z.enum(['json', 'csv', 'md']);
  * Un paso de instalación.
  *
  * `command` NO se valida como comando ni se interpreta: es una cadena que se
- * pinta y se copia. UINexus no ejecuta nada de esto —ni `exec`, ni shell, ni
+ * pinta y se copia. Nextudio no ejecuta nada de esto —ni `exec`, ni shell, ni
  * terminal remota— y por eso no hace falta ninguna lista blanca de comandos:
  * sería seguridad de mentira sobre algo que nunca se ejecuta. Lo que sí se
  * acota es la longitud, y lo que sí se valida de verdad son los enlaces.
@@ -763,7 +784,7 @@ export const moderationInputSchema = z.object({
  * mismo tipo de texto y no tiene sentido que quepan cosas distintas.
  */
 export const workspaceInputSchema = z.object({
-  title: z.string().trim().min(1, 'Ponle un nombre a tu práctica.').max(120),
+  title: z.string().trim().min(1, 'Ponle un nombre a tu NexCode.').max(120),
   language: programmingLanguageSchema.default('python'),
   code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese código es demasiado largo.').default(''),
   /** Se relaciona con una materia sólo si se dice; una práctica suelta no la tiene. */
@@ -913,11 +934,50 @@ const spreadsheetBlockSchema = z.object({
   editableByStudent: z.boolean().optional(),
 });
 
+/**
+ * Una captura de la respuesta de la IA.
+ *
+ * Misma forma que `imageBlockSchema` sin el `type`: el mismo `assetId` con
+ * forma de UUID, la misma lista blanca de MIME —PNG, JPEG y WebP, sin SVG— y el
+ * mismo `alt` que se acepta vacío para las decorativas. No se relaja ni una de
+ * esas tres cosas por venir de NexIA: ampliarlas es otra decisión y se toma
+ * aparte (ver `docs/NEXBOOK.md`).
+ */
+const worklogImageSchema = z.object({
+  assetId: nexBookAssetIdSchema,
+  mimeType: nexBookImageMimeSchema,
+  alt: z.string().trim().max(400).default(''),
+  caption: z.string().trim().max(400).optional(),
+  width: z.number().int().min(1).max(20_000).optional(),
+  height: z.number().int().min(1).max(20_000).optional(),
+});
+
+/**
+ * El registro de uso de IA como bloque.
+ *
+ * `worklog` reutiliza `aiWorklogDataSchema` TAL CUAL. Es lo que hace que el
+ * entregable legacy y este bloque validen con la misma regla: si mañana cambia
+ * el tope de `prompt`, cambia en los dos a la vez porque es el mismo esquema, no
+ * dos copias que alguien tiene que acordarse de sincronizar.
+ *
+ * De ahí sale también, gratis, que `conversationUrl` sólo admita HTTP(S)
+ * (`optionalHttpUrlSchema`) y que `resourcesUsed` esté acotado.
+ */
+const aiWorklogBlockSchema = z.object({
+  id: nexBookBlockIdSchema,
+  type: z.literal('ai_worklog'),
+  worklog: aiWorklogDataSchema,
+  responseImages: z.array(worklogImageSchema).max(NEXBOOK_LIMITS.maxWorklogImages).optional(),
+  conclusionMode: nexBookConclusionModeSchema.optional(),
+  editableByStudent: z.boolean().optional(),
+});
+
 export const nexBookBlockSchema = z.discriminatedUnion('type', [
   markdownBlockSchema,
   codeBlockSchema,
   imageBlockSchema,
   spreadsheetBlockSchema,
+  aiWorklogBlockSchema,
 ]);
 
 /**

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Notice } from '@/components/aula/aula-ui';
 import {
   createNexBook,
+  nexBookAssetBytes,
   nexBookAssetUrl,
   patchNexBook,
   uploadNexBookAsset,
@@ -16,11 +17,11 @@ import { NexBookStudio } from './nexbook-studio';
 /**
  * El NexBook de un paso de actividad, dentro del runner.
  *
- * ## Es el mismo Studio
+ * ## Es el mismo NexLab
  *
  * No hay una versión «integrada» del editor. `NexBookStudio` es el mismo
  * componente que en `/practicas/nexbook/:id`; lo único que cambia es el ancho que
- * le da la página y que aquí existe «Abrir en Studio» para cuando el documento
+ * le da la página y que aquí existe «Abrir en NexLab» para cuando el documento
  * se queda estrecho al lado de las instrucciones.
  *
  * ## La entrega no se hace aquí
@@ -39,11 +40,31 @@ export function NexBookStep({
   assignmentId,
   stepId,
   readOnly = false,
+  variant = 'runner',
+  partTitle,
   onSnapshot,
 }: {
   assignmentId: string;
   stepId: string;
   readOnly?: boolean;
+  /**
+   * El nombre humano de la Parte que se está haciendo.
+   *
+   * Sirve para que el laboratorio diga a qué pertenece. Abrir un editor a
+   * pantalla completa sin decir de qué actividad es deja a alguien trabajando
+   * «en un documento» en vez de «en la parte 2 de su tarea», que es lo que hace
+   * que se pierda el hilo al volver.
+   */
+  partTitle?: string;
+  /**
+   * Desde dónde se abre.
+   *
+   * `template` es el docente preparando el laboratorio desde el constructor de
+   * la actividad. No cambia el documento ni el permiso —eso lo decide el
+   * servidor con `role`—, sólo el marco: ahí no tiene sentido ofrecer «copiar a
+   * mis espacios», que es una acción de quien ESTÁ haciendo la actividad.
+   */
+  variant?: 'runner' | 'template';
   /**
    * Se llama en cada guardado con lo que habría que entregar.
    *
@@ -157,24 +178,40 @@ export function NexBookStep({
     []
   );
 
-  if (state === 'loading') return <p className="py-8 text-center text-muted">Preparando tu NexBook…</p>;
+  if (state === 'loading') return <p className="py-8 text-center text-muted">Preparando tu NexLab…</p>;
   if (state === 'error' || !data) {
-    return <Notice tone="error">{error ?? 'No pudimos abrir el NexBook de este paso.'}</Notice>;
+    return <Notice tone="error">{error ?? 'No pudimos abrir el NexLab de este paso.'}</Notice>;
   }
   if (!doc) return <p className="py-8 text-center text-muted">Cargando…</p>;
 
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="meta">
-          {data.role === 'template' ? 'Plantilla de la actividad' : 'Tu NexBook'} · {title}
-        </p>
-        <Link
-          href={`/practicas/nexbook/${nexbookId}`}
-          className="text-sm text-accent underline underline-offset-2"
-        >
-          Abrir en Studio ↗
-        </Link>
+        {/*
+          Desde el constructor, la cabecera del panel ya dice que se está
+          editando la plantilla y de qué parte. Repetirlo aquí sería decirlo dos
+          veces en dos palabras distintas, que es peor que no decirlo.
+        */}
+        {/*
+          De quién es este documento y cuál es.
+          El título del documento se añade sólo si dice algo que la cabecera de
+          la Parte —justo encima— no diga ya: un laboratorio que se llama igual
+          que su parte repetiría el mismo nombre tres veces seguidas.
+        */}
+        {variant === 'runner' && (
+          <p className="meta">
+            {data.role === 'template' ? 'Plantilla de la actividad' : 'Tu NexLab'}
+            {title && title !== partTitle ? ` · ${title}` : ''}
+          </p>
+        )}
+        {variant === 'runner' && (
+          <Link
+            href={`/practicas/nexbook/${nexbookId}`}
+            className="text-sm text-accent underline underline-offset-2"
+          >
+            Abrir en NexLab ↗
+          </Link>
+        )}
       </div>
 
       {saveState === 'conflict' && (
@@ -189,12 +226,16 @@ export function NexBookStep({
         document={doc}
         onChange={edit}
         editable={!readOnly}
+        // El rol lo decide el SERVIDOR (`role: 'template' | 'instance'`), no una
+        // suposición del navegador sobre quién está mirando.
+        templateMode={data.role === 'template'}
         uploadAsset={(file, contentType) => uploadNexBookAsset(nexbookId, file, contentType)}
         assetUrl={(assetId, mimeType) => nexBookAssetUrl(nexbookId, assetId, mimeType)}
+        assetBytes={(assetId, mimeType) => nexBookAssetBytes(nexbookId, assetId, mimeType)}
         toolbar={
           <div className="flex items-center gap-2">
             <SaveState state={saveState} error={saveError} />
-            {!readOnly && <CopyForPortfolio title={title} document={doc} />}
+            {!readOnly && variant === 'runner' && <CopyForPortfolio title={title} document={doc} />}
           </div>
         }
       />
@@ -264,9 +305,9 @@ function CopyForPortfolio({ title, document: doc }: { title: string; document: N
         onClick={() => void copy()}
         disabled={busy}
         className="btn btn-ghost btn-sm"
-        title="Una copia personal que puedes publicar sin tocar tu entrega"
+        title="Una copia personal en tus espacios, que puedes publicar sin tocar tu entrega"
       >
-        {busy ? 'Copiando…' : 'Copiar a mis prácticas'}
+        {busy ? 'Copiando…' : 'Copiar a mis espacios'}
       </button>
       {error && (
         <span className="text-sm text-danger" role="alert">

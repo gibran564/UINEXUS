@@ -8,6 +8,10 @@
     "runtimes:python": "node scripts/vendor-python-packages.mjs && node scripts/copy-code-runtimes.mjs",
     "predev": "npm run runtimes",
     "dev": "next dev",
+    "dev:local": "node scripts/dev-local.mjs",
+    "local:reset": "node scripts/local-reset.mjs",
+    "local:prepare": "node scripts/dev-local.mjs --no-serve",
+    "prod:local": "node scripts/prod-local.mjs",
     "prebuild": "npm run runtimes",
     "build": "next build",
     "start": "next start",
@@ -17,7 +21,10 @@
     "test:integration": "node scripts/run-integration-tests.mjs",
     "aws:deploy:infra": "aws cloudformation deploy --template-file infra/uinexus.cfn.yaml --stack-name uinexus --capabilities CAPABILITY_IAM",
     "aws:outputs": "aws cloudformation describe-stacks --stack-name uinexus --query \"Stacks[0].Outputs\" --output table",
-    "aws:deploy:origin": "node scripts/deploy-origin.mjs"
+    "aws:deploy:origin": "node scripts/deploy-origin.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:prod": "node scripts/e2e-prod.mjs",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@aws-sdk/client-cloudfront-keyvaluestore": "^3.1126.0",
@@ -43,7 +50,9 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@firebase/rules-unit-testing": "^4.0.1",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.1.11",
     "@types/node": "^22.15.0",
     "@types/qrcode": "^1.5.5",

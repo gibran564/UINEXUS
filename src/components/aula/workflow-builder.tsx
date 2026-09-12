@@ -640,7 +640,7 @@ function ToolPicker({
   /**
    * Añadir escribiendo. NO exige que la herramienta esté en el catálogo.
    *
-   * §13 y §50: UINexus no debe obligar a dar de alta una plataforma para poder
+   * §13 y §50: Nextudio no debe obligar a dar de alta una plataforma para poder
    * usarla en una tarea. Se guarda sólo el nombre, que es la información humana
    * durable; si mañana alguien registra esa herramienta, el paso sigue igual de
    * legible.

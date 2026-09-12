@@ -6,7 +6,7 @@
  * Storage, la validación en servidor y App Check. Lo que sí es secreto son las
  * credenciales del Admin SDK, que nunca se importan desde el navegador.
  *
- * Si falta cualquier valor, UINexus arranca en MODO DEMO: la interfaz completa
+ * Si falta cualquier valor, Nextudio arranca en MODO DEMO: la interfaz completa
  * funciona con datos de ejemplo en memoria y las acciones que escriben avisan
  * de que no hay backend. Esto permite revisar UX y accesibilidad sin haber
  * conectado todavía el proyecto de Firebase.

@@ -4,7 +4,6 @@ import {
   canSubmitWorkflow,
   canWorkOnStep,
   hasContent,
-  isSingleStep,
   missingRequiredSteps,
   normalizeStep,
   normalizeStepEvidence,
@@ -36,7 +35,6 @@ describe('compatibilidad: una tarea antigua ES un workflow de un paso', () => {
     const workflow = normalizeWorkflow(assignment(), assignment());
     expect(workflow).toHaveLength(1);
     expect(workflow[0]?.id).toBe(LEGACY_STEP_ID);
-    expect(isSingleStep({ workflow })).toBe(true);
   });
 
   it('el paso sintetizado conserva el título y las instrucciones de la tarea', () => {
@@ -317,7 +315,6 @@ describe('workflow de varios pasos', () => {
 
     const workflow = normalizeWorkflow(source, source);
     expect(workflow).toHaveLength(4);
-    expect(isSingleStep({ workflow })).toBe(false);
     expect(workflow.map((item) => item.title)).toEqual([
       'Buscar fuentes',
       'Cargar en NotebookLM',

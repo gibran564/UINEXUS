@@ -56,7 +56,7 @@ export default function PublishPage() {
             común y el más rápido.
           </p>
           <p className="mt-3 text-sm text-subtle">
-            UINexus aloja sitios estáticos: HTML, CSS, JavaScript de navegador e imágenes. No
+            Nextudio aloja sitios estáticos: HTML, CSS, JavaScript de navegador e imágenes. No
             ejecuta servidores ni bases de datos propias.{' '}
             <Link href="/about#seguridad" className="underline underline-offset-2">
               Por qué

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { PracticeList } from '@/components/workspace/practice-list';
 
 export const metadata: Metadata = {
-  title: 'Mis prácticas',
+  title: 'Mis espacios',
   // Privadas por definición: no hay nada que indexar y sí algo que proteger.
   robots: { index: false, follow: false },
 };

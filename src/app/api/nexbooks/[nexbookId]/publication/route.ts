@@ -83,7 +83,7 @@ export async function PUT(request: Request, { params }: Params): Promise<Respons
       nexbookId,
       title: record.title,
       // El nombre para mostrar, NUNCA el uid ni el correo. Es la misma regla que
-      // en el resto de UINexus: el UID no cruza la frontera hacia el navegador.
+      // en el resto de Nextudio: el UID no cruza la frontera hacia el navegador.
       authorName: actor.profile.displayName,
       document: publishableDocument(record.document),
       visibility: input.visibility,

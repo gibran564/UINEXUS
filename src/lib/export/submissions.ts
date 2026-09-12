@@ -1,13 +1,19 @@
 import type {
   AIWorklogData,
   Assignment,
+  CodeData,
   ExternalLinkData,
   FreeformData,
+  MediaData,
+  NexBookSubmissionData,
   ResearchData,
   ResearchQuestion,
+  StepDeliverable,
   Submission,
+  SubmissionData,
   TextFormat,
   WebProjectData,
+  WorkflowStep,
 } from '../types';
 import { ASSIGNMENT_TYPE_LABEL, SUBMISSION_STATUS_LABEL } from '../constants';
 import { normalizeAIResult } from '../ai-worklog';
@@ -115,12 +121,143 @@ function flattenFreeform(data: FreeformData): FlatField[] {
   ];
 }
 
-/** Convierte cualquier entrega en una lista plana de campos legibles. */
+function flattenMedia(data: MediaData): FlatField[] {
+  return [
+    { group: null, label: 'Archivo', value: text(data.fileName) },
+    { group: null, label: 'Enlace', value: text(data.url) },
+    { group: null, label: 'Nota', value: text(data.note) },
+  ];
+}
+
+function flattenCode(data: CodeData): FlatField[] {
+  return [
+    { group: null, label: 'Lenguaje', value: text(data.language) },
+    { group: null, label: 'Código', value: text(data.code) },
+    { group: null, label: 'Archivo adjunto', value: text(data.fileName) },
+    { group: null, label: 'Explicación', value: text(data.explanation) },
+  ];
+}
+
+/**
+ * Un laboratorio entregado, resumido.
+ *
+ * No se vuelca el documento: un NexBook lleva hojas, salidas e imágenes, y
+ * pegarlo entero en un CSV o en un prompt no lo hace legible, lo hace ruido. Se
+ * dice qué hay —cuántos bloques, de qué tipo— y el texto que el estudiante
+ * escribió, que es lo que se lee. El documento completo se abre en su visor.
+ */
+function flattenNexBook(data: NexBookSubmissionData): FlatField[] {
+  const blocks = data.snapshot?.blocks ?? [];
+  const kinds = new Map<string, number>();
+  for (const block of blocks) kinds.set(block.type, (kinds.get(block.type) ?? 0) + 1);
+
+  const written = blocks
+    .flatMap((block) => (block.type === 'markdown' ? [block.source] : []))
+    .join('\n\n');
+
+  return [
+    { group: null, label: 'Laboratorio', value: text(data.title) },
+    {
+      group: null,
+      label: 'Contenido',
+      value: blocks.length === 0 ? '' : [...kinds].map(([kind, count]) => `${count} ${kind}`).join(', '),
+    },
+    { group: null, label: 'Texto del laboratorio', value: text(written) },
+  ];
+}
+
+/**
+ * Qué aplanador le corresponde a un ENTREGABLE.
+ *
+ * Es el mismo reparto que hace `evidence-reader.tsx` para pintarlo, y por la
+ * misma razón: lo que decide la forma es el entregable de la parte, no el tipo
+ * de la actividad. Tenerlo aquí es lo que permite que exportar una actividad
+ * por partes diga algo.
+ */
+function flattenDeliverable(
+  deliverable: StepDeliverable,
+  data: SubmissionData,
+  fallbackQuestions: readonly ResearchQuestion[]
+): FlatField[] {
+  switch (deliverable.type) {
+    case 'structured':
+      return flattenResearch(
+        data as ResearchData,
+        deliverable.questions.length > 0 ? deliverable.questions : fallbackQuestions
+      );
+    case 'ai_worklog':
+      return flattenWorklog(data as AIWorklogData);
+    case 'url':
+      return flattenLink(data as ExternalLinkData);
+    case 'project':
+      return flattenProject(data as WebProjectData);
+    case 'file':
+    case 'image':
+    case 'video':
+      return flattenMedia(data as MediaData);
+    case 'code':
+      return flattenCode(data as CodeData);
+    case 'nexbook':
+      return flattenNexBook(data as NexBookSubmissionData);
+    case 'none':
+    case 'text':
+    case 'resource_reference':
+    default:
+      return flattenFreeform(data as FreeformData);
+  }
+}
+
+/**
+ * Convierte cualquier entrega en una lista plana de campos legibles.
+ *
+ * ## Por qué hace falta `workflow`
+ *
+ * Una actividad por partes NO tiene una forma: tiene una por parte, y sólo la
+ * definición de la actividad dice cuál es cada una. Sin ese dato, esta función
+ * caía en el aplanador de entrega libre y devolvía «Respuesta: (sin respuesta)»
+ * sobre un laboratorio entero —en la exportación de Markdown para IA, en el CSV
+ * y en el visor docente—. Es la misma ceguera que la regresión de la Fase 4, en
+ * la capa de lectura.
+ *
+ * Se pasa por parámetro y no se deduce del tipo porque este módulo es puro y no
+ * puede ir a buscar la actividad. Quien exporta ya la tiene.
+ */
 export function flattenSubmission(
   submission: Submission,
-  questions: readonly ResearchQuestion[] = []
+  questions: readonly ResearchQuestion[] = [],
+  workflow: readonly WorkflowStep[] = []
 ): FlatField[] {
   const data = submission.data as never;
+
+  if (submission.type === 'workflow') {
+    return workflow.flatMap((step) => {
+      const evidence = submission.stepEvidence[step.id];
+      const deliverable = step.deliverables[0];
+      const title = step.title || 'Parte';
+
+      if (!evidence || !deliverable) {
+        return [{ group: title, label: 'Entrega', value: '' }];
+      }
+
+      const fields = flattenDeliverable(deliverable, evidence.data, questions).map((field) => ({
+        ...field,
+        // El agrupador pasa a ser la PARTE. En una investigación dentro de una
+        // parte ya había grupo propio; se encadenan para no perder ninguno.
+        group: field.group ? `${title} — ${field.group}` : title,
+      }));
+
+      const extras: FlatField[] = [];
+      if (evidence.toolName) {
+        extras.push({ group: title, label: 'Herramienta declarada', value: evidence.toolName });
+      }
+      if (evidence.note) {
+        extras.push({ group: title, label: 'Nota del estudiante', value: evidence.note });
+      }
+
+      return [...fields, ...extras];
+    });
+  }
+
   switch (submission.type) {
     case 'research':
       return flattenResearch(data as ResearchData, questions);
@@ -229,7 +366,7 @@ export function exportCsv(bundle: ExportBundle): string {
 
   const [first] = bundle.submissions;
   const columns = first
-    ? flattenSubmission(first, questions).map((field) =>
+    ? flattenSubmission(first, questions, bundle.assignment.workflow).map((field) =>
         field.group ? `${field.group} — ${field.label}` : field.label
       )
     : questions.map((question) => question.prompt);
@@ -237,7 +374,7 @@ export function exportCsv(bundle: ExportBundle): string {
   const header = ['Estudiante', 'Handle', 'Estado', 'Entregado', ...columns];
 
   const rows = bundle.submissions.map((submission) => {
-    const fields = flattenSubmission(submission, questions);
+    const fields = flattenSubmission(submission, questions, bundle.assignment.workflow);
     return [
       submission.student.displayName,
       submission.student.handle,
@@ -298,7 +435,7 @@ export function exportMarkdown(bundle: ExportBundle): string {
     `# Actividad: ${assignment.title}`,
     '',
     `- Materia: ${bundle.courseName}`,
-    `- Tipo de entrega: ${ASSIGNMENT_TYPE_LABEL[assignment.type]}`,
+    `- Tipo de entrega: ${ASSIGNMENT_TYPE_LABEL[assignment.type] ?? 'Actividad por partes'}`,
     ...(assignment.dueDate ? [`- Fecha límite: ${assignment.dueDate}`] : []),
     `- Entregas incluidas: ${bundle.submissions.length}`,
   ];
@@ -307,7 +444,7 @@ export function exportMarkdown(bundle: ExportBundle): string {
   if (assignment.instructions) head.push('', '## Instrucciones', assignment.instructions);
 
   const body = bundle.submissions.map((submission) => {
-    const fields = flattenSubmission(submission, questions);
+    const fields = flattenSubmission(submission, questions, bundle.assignment.workflow);
     return [
       '',
       '---',

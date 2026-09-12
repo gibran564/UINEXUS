@@ -1,4 +1,5 @@
 import type { BrowserExecutionOptions, BrowserRuntimeLanguage } from '../browser-code-runner-protocol';
+import type { LabDataset } from '../lab/dataset';
 import { OutputRecorder, type RecordedOutput } from './output-recorder';
 
 /**
@@ -54,7 +55,15 @@ export interface CodeEngine {
   run(
     source: string,
     options: BrowserExecutionOptions,
-    mode?: CodeExecutionMode
+    mode?: CodeExecutionMode,
+    /**
+     * Los datos del NexBook que esta celda pidió (iteración 13).
+     *
+     * Opcional porque la mayoría de las ejecuciones no leen nada del documento:
+     * un paso de actividad, una celda que sólo calcula. Cuando viene, el motor
+     * lo instala como la API `nex` ANTES de ejecutar el fuente.
+     */
+    lab?: LabDataset
   ): Promise<CodeEngineRun>;
   /**
    * Vacía el estado de la sesión SIN tirar el runtime.

@@ -1,5 +1,7 @@
 node_modules/
 .next/
+# La compilación del sandbox local (`npm run prod:local`).
+.next-local/
 out/
 build/
 .env
@@ -19,3 +21,12 @@ firebase-export-*/
 
 # Runtimes de Python y R copiados desde node_modules (scripts/copy-code-runtimes.mjs).
 public/runtime/
+
+# Sandbox local (scripts/dev-local.mjs). Datos de DynamoDB Local, borrables.
+.local-sandbox/
+
+# Playwright (tests/e2e). Informes y trazas de una ejecución local.
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/

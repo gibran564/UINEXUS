@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const user = await getUserByHandle(handle);
   if (!user) return { title: 'Perfil no encontrado' };
 
-  const description = user.bio ?? `Proyectos publicados por ${user.displayName} en UINexus.`;
+  const description = user.bio ?? `Proyectos publicados por ${user.displayName} en Nextudio.`;
 
   return {
     title: user.displayName,
@@ -29,7 +29,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     alternates: { canonical: profileUrl(handle) },
     openGraph: {
       type: 'profile',
-      title: `${user.displayName} · UINexus`,
+      title: `${user.displayName} · Nextudio`,
       description,
       url: profileUrl(handle),
     },

@@ -8,7 +8,7 @@ export const revalidate = 600;
 
 export const metadata: Metadata = {
   title: 'Cursos',
-  description: 'Galerías oficiales de cada materia que publica en UINexus.',
+  description: 'Galerías oficiales de cada materia que publica en Nextudio.',
 };
 
 export default async function CoursesPage() {

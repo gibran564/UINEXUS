@@ -1,8 +1,17 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { ASSIGNMENT_TYPES, DELIVERABLE_LABEL, stepActionLabel } from '@/lib/constants';
+import { useEffect, useRef, useState } from 'react';
+import {
+  activityProblems,
+  blockingProblems,
+  deriveActivity,
+  humanizeSaveError,
+  partActionLabel,
+  partDeliverable,
+  partsFromAssignment,
+  type ActivityProblem,
+} from '@/lib/activity-builder';
 import {
   createAssignment,
   updateAssignment,
@@ -12,7 +21,6 @@ import {
 } from '@/lib/aula-client';
 import type {
   AssignmentMaterial,
-  AssignmentType,
   CollaborationMode,
   ContributionVisibility,
   GroupAssignment,
@@ -23,27 +31,44 @@ import type {
 } from '@/lib/types';
 import { composeDueAt, formatDueLabel, splitDueAt } from '@/lib/due-date';
 import { AulaScreen, Crumbs, Field, Notice } from './aula-ui';
+import { ActivityParts } from './activity-parts';
 import { MaterialsList } from './assignment-materials';
 import { CollaborationPlanner } from './collaboration-planner';
-import { WorkflowBuilder } from './workflow-builder';
-import { WorkflowTemplatePicker } from './workflow-template-picker';
+import { NexLabTemplatePanel } from './nexlab-template-panel';
 import { ResourcePicker } from './resource-picker';
+import { WorkflowTemplatePicker } from './workflow-template-picker';
 
 /**
- * Crear y editar una tarea (§5).
+ * Crear y editar una actividad.
  *
- * Decisiones que la pantalla toma por quien la usa, para que no tenga que
- * pensarlas:
+ * ## Qué cambió en la iteración 5
  *
- *  · «Asignar a todo el grupo» viene marcado. Es el caso normal y, si se
- *    olvida, el error cae del lado seguro: la tarea la ve todo el mundo, en vez
- *    de no verla nadie y nadie enterarse hasta el día de la entrega.
- *  · Los campos de investigación se generan por CONCEPTO, no uno a uno. Escribir
- *    «Card sorting» produce sus tres campos —definición, fuente y comentario—
- *    porque ése es el formato de la tarea que esto viene a sustituir. Después se
- *    pueden editar o borrar sueltos, que es lo que lo mantiene general.
- *  · Se guarda como borrador o se publica en el mismo formulario. Una tarea a
- *    medio escribir no debería obligar a decidir todavía si el grupo la ve.
+ * La pantalla anterior empezaba preguntando «¿un paso o varios?» y seguía con
+ * dos listas de tipos internos. Quien creaba una actividad tenía que traducir su
+ * intención al modelo antes de poder escribir nada.
+ *
+ * Ahora el orden es el de quien enseña:
+ *
+ * ```
+ * 1. Lo básico            título, objetivo, instrucciones, fecha, a quién
+ * 2. Qué hará el estudiante   las Partes
+ * 3. Materiales y recursos
+ * 4. Vista previa
+ * 5. Opciones avanzadas
+ * ```
+ *
+ * Y la pregunta de la sección 2 es una sola: **¿qué debe hacer el estudiante?**
+ * La forma de la actividad —una parte o varias, y en qué representación se
+ * guarda— se DERIVA en `lib/activity-builder`. No se pregunta porque no es una
+ * decisión pedagógica.
+ *
+ * ## El motor no cambió
+ *
+ * Esta pantalla escribe exactamente el mismo `Assignment` que antes:
+ * `Workflow`, `WorkflowStep`, `StepDeliverable`, `StepPrompt`, `StepToolChoice`,
+ * `dependsOnStepIds` y `assignedTo`. El runner del alumnado no se tocó, y una
+ * actividad creada con la pantalla anterior abre, se edita y se guarda en su
+ * misma forma.
  */
 
 const uid = (): string => Math.random().toString(36).slice(2, 10);
@@ -74,41 +99,52 @@ interface DraftState {
   title: string;
   description: string;
   instructions: string;
-  type: AssignmentType;
   /** Fecha límite en local, «YYYY-MM-DD». Vacío = sin fecha límite. */
   dueDate: string;
   /** Hora límite en local, «HH:MM». Vacío = final del día. */
   dueTime: string;
   resourceLinks: ResourceLink[];
-  researchQuestions: ResearchQuestion[];
   assignToAll: boolean;
   assignedHandles: string[];
   collaborationMode: CollaborationMode;
   contributionVisibility: ContributionVisibility;
   groupAssignments: GroupAssignment[];
   resources: ResourceRef[];
-  /** Modo del constructor. `multi` habilita los pasos. */
-  shape: 'single' | 'multi';
-  workflow: WorkflowStep[];
+  /** Las Partes. Vacío = todavía no se ha dicho qué hará el estudiante. */
+  parts: WorkflowStep[];
+  /**
+   * La actividad YA se guardaba como proceso antes de esta edición.
+   *
+   * Decide que no se degrade a la representación antigua: la evidencia de lo
+   * entregado se indexa por el id de la parte, y volver atrás la dejaría
+   * huérfana. Ver `deriveActivity`.
+   */
+  wasWorkflow: boolean;
+  /**
+   * Los campos de investigación de una actividad antigua.
+   *
+   * No se editan aquí —viven en la Parte que los pide— pero se arrastran para
+   * que convertir esa actividad en un proceso no los borre.
+   */
+  researchQuestions: ResearchQuestion[];
 }
 
 const EMPTY: DraftState = {
   title: '',
   description: '',
   instructions: '',
-  type: 'research',
   dueDate: '',
   dueTime: '',
   resourceLinks: [],
-  researchQuestions: [],
   assignToAll: true,
   assignedHandles: [],
   collaborationMode: 'individual',
   contributionVisibility: 'group',
   groupAssignments: [],
   resources: [],
-  shape: 'single',
-  workflow: [],
+  parts: [],
+  wasWorkflow: false,
+  researchQuestions: [],
 };
 
 /** La fecha límite del borrador, en la forma que leen los ayudantes de fecha. */
@@ -135,14 +171,11 @@ export function AssignmentEditor({
   const router = useRouter();
 
   /**
-   * Estudiantes preseleccionados desde «Materia > Estudiantes» (§17).
+   * Estudiantes preseleccionados desde «Materia > Estudiantes».
    *
-   * Llegan por la URL y sólo PRECARGAN el formulario: el resto del flujo es el
-   * de siempre y acaba creando el mismo `Assignment`. No hay un segundo camino
-   * de creación de tareas, que es justo lo que el encargo pide evitar.
-   *
-   * Se valida contra la lista real de la materia al guardar (`resolveMembers`),
-   * así que escribir handles a mano en la URL no concede nada.
+   * Llegan por la URL y sólo PRECARGAN el formulario: se validan contra la lista
+   * real de la materia al guardar, así que escribir handles a mano no concede
+   * nada.
    */
   const params = useSearchParams();
   const preselected = (params.get('students') ?? '')
@@ -158,6 +191,20 @@ export function AssignmentEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [labPart, setLabPart] = useState<WorkflowStep | null>(null);
+
+  /**
+   * El id de la actividad que se está editando AHORA.
+   *
+   * Arranca en el de la ruta y se rellena en cuanto se guarda por primera vez.
+   * Existe porque hay dos cosas —adjuntar archivos y preparar un NexLab— que
+   * necesitan que la actividad EXISTA, y hacerlas no puede costar perder lo que
+   * se lleva escrito: si se navegara a la ruta de edición, este componente se
+   * desmontaría.
+   */
+  const [liveId, setLiveId] = useState<string | undefined>(assignmentId);
+  const liveIdRef = useRef<string | undefined>(assignmentId);
 
   const roster = useApi<{ students: RosterRow[] }>(`/api/courses/${courseId}/students`);
   const existing = useApi<AssignmentDetail>(
@@ -165,14 +212,11 @@ export function AssignmentEditor({
   );
 
   /**
-   * Plantilla de proceso (§28).
+   * Plantilla de proceso.
    *
-   * Se pide al servidor, que devuelve los pasos ya CLONADOS con ids nuevos. No
-   * se clonan aquí: si dependiera del navegador, la garantía de que dos tareas
-   * no comparten claves de evidencia dependería de que el cliente la aplicara.
-   *
-   * Sólo al crear: editar una tarea que ya existe no debe pisar sus pasos con
-   * los de una plantilla, o se perderían las evidencias ya entregadas.
+   * Se pide al servidor, que devuelve las partes ya CLONADAS con ids nuevos. No
+   * se clonan aquí: si dependiera del navegador, la garantía de que dos
+   * actividades no comparten claves de evidencia dependería del cliente.
    */
   const templateId = params.get('template');
   const template = useApi<{
@@ -181,8 +225,6 @@ export function AssignmentEditor({
     workflow: WorkflowStep[];
   }>(!assignmentId && templateId ? `/api/resources/${templateId}/instantiate` : null);
 
-  // La plantilla se carga UNA vez, y sólo si la persona no ha escrito nada:
-  // sobrescribir lo que lleva tecleado sería peor que no cargarla.
   const [templateApplied, setTemplateApplied] = useState(false);
 
   useEffect(() => {
@@ -191,8 +233,7 @@ export function AssignmentEditor({
       ...current,
       title: current.title || template.data!.title,
       description: current.description || template.data!.description,
-      shape: 'multi',
-      workflow: template.data!.workflow,
+      parts: template.data!.workflow,
     }));
     setTemplateApplied(true);
   }, [template.data, templateApplied]);
@@ -204,86 +245,110 @@ export function AssignmentEditor({
       title: loaded.title,
       description: loaded.description,
       instructions: loaded.instructions,
-      type: loaded.type,
-      // La hora se recupera del instante, en la zona de quien edita. Una tarea
-      // antigua sin instante vuelve con la fecha y sin hora, que es lo que es.
       dueDate: splitDueAt(loaded).date,
       dueTime: splitDueAt(loaded).time,
       resourceLinks: loaded.resourceLinks,
-      researchQuestions: loaded.researchQuestions,
       assignToAll: loaded.assignedToAll,
       assignedHandles: loaded.assignedTo ?? [],
       collaborationMode: loaded.collaborationMode,
       contributionVisibility: loaded.contributionVisibility,
       groupAssignments: loaded.groupAssignments,
       resources: loaded.resources,
-      // Una tarea guardada sin pasos propios se edita como lo que es: sencilla.
-      // El paso que el servidor sintetiza al leerla no se pinta en el
-      // constructor, porque no es algo que la docente escribiera.
-      shape: loaded.type === 'workflow' ? 'multi' : 'single',
-      workflow: loaded.type === 'workflow' ? loaded.workflow : [],
+      // Una actividad antigua se REPRESENTA como una parte, no se convierte.
+      // La parte llega sin título ni instrucciones propias —los suyos son los de
+      // la actividad—, y por eso volver a guardarla la deja como estaba.
+      parts: partsFromAssignment(loaded, uid),
+      wasWorkflow: loaded.type === 'workflow',
+      researchQuestions: loaded.researchQuestions,
     });
   }, [existing.data]);
 
   const patch = (changes: Partial<DraftState>) =>
     setDraft((current) => ({ ...current, ...changes }));
 
-  const multi = draft.shape === 'multi';
+  const students = roster.data?.students ?? [];
+  const derived = deriveActivity({
+    parts: draft.parts,
+    wasWorkflow: draft.wasWorkflow,
+    researchQuestions: draft.researchQuestions,
+    activityTitle: draft.title,
+  });
+  const problems = activityProblems({ title: draft.title, parts: draft.parts });
+  const blocking = blockingProblems(problems);
+
+  /** Los campos que hay repartibles, vengan de la Parte o de la actividad. */
+  const repartibleQuestions =
+    draft.parts.flatMap((part) => partDeliverable(part).questions ?? []).length > 0
+      ? draft.parts.flatMap((part) => partDeliverable(part).questions ?? [])
+      : draft.researchQuestions;
 
   /**
-   * Guarda y devuelve el id de la tarea.
+   * Guarda y devuelve el id.
    *
-   * Separado de `save` porque hay dos cosas que hacer después de guardar y sólo
-   * una es «volver a la materia»: adjuntar archivos necesita que la tarea EXISTA
-   * —los materiales cuelgan de ella— y por eso ese camino se queda dentro del
-   * editor en vez de salir.
+   * Separado de `save` porque hay tres cosas que hacer después de guardar y sólo
+   * una es «volver a la materia»: adjuntar archivos y preparar un NexLab
+   * necesitan que la actividad exista, y se quedan aquí dentro.
    */
   async function persist(status: 'draft' | 'published'): Promise<string> {
     const body = {
       title: draft.title,
       description: draft.description,
       instructions: draft.instructions,
-      // Una actividad de varios pasos se guarda como `workflow`; una de un
-      // paso conserva su tipo de siempre para no cambiar cómo se lee.
-      type: multi ? 'workflow' : draft.type,
+      type: derived.type,
       dueDate: draft.dueDate || null,
       /**
        * El instante se compone AQUÍ, en el navegador, porque es aquí donde se
        * conoce la zona horaria de quien pone la fecha. El servidor guarda el
-       * instante que recibe y no intenta adivinar ninguna zona: eso es lo que
-       * evita el fallo de «pongo 23:59 y cierra seis horas antes».
+       * instante que recibe y no adivina ninguna zona.
        */
       dueAt: composeDueAt(draft.dueDate, draft.dueTime),
       resourceLinks: draft.resourceLinks.filter((link) => link.url.trim()),
-      researchQuestions: draft.researchQuestions.filter((question) => question.prompt.trim()),
+      researchQuestions: derived.researchQuestions,
       assignedHandles: draft.assignToAll ? null : draft.assignedHandles,
       status,
       collaborationMode: draft.collaborationMode,
       contributionVisibility: draft.contributionVisibility,
-      // El reparto sólo tiene sentido en una investigación colaborativa. En
-      // cualquier otro caso se manda vacío en vez de arrastrar el de una
-      // edición anterior, que reaparecería si se volviera a poner en `shared`.
+      // El reparto sólo tiene sentido si hay campos que repartir y la actividad
+      // es colaborativa. En cualquier otro caso se manda vacío en vez de
+      // arrastrar el de una edición anterior.
       groupAssignments:
-        draft.type === 'research' && draft.collaborationMode === 'shared'
+        draft.collaborationMode === 'shared' && repartibleQuestions.length > 0
           ? draft.groupAssignments.filter((entry) => entry.assignedTo.length > 0)
           : [],
       resources: draft.resources,
-      workflow: multi
-        ? draft.workflow.map((step, index) => ({
-            ...step,
-            order: index,
-            // El modelo habla en handles; el estado del formulario también.
-            assignedHandles: step.assignedTo,
-          }))
-        : [],
+      workflow: derived.workflow.map((part) => ({
+        ...part,
+        // El modelo habla en handles; el estado del formulario también.
+        assignedHandles: part.assignedTo,
+      })),
     };
 
-    if (assignmentId) {
-      await updateAssignment(assignmentId, body);
-      return assignmentId;
+    const current = liveIdRef.current;
+    if (current) {
+      await updateAssignment(current, body);
+      return current;
     }
     const { assignment } = await createAssignment(courseId, body);
+    liveIdRef.current = assignment.id;
+    setLiveId(assignment.id);
     return assignment.id;
+  }
+
+  /**
+   * Corrige la barra de direcciones sin navegar.
+   *
+   * `router.replace` desmontaría este componente y perdería el borrador en
+   * memoria —qué parte está abierta, qué se estaba escribiendo—. Esto sólo hace
+   * que recargar lleve a la actividad que ya existe en vez de a un formulario
+   * vacío.
+   *
+   * Sólo se usa en los caminos que SE QUEDAN aquí. Al publicar no se toca,
+   * porque después viene un `router.push` y reescribir la URL justo antes deja
+   * al router del App Router desincronizado con el historial.
+   */
+  function rememberUrl(id: string): void {
+    if (assignmentId) return;
+    window.history.replaceState(null, '', `/aula/${courseId}/tareas/${id}/editar`);
   }
 
   async function save(status: 'draft' | 'published'): Promise<void> {
@@ -293,617 +358,480 @@ export function AssignmentEditor({
       await persist(status);
       router.push(`/aula/${courseId}`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'No se pudo guardar.');
+      setError(
+        caught instanceof Error ? humanizeSaveError(caught.message) : 'No se pudo guardar.'
+      );
+      setBusy(false);
+    }
+  }
+
+  /** Guarda un borrador y se queda aquí. Para adjuntar archivos. */
+  async function saveDraftHere(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      rememberUrl(await persist('draft'));
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? humanizeSaveError(caught.message) : 'No se pudo guardar.'
+      );
+    } finally {
       setBusy(false);
     }
   }
 
   /**
-   * Guarda como borrador y se queda en el editor para poder adjuntar archivos.
+   * Abre la plantilla del laboratorio de una parte.
    *
-   * Es la respuesta a un problema real de orden: los materiales cuelgan de la
-   * tarea, así que no existen antes de que la tarea exista. La alternativa
-   * —guardar los archivos en el navegador y subirlos al publicar— habría hecho
-   * falta un almacén intermedio y habría perdido lo subido ante cualquier
-   * recarga. Guardar un borrador es gratis y no publica nada.
+   * Antes de abrirla se guarda un borrador, porque la plantilla cuelga de la
+   * actividad Y de la parte: sin las dos guardadas el servidor no sabría de qué
+   * plantilla se habla. Guardar un borrador no publica ni avisa a nadie.
    */
-  async function saveAndAttach(): Promise<void> {
+  async function prepareLab(part: WorkflowStep): Promise<void> {
     setBusy(true);
     setError(null);
     try {
-      const id = await persist('draft');
-      router.replace(`/aula/${courseId}/tareas/${id}/editar`);
+      rememberUrl(await persist('draft'));
+      setLabPart(part);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'No se pudo guardar.');
+      setError(
+        caught instanceof Error
+          ? humanizeSaveError(caught.message)
+          : 'No se pudo preparar el laboratorio.'
+      );
+    } finally {
       setBusy(false);
     }
   }
 
-  const students = roster.data?.students ?? [];
-  const state = assignmentId ? existing.state : 'ready';
+  /**
+   * El constructor es del profesorado, y la pantalla también.
+   *
+   * La autorización REAL está en el servidor y no se mueve: un estudiante que
+   * pidiera guardar recibe 403 aunque llegue aquí. Lo que faltaba era no
+   * pintarle el formulario: `GET /api/assignments/:id` responde 200 al alumnado
+   * —puede leer su actividad— así que la pantalla se montaba entera, con las
+   * partes, los responsables y el botón de publicar. Verlo no le daba ningún
+   * poder, pero le enseñaba una herramienta que no es suya y le dejaba escribir
+   * en un formulario que iba a rechazar al final.
+   *
+   * Se decide con DOS señales, porque hay dos caminos: una actividad existente
+   * dice quién la mira (`viewerRole`), y una actividad nueva todavía no existe,
+   * así que manda la lista de la materia —que sólo el profesorado puede leer—.
+   */
+  const notTeacher =
+    roster.state === 'error' ||
+    (existing.data ? existing.data.viewerRole !== 'teacher' : false);
+
+  const state: 'loading' | 'ready' | 'error' = notTeacher
+    ? 'error'
+    : assignmentId
+      ? existing.state
+      : roster.state;
 
   return (
-    <AulaScreen state={state} error={existing.error} next={`/aula/${courseId}`}>
-      <Crumbs
-        items={[
-          { href: '/aula', label: 'Aula' },
-          { href: `/aula/${courseId}`, label: 'Materia' },
-          { label: assignmentId ? 'Editar tarea' : 'Nueva tarea' },
-        ]}
-      />
+    <AulaScreen
+      state={state}
+      error={
+        notTeacher
+          ? 'Esta pantalla es para el profesorado de la materia. Tu actividad se abre desde el aula.'
+          : existing.error
+      }
+      next={`/aula/${courseId}`}
+    >
+      {/*
+        Con el laboratorio abierto, el formulario de detrás sale del orden de
+        tabulación. Sigue montado —para no perder nada— pero deja de ser
+        alcanzable, que es lo que espera quien navega con teclado.
+      */}
+      <div inert={labPart ? true : undefined}>
+        <Crumbs
+          items={[
+            { href: '/aula', label: 'Aula' },
+            { href: `/aula/${courseId}`, label: 'Materia' },
+            { label: assignmentId ? 'Editar actividad' : 'Nueva actividad' },
+          ]}
+        />
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-h1">
-          {assignmentId ? 'Editar tarea' : 'Nueva tarea'}
-        </h1>
-        <button
-          type="button"
-          onClick={() => setPreview((p) => !p)}
-          className="btn btn-secondary btn-sm"
-          aria-pressed={preview}
-        >
-          {preview ? '← Volver al editor' : 'Vista previa'}
-        </button>
-      </div>
-
-      {preview ? (
-        <TeacherPreview draft={draft} students={students} />
-      ) : (
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save('published');
-        }}
-        className="mt-8 max-w-3xl space-y-8"
-      >
-        <section className="space-y-4">
-          <Field label="Título">
-            <input
-              required
-              value={draft.title}
-              onChange={(event) => patch({ title: event.target.value })}
-              placeholder="Arquitectura de información"
-              className="field"
-            />
-          </Field>
-
-          <Field
-            label="Objetivo"
-            hint="Una o dos frases sobre qué se busca con esta tarea."
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="font-display text-h1">
+            {assignmentId ? 'Editar actividad' : 'Nueva actividad'}
+          </h1>
+          <button
+            type="button"
+            onClick={() => setPreview((p) => !p)}
+            className="btn btn-secondary btn-sm"
+            aria-pressed={preview}
           >
-            <textarea
-              rows={3}
-              value={draft.description}
-              onChange={(event) => patch({ description: event.target.value })}
-              placeholder="Analizar la organización actual del sitio FlyExpress."
-              className="field"
-            />
-          </Field>
+            {preview ? '← Volver al editor' : 'Vista previa como estudiante'}
+          </button>
+        </div>
 
-          <Field
-            label="Instrucciones"
-            hint="Los pasos concretos. Es lo que el alumnado va a leer antes de empezar."
+        {preview ? (
+          <TeacherPreview draft={draft} students={students} />
+        ) : (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save('published');
+            }}
+            className="mt-8 max-w-3xl space-y-10"
           >
-            <textarea
-              rows={5}
-              value={draft.instructions}
-              onChange={(event) => patch({ instructions: event.target.value })}
-              placeholder={'1. Identifica categorías.\n2. Propón una nueva jerarquía.\n3. Justifica tus cambios.'}
-              className="field"
-            />
-          </Field>
-
-          <div className="flex flex-wrap gap-4">
-            <Field label="Fecha límite" hint="Opcional.">
-              <input
-                type="date"
-                value={draft.dueDate}
-                onChange={(event) => patch({ dueDate: event.target.value })}
-                className="field w-48"
-              />
-            </Field>
-
-            <Field label="Hora límite" hint="Si la dejas vacía, se cierra al final del día.">
-              <input
-                type="time"
-                value={draft.dueTime}
-                disabled={!draft.dueDate}
-                onChange={(event) => patch({ dueTime: event.target.value })}
-                className="field w-36"
-              />
-            </Field>
-          </div>
-
-          {/*
-            La consecuencia, escrita. Una fecha sin hora es ambigua, y lo que
-            resuelve la ambigüedad no es un valor por defecto callado sino
-            decir en voz alta hasta cuándo se reciben entregas.
-          */}
-          <p className="text-sm text-muted">{dueSummary(draft)}</p>
-        </section>
-
-        <section aria-labelledby="forma">
-          <h2 id="forma" className="section-mark font-display text-h3">
-            ¿Cómo será esta actividad?
-          </h2>
-
-          <ul className="mt-4 grid gap-3 sm:grid-cols-2">
-            <li>
-              <label
-                className={`panel flex h-full cursor-pointer gap-3 p-4 ${
-                  !multi ? 'border-accent' : ''
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="assignment-shape"
-                  checked={!multi}
-                  onChange={() => patch({ shape: 'single' })}
-                  className="mt-1"
-                />
-                <span>
-                  <span className="block font-medium">Un solo paso</span>
-                  <span className="mt-1 block text-sm text-muted">
-                    Una entrega y ya. Es lo de siempre y se crea en segundos.
-                  </span>
-                </span>
-              </label>
-            </li>
-            <li>
-              <label
-                className={`panel flex h-full cursor-pointer gap-3 p-4 ${
-                  multi ? 'border-accent' : ''
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="assignment-shape"
-                  checked={multi}
-                  onChange={() => patch({ shape: 'multi' })}
-                  className="mt-1"
-                />
-                <span>
-                  <span className="block font-medium">Varios pasos</span>
-                  <span className="mt-1 block text-sm text-muted">
-                    Un proceso: buscar fuentes, procesarlas con IA, hacer un mapa, reflexionar.
-                  </span>
-                </span>
-              </label>
-            </li>
-          </ul>
-        </section>
-
-        {multi && (
-          <section aria-labelledby="pasos">
-            <h2 id="pasos" className="section-mark font-display text-h3">
-              Pasos
-            </h2>
-            <p className="mt-1 text-sm text-muted">
-              Cada paso dice qué hacer, con qué herramienta y qué hay que entregar.
-            </p>
-
-            <WorkflowTemplatePicker
-              hasSteps={draft.workflow.length > 0}
-              onApply={(template, workflow) =>
-                patch({
-                  workflow,
-                  // El título y el objetivo sólo se rellenan si están vacíos:
-                  // una plantilla no debe pisar lo que ya se escribió.
-                  title: draft.title || template.name,
-                  description: draft.description || template.summary,
-                })
-              }
-            />
-
-            <div className="mt-4">
-              <WorkflowBuilder
-                courseId={courseId}
-                steps={draft.workflow}
-                students={students}
-                assignment={{ title: draft.title, description: draft.description }}
-                onChange={(workflow) => patch({ workflow })}
-              />
-            </div>
-          </section>
-        )}
-
-        {!multi && (
-        <section aria-labelledby="tipo">
-          <h2 id="tipo" className="section-mark font-display text-h3">
-            Tipo de entrega
-          </h2>
-          <ul className="mt-4 grid gap-3 sm:grid-cols-2">
-            {ASSIGNMENT_TYPES.map((option) => (
-              <li key={option.value}>
-                <label
-                  className={`panel flex h-full cursor-pointer gap-3 p-4 ${
-                    draft.type === option.value ? 'border-accent' : ''
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="assignment-type"
-                    value={option.value}
-                    checked={draft.type === option.value}
-                    onChange={() => patch({ type: option.value })}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="block font-medium">{option.label}</span>
-                    <span className="mt-1 block text-sm text-muted">{option.helper}</span>
-                  </span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        </section>
-        )}
-
-        {!multi && draft.type === 'research' && (
-          <>
-            <section aria-labelledby="modo">
-              <h2 id="modo" className="section-mark font-display text-h3">
-                Modo de actividad
+            {/* 1. Lo básico ------------------------------------------------ */}
+            <section aria-labelledby="basico" className="space-y-4">
+              <h2 id="basico" className="section-mark font-display text-h3">
+                Lo básico
               </h2>
 
-              <ul className="mt-4 grid gap-3 sm:grid-cols-2">
-                <li>
-                  <label
-                    className={`panel flex h-full cursor-pointer gap-3 p-4 ${
-                      draft.collaborationMode === 'individual' ? 'border-accent' : ''
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="collaboration-mode"
-                      checked={draft.collaborationMode === 'individual'}
-                      onChange={() => patch({ collaborationMode: 'individual' })}
-                      className="mt-1"
-                    />
-                    <span>
-                      <span className="block font-medium">Individual</span>
-                      <span className="mt-1 block text-sm text-muted">
-                        Cada estudiante responde toda la actividad por separado.
-                      </span>
-                    </span>
-                  </label>
-                </li>
-                <li>
-                  <label
-                    className={`panel flex h-full cursor-pointer gap-3 p-4 ${
-                      draft.collaborationMode === 'shared' ? 'border-accent' : ''
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="collaboration-mode"
-                      checked={draft.collaborationMode === 'shared'}
-                      onChange={() => patch({ collaborationMode: 'shared' })}
-                      className="mt-1"
-                    />
-                    <span>
-                      <span className="block font-medium">Colaborativa</span>
-                      <span className="mt-1 block text-sm text-muted">
-                        El grupo construye una actividad conjunta. Repartes los conceptos y
-                        UINexus junta las aportaciones.
-                      </span>
-                    </span>
-                  </label>
-                </li>
-              </ul>
+              <Field label="Título">
+                <input
+                  required
+                  id="activity-title"
+                  value={draft.title}
+                  onChange={(event) => patch({ title: event.target.value })}
+                  placeholder="Análisis de ventas"
+                  className="field"
+                />
+              </Field>
+
+              <Field label="Objetivo" hint="Una o dos frases sobre qué se busca con esta actividad.">
+                <textarea
+                  rows={2}
+                  value={draft.description}
+                  onChange={(event) => patch({ description: event.target.value })}
+                  placeholder="Interpretar un conjunto de datos reales y justificar una decisión."
+                  className="field"
+                />
+              </Field>
+
+              <Field
+                label="Instrucciones generales"
+                hint="Lo que hay que leer antes de empezar. Cada parte puede añadir las suyas."
+              >
+                <textarea
+                  rows={4}
+                  value={draft.instructions}
+                  onChange={(event) => patch({ instructions: event.target.value })}
+                  placeholder={'Trabaja con los datos del archivo adjunto.\nJustifica cada conclusión con un número.'}
+                  className="field"
+                />
+              </Field>
+
+              <div className="flex flex-wrap gap-4">
+                <Field label="Fecha límite" hint="Opcional.">
+                  <input
+                    type="date"
+                    value={draft.dueDate}
+                    onChange={(event) => patch({ dueDate: event.target.value })}
+                    className="field w-48"
+                  />
+                </Field>
+
+                <Field label="Hora límite" hint="Si la dejas vacía, se cierra al final del día.">
+                  <input
+                    type="time"
+                    value={draft.dueTime}
+                    disabled={!draft.dueDate}
+                    onChange={(event) => patch({ dueTime: event.target.value })}
+                    className="field w-36"
+                  />
+                </Field>
+              </div>
+
+              <p className="text-sm text-muted">{dueSummary(draft)}</p>
+
+              <fieldset>
+                <legend className="label">Quién la recibe</legend>
+                <label className="mt-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={draft.assignToAll}
+                    onChange={(event) => patch({ assignToAll: event.target.checked })}
+                  />
+                  <span className="text-sm">Todo el grupo</span>
+                </label>
+
+                {!draft.assignToAll && (
+                  <div className="mt-3">
+                    {students.length === 0 ? (
+                      <Notice>
+                        Todavía no hay nadie inscrito. Inscribe estudiantes en la pestaña
+                        Estudiantes o deja la actividad para todo el grupo.
+                      </Notice>
+                    ) : (
+                      <ul className="max-h-72 space-y-1 overflow-y-auto rounded-sm border border-line p-3">
+                        {students.map((student) => (
+                          <li key={student.handle}>
+                            <label className="flex items-center gap-2 py-1">
+                              <input
+                                type="checkbox"
+                                checked={draft.assignedHandles.includes(student.handle)}
+                                onChange={(event) =>
+                                  patch({
+                                    assignedHandles: event.target.checked
+                                      ? [...draft.assignedHandles, student.handle]
+                                      : draft.assignedHandles.filter((h) => h !== student.handle),
+                                  })
+                                }
+                              />
+                              <span>{student.displayName}</span>
+                              <span className="font-mono text-label text-subtle">
+                                @{student.handle}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </fieldset>
             </section>
 
-            <ResearchBuilder
-              questions={draft.researchQuestions}
-              onChange={(researchQuestions) => patch({ researchQuestions })}
-            />
+            {/* 2. Qué hará el estudiante ----------------------------------- */}
+            <div>
+              {!assignmentId && draft.parts.length === 0 && (
+                <WorkflowTemplatePicker
+                  hasSteps={false}
+                  onApply={(chosen, workflow) =>
+                    patch({
+                      parts: workflow,
+                      title: draft.title || chosen.name,
+                      description: draft.description || chosen.summary,
+                    })
+                  }
+                />
+              )}
 
-            {draft.collaborationMode === 'shared' && (
-              <>
-                <section aria-labelledby="reparto">
-                  <h2 id="reparto" className="section-mark font-display text-h3">
-                    Reparto de conceptos
-                  </h2>
-                  <div className="mt-4">
-                    <CollaborationPlanner
-                      questions={draft.researchQuestions}
-                      students={students}
-                      assignments={draft.groupAssignments}
-                      onChange={(groupAssignments) => patch({ groupAssignments })}
-                    />
-                  </div>
-                </section>
+              <ActivityParts
+                courseId={courseId}
+                parts={draft.parts}
+                students={students}
+                activity={{ title: draft.title, description: draft.description }}
+                assignmentId={liveId}
+                onChange={(parts) => patch({ parts })}
+                onPrepareLab={(part) => void prepareLab(part)}
+              />
+            </div>
 
-                <section aria-labelledby="visibilidad">
-                  <h2 id="visibilidad" className="section-mark font-display text-h3">
-                    Visibilidad de las aportaciones
-                  </h2>
-                  <p className="mt-1 text-sm text-muted">
-                    Tú ves siempre todo. Esto decide qué ve el alumnado.
-                  </p>
-                  <div className="mt-4 space-y-2">
-                    {VISIBILITY_OPTIONS.map((option) => (
-                      <label key={option.value} className="flex items-start gap-2">
+            {/* 3. Materiales y recursos ------------------------------------ */}
+            <section aria-labelledby="materiales" className="space-y-6">
+              <div>
+                <h2 id="materiales" className="section-mark font-display text-h3">
+                  Materiales y recursos
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  Lo que el estudiante <strong>consulta</strong>. No es lo que entrega: lo que
+                  entrega se decide en cada Parte.
+                </p>
+              </div>
+
+              <MaterialsSection
+                assignmentId={liveId}
+                initial={existing.data?.assignment.materials ?? []}
+                busy={busy}
+                onSaveDraft={() => void saveDraftHere()}
+              />
+
+              <ResourceEditor
+                links={draft.resourceLinks}
+                onChange={(resourceLinks) => patch({ resourceLinks })}
+              />
+
+              <ResourcePicker
+                courseId={courseId}
+                value={draft.resources}
+                onChange={(resources) => patch({ resources })}
+              />
+            </section>
+
+            {/* 5. Opciones avanzadas --------------------------------------- */}
+            <section aria-labelledby="avanzadas">
+              <h2 id="avanzadas" className="section-mark font-display text-h3">
+                Opciones avanzadas
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                La mayoría de las actividades no necesitan nada de aquí.
+              </p>
+
+              {!showAdvanced ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(true)}
+                  aria-expanded={false}
+                  className="btn btn-ghost btn-sm mt-3"
+                >
+                  Mostrar opciones avanzadas
+                </button>
+              ) : (
+                <div className="mt-4 space-y-6">
+                  <fieldset>
+                    <legend className="label">¿Se trabaja en grupo?</legend>
+                    <div className="mt-2 space-y-2">
+                      <label className="flex items-start gap-2">
                         <input
                           type="radio"
-                          name="contribution-visibility"
-                          checked={draft.contributionVisibility === option.value}
-                          onChange={() => patch({ contributionVisibility: option.value })}
+                          name="collaboration-mode"
+                          checked={draft.collaborationMode === 'individual'}
+                          onChange={() => patch({ collaborationMode: 'individual' })}
                           className="mt-1"
                         />
                         <span>
-                          <span className="block text-sm font-medium">{option.label}</span>
-                          <span className="block text-sm text-muted">{option.helper}</span>
+                          <span className="block text-sm font-medium">
+                            Cada estudiante la hace entera
+                          </span>
+                          <span className="block text-sm text-muted">Es lo normal.</span>
                         </span>
                       </label>
-                    ))}
-                  </div>
-                </section>
-              </>
-            )}
-          </>
-        )}
-
-        <MaterialsSection
-          assignmentId={assignmentId}
-          initial={existing.data?.assignment.materials ?? []}
-          busy={busy}
-          onSaveDraft={() => void saveAndAttach()}
-        />
-
-        <ResourceEditor
-          links={draft.resourceLinks}
-          onChange={(resourceLinks) => patch({ resourceLinks })}
-        />
-
-        <ResourcePicker
-          courseId={courseId}
-          value={draft.resources}
-          onChange={(resources) => patch({ resources })}
-        />
-
-        <section aria-labelledby="asignar">
-          <h2 id="asignar" className="section-mark font-display text-h3">
-            A quién se asigna
-          </h2>
-
-          <label className="mt-4 flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={draft.assignToAll}
-              onChange={(event) => patch({ assignToAll: event.target.checked })}
-            />
-            <span>Asignar a todo el grupo</span>
-          </label>
-
-          {!draft.assignToAll && (
-            <div className="mt-4">
-              {students.length === 0 ? (
-                <Notice>
-                  Todavía no hay nadie inscrito. Inscribe estudiantes en la pestaña Estudiantes o
-                  deja la tarea para todo el grupo.
-                </Notice>
-              ) : (
-                <ul className="max-h-72 space-y-1 overflow-y-auto rounded-sm border border-line p-3">
-                  {students.map((student) => (
-                    <li key={student.handle}>
-                      <label className="flex items-center gap-2 py-1">
+                      <label className="flex items-start gap-2">
                         <input
-                          type="checkbox"
-                          checked={draft.assignedHandles.includes(student.handle)}
-                          onChange={(event) =>
-                            patch({
-                              assignedHandles: event.target.checked
-                                ? [...draft.assignedHandles, student.handle]
-                                : draft.assignedHandles.filter((h) => h !== student.handle),
-                            })
-                          }
+                          type="radio"
+                          name="collaboration-mode"
+                          checked={draft.collaborationMode === 'shared'}
+                          onChange={() => patch({ collaborationMode: 'shared' })}
+                          className="mt-1"
                         />
-                        <span>{student.displayName}</span>
-                        <span className="font-mono text-label text-subtle">@{student.handle}</span>
+                        <span>
+                          <span className="block text-sm font-medium">
+                            El grupo construye algo conjunto
+                          </span>
+                          <span className="block text-sm text-muted">
+                            Repartes los conceptos y Nextudio junta las aportaciones.
+                          </span>
+                        </span>
                       </label>
-                    </li>
-                  ))}
-                </ul>
+                    </div>
+                  </fieldset>
+
+                  {draft.collaborationMode === 'shared' && (
+                    <>
+                      {repartibleQuestions.length > 0 && (
+                        <fieldset>
+                          <legend className="label">Reparto de conceptos</legend>
+                          <div className="mt-2">
+                            <CollaborationPlanner
+                              questions={repartibleQuestions}
+                              students={students}
+                              assignments={draft.groupAssignments}
+                              onChange={(groupAssignments) => patch({ groupAssignments })}
+                            />
+                          </div>
+                        </fieldset>
+                      )}
+
+                      <fieldset>
+                        <legend className="label">Visibilidad de las aportaciones</legend>
+                        <p className="hint">Tú ves siempre todo. Esto decide qué ve el grupo.</p>
+                        <div className="mt-2 space-y-2">
+                          {VISIBILITY_OPTIONS.map((option) => (
+                            <label key={option.value} className="flex items-start gap-2">
+                              <input
+                                type="radio"
+                                name="contribution-visibility"
+                                checked={draft.contributionVisibility === option.value}
+                                onChange={() =>
+                                  patch({ contributionVisibility: option.value })
+                                }
+                                className="mt-1"
+                              />
+                              <span>
+                                <span className="block text-sm font-medium">{option.label}</span>
+                                <span className="block text-sm text-muted">{option.helper}</span>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                    </>
+                  )}
+                </div>
               )}
+            </section>
+
+            {error && <Notice tone="error">{error}</Notice>}
+
+            <ProblemList problems={problems} />
+
+            <ActivitySummary draft={draft} derived={derived} students={students} />
+
+            <div className="flex flex-wrap gap-3 border-t border-line pt-6">
+              <button
+                type="submit"
+                disabled={busy || blocking.length > 0 || draft.parts.length === 0}
+                className="btn btn-primary"
+              >
+                {busy ? 'Guardando…' : 'Publicar actividad'}
+              </button>
+              <button
+                type="button"
+                disabled={busy || draft.title.trim().length < 3}
+                onClick={() => void save('draft')}
+                className="btn btn-secondary"
+              >
+                Guardar como borrador
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push(`/aula/${courseId}`)}
+                className="btn btn-ghost"
+              >
+                Cancelar
+              </button>
             </div>
-          )}
-        </section>
 
-        {error && <Notice tone="error">{error}</Notice>}
+            {draft.parts.length === 0 && (
+              <p className="text-sm text-muted">
+                Para publicarla hace falta decir qué hará el estudiante. Mientras tanto puedes
+                guardarla como borrador.
+              </p>
+            )}
+          </form>
+        )}
+      </div>
 
-        <AssignmentSummary draft={draft} students={students} />
-
-        <div className="flex flex-wrap gap-3 border-t border-line pt-6">
-          <button
-            type="submit"
-            disabled={busy || draft.title.trim().length < 3}
-            className="btn btn-primary"
-          >
-            {busy ? 'Guardando…' : 'Publicar tarea'}
-          </button>
-          <button
-            type="button"
-            disabled={busy || draft.title.trim().length < 3}
-            onClick={() => void save('draft')}
-            className="btn btn-secondary"
-          >
-            Guardar como borrador
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push(`/aula/${courseId}`)}
-            className="btn btn-ghost"
-          >
-            Cancelar
-          </button>
-        </div>
-      </form>
+      {labPart && liveId && (
+        <NexLabTemplatePanel
+          assignmentId={liveId}
+          stepId={labPart.id}
+          partLabel={labPart.title.trim() || draft.title || 'Laboratorio'}
+          onClose={() => setLabPart(null)}
+        />
       )}
     </AulaScreen>
   );
 }
 
 /**
- * Constructor de campos de investigación (§9).
+ * Lo que falta, dicho en lenguaje de persona.
  *
- * No es un constructor tipo Google Forms, y §9 pide explícitamente que no lo
- * sea todavía: tres tipos de campo y un atajo por concepto. Lo justo para
- * reemplazar el DOCX de conceptos, que es el problema real.
+ * Nunca `workflow.steps[2].deliverables[0].type invalid`. Se dice qué Parte, qué
+ * campo y qué hacer, que es lo único que permite arreglarlo sin adivinar. Lo
+ * `soft` no impide guardar: una actividad se construye poco a poco.
  */
-function ResearchBuilder({
-  questions,
-  onChange,
-}: {
-  questions: ResearchQuestion[];
-  onChange: (questions: ResearchQuestion[]) => void;
-}) {
-  const [concept, setConcept] = useState('');
-
-  /** Un concepto se convierte en sus tres campos habituales. */
-  function addConcept(): void {
-    const name = concept.trim();
-    if (!name) return;
-    /**
-     * El `groupId` se genera aquí y NO se deriva del nombre: es lo que se
-     * reparte entre estudiantes, así que tiene que sobrevivir a que alguien
-     * corrija una tilde en «Taxonomía» después de haber repartido.
-     */
-    const groupId = uid();
-    onChange([
-      ...questions,
-      { id: uid(), group: name, groupId, prompt: 'Definición', type: 'long_text', required: true },
-      { id: uid(), group: name, groupId, prompt: 'Fuente', type: 'url', required: false },
-      { id: uid(), group: name, groupId, prompt: 'Comentario', type: 'long_text', required: false },
-    ]);
-    setConcept('');
-  }
-
-  function addSingle(): void {
-    const id = uid();
-    onChange([
-      ...questions,
-      { id, group: null, groupId: id, prompt: '', type: 'long_text', required: false },
-    ]);
-  }
-
-  function patchQuestion(id: string, changes: Partial<ResearchQuestion>): void {
-    onChange(questions.map((q) => (q.id === id ? { ...q, ...changes } : q)));
-  }
+function ProblemList({ problems }: { problems: ActivityProblem[] }) {
+  if (problems.length === 0) return null;
 
   return (
-    <section aria-labelledby="campos">
-      <h2 id="campos" className="section-mark font-display text-h3">
-        Campos que va a rellenar el alumnado
-      </h2>
-      <p className="mt-1 text-sm text-muted">
-        Esto sustituye al documento de Word. Escribe un concepto y se crean sus tres campos:
-        definición, fuente y comentario.
-      </p>
-
-      <div className="mt-4 flex flex-wrap items-end gap-2">
-        <label className="min-w-56 flex-1">
-          <span className="label">Concepto</span>
-          <input
-            value={concept}
-            onChange={(event) => setConcept(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                addConcept();
-              }
-            }}
-            placeholder="Card sorting"
-            className="field"
-          />
-        </label>
-        <button type="button" onClick={addConcept} className="btn btn-secondary">
-          Añadir concepto
-        </button>
-        <button type="button" onClick={addSingle} className="btn btn-ghost">
-          Añadir campo suelto
-        </button>
-      </div>
-
-      {questions.length > 0 && (
-        <ul className="mt-5 space-y-2">
-          {questions.map((question, index) => (
-            <li key={question.id} className="panel flex flex-wrap items-end gap-2 p-3">
-              <span className="w-6 pb-2 text-sm text-subtle tabular-nums">{index + 1}</span>
-
-              <label className="min-w-32 flex-1">
-                <span className="label">Concepto</span>
-                <input
-                  value={question.group ?? ''}
-                  onChange={(event) =>
-                    patchQuestion(question.id, { group: event.target.value || null })
-                  }
-                  placeholder="(sin agrupar)"
-                  className="field"
-                />
-              </label>
-
-              <label className="min-w-40 flex-1">
-                <span className="label">Campo</span>
-                <input
-                  value={question.prompt}
-                  onChange={(event) => patchQuestion(question.id, { prompt: event.target.value })}
-                  placeholder="Definición"
-                  className="field"
-                />
-              </label>
-
-              <label>
-                <span className="label">Tipo</span>
-                <select
-                  value={question.type}
-                  onChange={(event) =>
-                    patchQuestion(question.id, {
-                      type: event.target.value as ResearchQuestion['type'],
-                    })
-                  }
-                  className="field w-36"
-                >
-                  <option value="long_text">Texto largo</option>
-                  <option value="short_text">Texto corto</option>
-                  <option value="url">Enlace</option>
-                </select>
-              </label>
-
-              <label className="flex items-center gap-2 pb-2">
-                <input
-                  type="checkbox"
-                  checked={question.required}
-                  onChange={(event) =>
-                    patchQuestion(question.id, { required: event.target.checked })
-                  }
-                />
-                <span className="text-sm">Obligatorio</span>
-              </label>
-
-              <button
-                type="button"
-                onClick={() => onChange(questions.filter((q) => q.id !== question.id))}
-                className="btn btn-ghost btn-sm"
-              >
-                Quitar
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <div className="rounded-md border border-line bg-raised p-4" role="status">
+      <p className="text-sm font-medium">Antes de publicar</p>
+      <ul className="mt-2 space-y-1">
+        {problems.map((problem, index) => (
+          <li key={index} className="text-sm text-muted">
+            {problem.severity === 'blocking' ? '· ' : '· '}
+            {problem.message}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
 /**
- * Los archivos que se reparten con la tarea.
+ * Los archivos que se reparten con la actividad.
  *
- * Mientras la tarea no existe no hay dónde colgarlos, así que en vez de fingir
- * una zona de subida que no puede funcionar se ofrece el atajo honesto: guardar
- * el borrador —que no publica nada— y seguir en el mismo sitio con la tarea ya
- * creada. Es un clic y evita inventar un almacén intermedio en el navegador que
- * se perdería con cualquier recarga.
+ * Mientras la actividad no existe no hay dónde colgarlos, así que en vez de
+ * fingir una zona de subida que no puede funcionar se ofrece el atajo honesto:
+ * guardar el borrador —que no publica nada— y seguir en el mismo sitio.
  */
 function MaterialsSection({
   assignmentId,
@@ -919,8 +847,6 @@ function MaterialsSection({
   const [materials, setMaterials] = useState<AssignmentMaterial[]>(initial);
   const [seeded, setSeeded] = useState(false);
 
-  // La tarea se carga después del primer render; sus materiales se siembran una
-  // sola vez para no pisar lo que se acabe de subir.
   useEffect(() => {
     if (seeded || initial.length === 0) return;
     setMaterials(initial);
@@ -928,13 +854,11 @@ function MaterialsSection({
   }, [initial, seeded]);
 
   return (
-    <section aria-labelledby="materiales-tarea">
-      <h2 id="materiales-tarea" className="section-mark font-display text-h3">
-        Archivos para los estudiantes
-      </h2>
-      <p className="mt-1 text-sm text-muted">
-        La plantilla del reporte, los datos del ejercicio, el caso de estudio. Se descargan desde
-        la tarea; no son entregas.
+    <fieldset>
+      <legend className="label">Archivos de la actividad</legend>
+      <p className="hint">
+        La plantilla del reporte, los datos del ejercicio, el caso de estudio. Se descargan desde la
+        actividad.
       </p>
 
       {assignmentId ? (
@@ -945,10 +869,10 @@ function MaterialsSection({
           onChange={setMaterials}
         />
       ) : (
-        <div className="mt-4">
+        <div className="mt-3">
           <Notice>
-            Para adjuntar archivos hace falta que la tarea exista. Guárdala como borrador y sigue
-            aquí mismo: no se publica ni se avisa a nadie.
+            Para adjuntar archivos hace falta que la actividad exista. Guárdala como borrador y
+            sigue aquí mismo: no se publica ni se avisa a nadie.
           </Notice>
           <button
             type="button"
@@ -960,11 +884,11 @@ function MaterialsSection({
           </button>
         </div>
       )}
-    </section>
+    </fieldset>
   );
 }
 
-/** Recursos de la tarea: se abren directamente desde la pantalla del alumnado. */
+/** Enlaces que se abren directamente desde la actividad. */
 function ResourceEditor({
   links,
   onChange,
@@ -973,19 +897,15 @@ function ResourceEditor({
   onChange: (links: ResourceLink[]) => void;
 }) {
   return (
-    <section aria-labelledby="recursos">
-      <h2 id="recursos" className="section-mark font-display text-h3">
-        Recursos
-      </h2>
-      <p className="mt-1 text-sm text-muted">
-        Lecturas, plantillas, el archivo de Figma… Se abren desde la propia tarea.
-      </p>
+    <fieldset>
+      <legend className="label">Enlaces</legend>
+      <p className="hint">Lecturas, plantillas, el archivo de Figma… Se abren desde la actividad.</p>
 
-      <ul className="mt-4 space-y-2">
+      <ul className="mt-3 space-y-2">
         {links.map((link, index) => (
           <li key={index} className="flex flex-wrap items-end gap-2">
             <label className="min-w-40 flex-1">
-              <span className="label">Nombre</span>
+              <span className="sr-only">Nombre del enlace {index + 1}</span>
               <input
                 value={link.label}
                 onChange={(event) =>
@@ -1000,7 +920,7 @@ function ResourceEditor({
               />
             </label>
             <label className="min-w-56 flex-[2]">
-              <span className="label">Enlace</span>
+              <span className="sr-only">Dirección del enlace {index + 1}</span>
               <input
                 type="url"
                 value={link.url}
@@ -1019,6 +939,7 @@ function ResourceEditor({
               type="button"
               onClick={() => onChange(links.filter((_, position) => position !== index))}
               className="btn btn-ghost btn-sm"
+              aria-label={`Quitar el enlace ${index + 1}`}
             >
               Quitar
             </button>
@@ -1031,36 +952,32 @@ function ResourceEditor({
         onClick={() => onChange([...links, { label: '', url: '' }])}
         className="btn btn-secondary btn-sm mt-3"
       >
-        + Añadir recurso
+        + Añadir enlace
       </button>
-    </section>
+    </fieldset>
   );
 }
 
 // ---------------------------------------------------------------------------
-// P1 — Vista previa docente como estudiante
+// Vista previa
 // ---------------------------------------------------------------------------
 
 /**
- * Muestra al docente cómo vería la tarea un estudiante.
+ * Cómo verá la actividad un estudiante.
  *
- * Lee sólo el `draft` sin llamar a ninguna API. No crea Submission,
- * no guarda progreso, no suplanta ninguna identidad.
+ * Lee sólo el borrador en memoria y NO llama a ninguna API. No crea entrega, no
+ * crea instancia, no cambia propietario, no escribe progreso, no altera fechas y
+ * no ejecuta ninguna acción académica. El laboratorio de una parte no se monta
+ * aquí: montarlo pediría al servidor la plantilla, y una vista previa no debería
+ * crear nada. Se describe en su lugar.
  */
-function TeacherPreview({
-  draft,
-  students,
-}: {
-  draft: DraftState;
-  students: RosterRow[];
-}) {
-  const multi = draft.shape === 'multi';
-  const steps = draft.workflow;
+function TeacherPreview({ draft, students }: { draft: DraftState; students: RosterRow[] }) {
+  const parts = draft.parts;
 
   return (
     <article className="mt-8 max-w-3xl rounded-md border-2 border-dashed border-accent/40 bg-raised/60 p-6">
       <p className="mb-6 inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-sm font-medium text-accent">
-        Vista previa · Así lo verá el alumnado
+        Vista previa · Así lo verá el estudiante
       </p>
 
       <header className="border-b border-line pb-6">
@@ -1088,76 +1005,111 @@ function TeacherPreview({
         </section>
       )}
 
-      {draft.resourceLinks.filter((l) => l.url.trim()).length > 0 && (
+      {draft.resourceLinks.filter((link) => link.url.trim()).length > 0 && (
         <section className="mt-8">
-          <h3 className="font-display text-h3">Recursos</h3>
+          <h3 className="font-display text-h3">Materiales</h3>
           <ul className="mt-3 space-y-2">
             {draft.resourceLinks
-              .filter((l) => l.url.trim())
-              .map((link, i) => (
-                <li key={i}>
-                  <span className="btn btn-secondary btn-sm">
-                    {link.label || link.url} ↗
-                  </span>
+              .filter((link) => link.url.trim())
+              .map((link, index) => (
+                <li key={index}>
+                  <span className="btn btn-secondary btn-sm">{link.label || link.url} ↗</span>
                 </li>
               ))}
           </ul>
         </section>
       )}
 
-      {multi && steps.length > 0 && (
+      {parts.length > 0 && (
         <section className="mt-8">
-          <h3 className="font-display text-h3">Los pasos</h3>
-          <p className="mt-1 text-sm text-muted">
-            Esta actividad tiene varios pasos. Los haces en orden.
-          </p>
+          <h3 className="font-display text-h3">
+            {parts.length === 1 ? 'Qué hay que hacer' : 'Las partes'}
+          </h3>
+          {parts.length > 1 && (
+            <p className="mt-1 text-sm text-muted">
+              Esta actividad tiene {parts.length} partes.
+            </p>
+          )}
           <ol className="mt-4 space-y-2">
-            {steps.map((step, index) => (
-              <li key={step.id} className="panel flex flex-wrap items-center gap-3 p-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-label tabular-nums">
-                  {index + 1}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium">{step.title || '(sin título)'}</span>
-                  <span className="block text-label text-subtle">
-                    {stepActionLabel(step.actionType)}
-                    {step.tool.toolNames.length > 0 && ` · ${step.tool.toolNames.join(', ')}`}
-                    {' · '}
-                    {DELIVERABLE_LABEL[step.deliverables[0]?.type ?? 'none']}
-                    {!step.required && ' · opcional'}
+            {parts.map((part, index) => {
+              const deliverable = partDeliverable(part);
+              const blockedBy = part.dependsOnStepIds
+                .map((id) => {
+                  const dependency = parts.find((other) => other.id === id);
+                  return dependency
+                    ? dependency.title || `Parte ${parts.indexOf(dependency) + 1}`
+                    : null;
+                })
+                .filter(Boolean);
+
+              return (
+                <li key={part.id} className="panel flex flex-wrap items-start gap-3 p-3">
+                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-label tabular-nums">
+                    {index + 1}
                   </span>
-                  {step.description && (
-                    <span className="mt-1 block text-sm text-muted">{step.description}</span>
-                  )}
-                  {step.instructions && (
-                    <span className="mt-1 block whitespace-pre-line text-sm text-muted">
-                      {step.instructions}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">
+                      {part.title || draft.title || `Parte ${index + 1}`}
                     </span>
-                  )}
-                  {step.prompt?.mode === 'inline' && (
-                    <span className="mt-2 block whitespace-pre-wrap rounded-sm border border-line bg-sunken p-2 font-mono text-sm">
-                      {step.prompt.text}
+                    <span className="block text-label text-subtle">
+                      {partActionLabel(part)}
+                      {part.tool.toolNames.length > 0 && ` · ${part.tool.toolNames.join(', ')}`}
+                      {!part.required && ' · opcional'}
                     </span>
-                  )}
-                  {step.prompt?.mode === 'library' && (
-                    <span className="mt-1 block text-label text-subtle">
-                      Prompt de la biblioteca: {step.prompt.title || 'sin título'}
-                    </span>
-                  )}
-                  {step.dependsOnStepIds.length > 0 && (
-                    <span className="mt-1 block text-label text-subtle">
-                      Requiere completar:{' '}
-                      {step.dependsOnStepIds
-                        .map((id) => {
-                          const dep = steps.find((s) => s.id === id);
-                          return dep ? dep.title || `Paso ${steps.indexOf(dep) + 1}` : id;
-                        })
-                        .join(', ')}
-                    </span>
-                  )}
-                </span>
-              </li>
-            ))}
+                    {part.instructions && (
+                      <span className="mt-1 block whitespace-pre-line text-sm text-muted">
+                        {part.instructions}
+                      </span>
+                    )}
+                    {deliverable.hint && (
+                      <span className="mt-1 block text-sm text-muted">{deliverable.hint}</span>
+                    )}
+                    {deliverable.type === 'nexbook' && (
+                      <span className="mt-1 block text-label text-subtle">
+                        Se abrirá un NexLab con la plantilla que prepares. Los bloques marcados
+                        como no editables se leen pero no se tocan.
+                      </span>
+                    )}
+                    {deliverable.type === 'ai_worklog' && (
+                      <span className="mt-1 block text-label text-subtle">
+                        Conclusión:{' '}
+                        {deliverable.conclusionMode === 'required'
+                          ? 'obligatoria para entregar'
+                          : deliverable.conclusionMode === 'none'
+                            ? 'no se pide'
+                            : 'opcional'}
+                      </span>
+                    )}
+                    {deliverable.type === 'code' && (
+                      <span className="mt-1 block text-label text-subtle">
+                        {deliverable.language} ·{' '}
+                        {deliverable.executionEnabled ? 'puede ejecutarlo' : 'sin ejecución'}
+                      </span>
+                    )}
+                    {part.prompt?.mode === 'inline' && (
+                      <span className="mt-2 block whitespace-pre-wrap rounded-sm border border-line bg-sunken p-2 font-mono text-sm">
+                        {part.prompt.text}
+                      </span>
+                    )}
+                    {part.prompt?.mode === 'library' && (
+                      <span className="mt-1 block text-label text-subtle">
+                        Prompt de la biblioteca: {part.prompt.title || 'sin título'}
+                      </span>
+                    )}
+                    {blockedBy.length > 0 && (
+                      <span className="mt-1 block text-label text-subtle">
+                        Se desbloquea después de: {blockedBy.join(', ')}
+                      </span>
+                    )}
+                    {part.assignedTo && part.assignedTo.length > 0 && (
+                      <span className="mt-1 block text-label text-subtle">
+                        La hacen: {part.assignedTo.join(', ')}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ol>
         </section>
       )}
@@ -1167,12 +1119,13 @@ function TeacherPreview({
           type="button"
           disabled
           className="btn btn-primary cursor-not-allowed opacity-50"
-          title="Vista previa — no crea una entrega real"
+          title="Vista previa — no crea ninguna entrega"
         >
-          Comenzar tarea (Vista previa)
+          Comenzar actividad (vista previa)
         </button>
         <p className="mt-2 text-xs text-subtle">
-          En vista previa el botón no funciona. El alumnado sí verá el botón real.
+          En vista previa el botón no hace nada y no se crea ninguna entrega. El estudiante sí verá
+          el botón real.
         </p>
       </div>
 
@@ -1181,7 +1134,7 @@ function TeacherPreview({
           {draft.assignToAll
             ? `Se asignará a todo el grupo (${students.length} estudiante${students.length !== 1 ? 's' : ''})`
             : draft.assignedHandles.length > 0
-              ? `Asignada a ${draft.assignedHandles.length} estudiante${draft.assignedHandles.length !== 1 ? 's' : ''} seleccionado${draft.assignedHandles.length !== 1 ? 's' : ''}`
+              ? `Asignada a ${draft.assignedHandles.length} estudiante${draft.assignedHandles.length !== 1 ? 's' : ''}`
               : 'Sin estudiantes asignados aún'}
         </p>
       )}
@@ -1189,53 +1142,28 @@ function TeacherPreview({
   );
 }
 
-// ---------------------------------------------------------------------------
-// P2 — Resumen compacto antes de publicar
-// ---------------------------------------------------------------------------
-
-/**
- * Resumen compacto de la tarea, justo antes de publicar.
- *
- * Reutiliza los datos del draft sin llamar a ninguna API. Sólo se
- * muestra cuando hay título suficiente para que el resumen tenga sentido.
- */
-function AssignmentSummary({
+/** Resumen compacto justo antes de publicar. */
+function ActivitySummary({
   draft,
+  derived,
   students,
 }: {
   draft: DraftState;
+  derived: ReturnType<typeof deriveActivity>;
   students: RosterRow[];
 }) {
   if (draft.title.trim().length < 3) return null;
 
-  const multi = draft.shape === 'multi';
-  const steps = draft.workflow;
-  const requiredSteps = steps.filter((s) => s.required);
-  const optionalSteps = steps.filter((s) => !s.required);
-
-  // Herramientas únicas de todos los pasos
-  const allTools = Array.from(
-    new Set(steps.flatMap((s) => s.tool.toolNames))
-  ).filter(Boolean);
-
-  // Entregables únicos
-  const allDeliverables = Array.from(
-    new Set(
-      steps.flatMap((s) =>
-        s.deliverables.map((d) => DELIVERABLE_LABEL[d.type] ?? d.type)
-      )
-    )
-  ).filter(Boolean);
-
-  const assignedCount = draft.assignToAll
-    ? students.length
-    : draft.assignedHandles.length;
-
-  const resourceLinkCount = draft.resourceLinks.filter((l) => l.url.trim()).length;
+  const parts = draft.parts;
+  const optional = parts.filter((part) => !part.required);
+  const tools = Array.from(new Set(parts.flatMap((part) => part.tool.toolNames))).filter(Boolean);
+  const kinds = Array.from(new Set(parts.map((part) => partActionLabel(part))));
+  const assignedCount = draft.assignToAll ? students.length : draft.assignedHandles.length;
+  const linkCount = draft.resourceLinks.filter((link) => link.url.trim()).length;
 
   return (
     <section
-      aria-label="Resumen de la tarea"
+      aria-label="Resumen de la actividad"
       className="max-w-3xl rounded-md border border-line bg-raised p-5"
     >
       <h2 className="text-sm font-semibold text-fg">{draft.title}</h2>
@@ -1244,51 +1172,44 @@ function AssignmentSummary({
       )}
 
       <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
-        {multi && (
-          <>
-            <div>
-              <dt className="text-label text-subtle">Pasos</dt>
-              <dd className="font-medium">
-                {steps.length}
-                {steps.length > 0 && (
-                  <span className="ml-1 font-normal text-muted">
-                    ({requiredSteps.length} obligatorio{requiredSteps.length !== 1 ? 's' : ''}
-                    {optionalSteps.length > 0 &&
-                      `, ${optionalSteps.length} opcional${optionalSteps.length !== 1 ? 'es' : ''}`}
-                    )
-                  </span>
-                )}
-              </dd>
-            </div>
-
-            {allTools.length > 0 && (
-              <div>
-                <dt className="text-label text-subtle">Herramientas</dt>
-                <dd className="font-medium">{allTools.join(' · ')}</dd>
-              </div>
+        <div>
+          <dt className="text-label text-subtle">Partes</dt>
+          <dd className="font-medium">
+            {parts.length}
+            {optional.length > 0 && (
+              <span className="ml-1 font-normal text-muted">
+                ({optional.length} opcional{optional.length !== 1 ? 'es' : ''})
+              </span>
             )}
+          </dd>
+        </div>
 
-            {allDeliverables.length > 0 && (
-              <div>
-                <dt className="text-label text-subtle">Entregables</dt>
-                <dd className="font-medium">{allDeliverables.join(' · ')}</dd>
-              </div>
-            )}
-          </>
+        {kinds.length > 0 && (
+          <div>
+            <dt className="text-label text-subtle">Qué se entrega</dt>
+            <dd className="font-medium">{kinds.join(' · ')}</dd>
+          </div>
         )}
 
-        {resourceLinkCount > 0 && (
+        {tools.length > 0 && (
           <div>
-            <dt className="text-label text-subtle">Recursos</dt>
+            <dt className="text-label text-subtle">Herramientas</dt>
+            <dd className="font-medium">{tools.join(' · ')}</dd>
+          </div>
+        )}
+
+        {linkCount > 0 && (
+          <div>
+            <dt className="text-label text-subtle">Enlaces</dt>
             <dd className="font-medium">
-              {resourceLinkCount} enlace{resourceLinkCount !== 1 ? 's' : ''}
+              {linkCount} enlace{linkCount !== 1 ? 's' : ''}
             </dd>
           </div>
         )}
 
         {students.length > 0 && (
           <div>
-            <dt className="text-label text-subtle">Asignación</dt>
+            <dt className="text-label text-subtle">Quién la recibe</dt>
             <dd className="font-medium">
               {draft.assignToAll
                 ? `Todo el grupo (${students.length})`
@@ -1299,6 +1220,17 @@ function AssignmentSummary({
           </div>
         )}
       </dl>
+
+      {/*
+        La forma guardada se enseña, pero como nota al pie y en lenguaje llano:
+        es útil saber que una actividad de una parte se sigue guardando como lo
+        que era, sin que eso sea una decisión que haya que tomar.
+      */}
+      <p className="mt-4 text-label text-subtle">
+        {derived.workflow.length === 0
+          ? 'Se guardará en su forma sencilla de siempre.'
+          : `Se guardará como una actividad de ${derived.workflow.length} parte${derived.workflow.length !== 1 ? 's' : ''}.`}
+      </p>
     </section>
   );
 }

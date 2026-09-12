@@ -50,7 +50,7 @@ export const LOGIN_INVALID_DOMAIN_PATH = `/login?reason=${INVALID_DOMAIN_REASON}
  * en abstracto, porque nada de eso ayuda a entrar.
  */
 export const INVALID_DOMAIN_NOTICE =
-  `UINexus usa tu correo institucional @${ALLOWED_EMAIL_DOMAIN}. ` +
+  `Nextudio usa tu correo institucional @${ALLOWED_EMAIL_DOMAIN}. ` +
   'Cierra la sesión de esa cuenta de Google e inténtalo de nuevo con tu cuenta del ITD.';
 
 export const INVALID_DOMAIN_TITLE = 'Usaste una cuenta no autorizada';

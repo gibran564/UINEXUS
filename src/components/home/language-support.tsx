@@ -1,7 +1,7 @@
 import { PROGRAMMING_LANGUAGES } from '@/lib/constants';
 
 /**
- * Qué lenguajes admite UINexus, y para qué.
+ * Qué lenguajes admite Nextudio, y para qué.
  *
  * Esta tabla se GENERA desde `PROGRAMMING_LANGUAGES`. No es una decisión
  * estética: una lista escrita a mano en la portada es una promesa que envejece
@@ -41,8 +41,8 @@ export function LanguageSupport() {
         Lenguajes
       </h2>
       <p className="mt-1 max-w-2xl text-muted">
-        Todos se escriben en el mismo editor. Lo que cambia es dónde puede correr cada uno, y
-        UINexus lo dice antes de que empieces.
+        Todos se escriben en el mismo editor, en NexCode o dentro de un NexLab. Lo que cambia es
+        dónde puede correr cada uno, y Nextudio lo dice antes de que empieces.
       </p>
 
       <ul className="mt-7 divide-y divide-line border-y border-line">
@@ -67,7 +67,7 @@ export function LanguageSupport() {
 
       <p className="mt-4 max-w-2xl text-sm text-subtle">
         Python y R se ejecutan en tu propio navegador: tu código no se envía a ningún servidor.
-        Java y C se escriben y se entregan; compilarlos necesita infraestructura que UINexus
+        Java y C se escriben y se entregan; compilarlos necesita infraestructura que Nextudio
         todavía no tiene, y preferimos decirlo a fingirlo.
       </p>
     </section>
