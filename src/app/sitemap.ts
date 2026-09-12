@@ -12,6 +12,12 @@ export const revalidate = 3600;
  * entra en ningún índice, ni el nuestro ni el de un buscador.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  /**
+   * Si al compilar no hay base de datos, las tres lecturas devuelven vacío y el
+   * mapa sale sólo con las rutas fijas: `revalidate` lo completa en cuanto haya
+   * datos. Eso lo resuelve `publicRead` en `lib/data/repository.ts`, y ahí está
+   * explicado por qué. Aquí no hace falta hacer nada especial.
+   */
   const [projects, handles, courses] = await Promise.all([
     listIndexablePaths(),
     listPublicHandles(),

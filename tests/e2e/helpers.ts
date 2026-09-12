@@ -44,6 +44,20 @@ export const LOCAL = {
  * esa ventana se estira lo suficiente como para que ocurra de verdad: costó un
  * fallo intermitente en la suite responsive.
  *
+ * ## Por qué se RELLENA dentro del bucle, y no una sola vez antes
+ *
+ * Porque la hidratación no sólo se come el clic: se come lo escrito. Los campos
+ * son controlados, así que cuando React monta, los devuelve a su estado
+ * inicial —vacío— y descarta lo que se hubiera tecleado antes. Rellenar fuera
+ * del bucle dejaba entonces un formulario VACÍO, y cada reintento volvía a
+ * enviarlo vacío: el bucle no puede recuperar un estado que se destruyó antes
+ * de empezar.
+ *
+ * Así falló de verdad. En la captura del fallo se ve el formulario sin correo y
+ * la alerta «Ingresa tu correo institucional», noventa segundos hasta agotar el
+ * plazo. `fill()` es idempotente, así que rehacerlo en cada intento no cuesta
+ * nada y cierra el hueco entero.
+ *
  * Lo que se reintenta es el ENVÍO, no la comprobación: si las credenciales
  * fueran malas, el bucle agotaría su plazo y la prueba fallaría igual.
  */
@@ -52,10 +66,17 @@ export async function signIn(
   who: { email: string; password: string }
 ): Promise<void> {
   await page.goto('/login');
-  await page.locator('#email').fill(who.email);
-  await page.locator('#password').fill(who.password);
 
   await expect(async () => {
+    await page.locator('#email').fill(who.email);
+    await page.locator('#password').fill(who.password);
+
+    // Que lo escrito SIGA ahí al pulsar. Si React acaba de hidratar y lo ha
+    // descartado, este intento se abandona aquí y el siguiente lo reescribe,
+    // en vez de enviar un formulario vacío.
+    await expect(page.locator('#email')).toHaveValue(who.email);
+    await expect(page.locator('#password')).toHaveValue(who.password);
+
     await page.getByRole('button', { name: 'Iniciar sesión' }).click();
     // La sesión está lista cuando la navegación con sesión aparece; esperar por
     // la URL no basta porque Firebase restaura el estado después de la primera
