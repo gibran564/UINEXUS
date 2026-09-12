@@ -9,6 +9,14 @@ import { exploreHref } from '@/lib/urls';
 
 export const revalidate = 300;
 
+/**
+ * Qué materias se prerrenderizan.
+ *
+ * Es una OPTIMIZACIÓN, no un requisito: la ruta tiene `revalidate` y se sirve
+ * igual bajo demanda. Si al compilar no hay base de datos, `listCourses()`
+ * devuelve vacío y aquí no se prerrenderiza ninguna — ver `publicRead` en
+ * `lib/data/repository.ts`.
+ */
 export async function generateStaticParams(): Promise<{ slug: string }[]> {
   const courses = await listCourses();
   return courses.map((course) => ({ slug: course.slug }));

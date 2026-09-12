@@ -3,14 +3,22 @@
 > **Empieza aquí.** Este encabezado es el estado actual del proyecto; todo lo
 > que va debajo es el historial de cada iteración, en orden, y se conserva.
 
-## Estado — roadmap Nextudio cerrado (2026-09-12)
+## Estado — roadmap Nextudio cerrado · iniciativa activa (2026-09-12)
+
+```
+Roadmap Nextudio 0–6:   CERRADO
+Iniciativa activa:      Calificación y Rúbricas → docs/GRADING-ROADMAP.md
+```
 
 Las ocho fases de la evolución `UINexus → Nextudio` están completas. El
 producto es estable: la suite entera pasa, el build compila, y los recorridos de
 docente y estudiante se recorren de punta a punta con sesión real.
 
-**No hay una Fase 7.** Las líneas futuras posibles están listadas —sin
-compromiso— en `docs/NEXTUDIO-ROADMAP.md` §10. La siguiente decisión es humana.
+**No hay una Fase 7 y no la habrá.** Lo que hay es una iniciativa nueva e
+independiente —**Calificación y Rúbricas**, en `docs/GRADING-ROADMAP.md`— con su
+propio alcance y sus propias unidades (G0…G6). Si se abandona a mitad, el
+producto anterior sigue siendo exactamente lo que era. Las demás líneas futuras
+posibles siguen listadas, sin compromiso, en `docs/NEXTUDIO-ROADMAP.md` §10.
 
 ### Qué es Nextudio hoy
 
@@ -96,12 +104,23 @@ vivo:
 
 Razonadas una a una en `docs/LIMITATIONS.md` §14.
 
-### La siguiente decisión es humana
+### La decisión que ya se tomó
 
-El roadmap terminó. Lo que sigue —calificación, panel docente, `RemoteRunner`,
-una CSP propia, S3 local, las actualizaciones mayores— son iniciativas
-independientes con su propio coste. `docs/NEXTUDIO-ROADMAP.md` §10 las lista;
-ninguna está empezada y ninguna debería empezarse sin decidirla antes.
+El roadmap terminó, y de las líneas posibles se eligió **una**: cerrar el ciclo
+académico con calificación y rúbricas. Está diseñada en
+`docs/GRADING-ROADMAP.md`, en unidades G0…G6, con su propio criterio de
+terminación.
+
+Las demás —panel docente completo, `RemoteRunner`, una CSP propia, S3 local, las
+actualizaciones mayores— siguen sin empezar y sin comprometer, en
+`docs/NEXTUDIO-ROADMAP.md` §10.
+
+Dos riesgos preexistentes que la auditoría de esa iniciativa sacó a la luz y que
+conviene conocer antes de tocar entregas: **RG-1**, el item de una entrega puede
+pasar de los 400 KB de DynamoDB si lleva varias Partes de laboratorio llenas; y
+**RG-2**, `reviewSubmission` no tiene concurrencia optimista, así que dos
+docentes revisando la misma entrega se pisan. Razonados en
+`docs/GRADING-ROADMAP.md` §10.
 
 ---
 
