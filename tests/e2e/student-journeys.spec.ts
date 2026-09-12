@@ -246,6 +246,24 @@ test('en una actividad de varias partes, una parte se desbloquea y otra exige su
     .fill('La IA se equivocó en el segundo caso; el símplex escala mejor.');
 
   await expect(page.getByText('Todas tus partes están completas')).toBeVisible();
+
+  /**
+   * Se espera a que el botón se habilite ANTES de pulsarlo.
+   *
+   * No cambia lo que se prueba —`click()` ya espera a que esté habilitado—,
+   * cambia lo que se lee cuando falla. El botón está
+   * `disabled={busy || closed || missing.length > 0}`, y con las partes
+   * completas lo único que queda es `busy`: un autoguardado en vuelo. Las
+   * partes de texto y de IA no tienen indicador visible de guardado —sólo lo
+   * tienen los entregables de código—, así que no hay otra señal que esperar.
+   *
+   * Con la máquina cargada ese guardado se estira, y entonces `click()` agotaba
+   * los 180 s del plazo y reportaba «locator.click: Test timeout», que no dice
+   * nada. Así falla diciendo que el botón siguió deshabilitado, que es el dato.
+   */
+  await expect(page.getByRole('button', { name: 'Entregar actividad' })).toBeEnabled({
+    timeout: 60_000,
+  });
   await page.getByRole('button', { name: 'Entregar actividad' }).click();
   await page.getByRole('button', { name: 'Sí, entregar' }).click();
 
