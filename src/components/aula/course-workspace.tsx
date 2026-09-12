@@ -163,6 +163,11 @@ function Overview({
         <h2 id="recientes" className="font-display text-h3">
           Tareas recientes
         </h2>
+        {/*
+          Las tarjetas van aquí en UNA columna: el resumen vive en la parte
+          ancha de una retícula `2fr 1fr`, y dos por fila ahí dentro dejan el
+          título partido en tres líneas.
+        */}
         {recent.length === 0 ? (
           <div className="mt-4">
             <EmptyState
@@ -175,9 +180,9 @@ function Overview({
             />
           </div>
         ) : (
-          <ul className="mt-4 space-y-3">
+          <ul className="mt-4 grid gap-4">
             {recent.map((assignment) => (
-              <AssignmentRow
+              <AssignmentCard
                 key={assignment.id}
                 assignment={assignment}
                 courseId={courseId}
@@ -251,9 +256,9 @@ function AssignmentList({
           }
         />
       ) : (
-        <ul className="space-y-3">
+        <ul className="grid gap-4 sm:grid-cols-2">
           {data.assignments.map((assignment) => (
-            <AssignmentRow
+            <AssignmentCard
               key={assignment.id}
               assignment={assignment}
               courseId={courseId}
@@ -268,7 +273,24 @@ function AssignmentList({
   );
 }
 
-function AssignmentRow({
+/**
+ * Una tarea, como tarjeta.
+ *
+ * Era una fila de una línea: título, tipo y fecha. La tarjeta añade lo único
+ * que de verdad faltaba para decidir si abrirla —el objetivo, recortado a dos
+ * líneas— y deja el estado arriba a la derecha, donde se barre en diagonal sin
+ * leer el resto.
+ *
+ * Sin portada: una tarea no tiene imagen propia, y generar una (como hace
+ * `ProjectCard` con `GeneratedCover`) sería decorar una lista que se consulta
+ * para saber qué hay que hacer, no para mirarla.
+ *
+ * El enlace ocupa la tarjeta entera por el pseudoelemento —el mismo recurso que
+ * usa `ProjectCard`— en vez de envolverla: así la tarjeta se puede clicar por
+ * cualquier punto sin que el lector de pantalla tenga que recitar el título, el
+ * tipo, la fecha y el estado como si fueran el texto de un enlace.
+ */
+function AssignmentCard({
   assignment,
   courseId,
   isTeacher,
@@ -282,37 +304,50 @@ function AssignmentRow({
   progress?: { assigned: number; submitted: number; reviewed: number };
 }) {
   return (
-    <li className="panel p-4">
-      <Link
-        href={`/aula/${courseId}/tareas/${assignment.id}`}
-        className="flex flex-wrap items-center gap-4 no-underline"
-      >
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-fg">{assignment.title}</p>
-          <p className="mt-1.5 flex flex-wrap items-center gap-3 text-sm text-muted">
-            <TypeChip type={assignment.type} />
-            <DueDate value={assignment.dueDate} dueAt={assignment.dueAt} />
-            {isTeacher && !assignment.assignedToAll && (
-              <span className="text-subtle">
-                Asignada a {assignment.assignedTo?.length ?? 0} estudiantes
-              </span>
-            )}
-          </p>
-        </div>
+    <li className="panel group relative flex flex-col p-4 transition-colors hover:border-line-strong">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="min-w-0 font-display text-h3 leading-snug">
+          <Link
+            href={`/aula/${courseId}/tareas/${assignment.id}`}
+            className="rounded-xs no-underline after:absolute after:inset-0 after:content-[''] hover:underline"
+          >
+            {assignment.title}
+          </Link>
+        </h3>
 
-        {isTeacher ? (
-          <div className="flex items-center gap-3">
-            {progress && (
-              <span className="text-sm text-muted tabular-nums">
-                Entregaron {progress.submitted} / {progress.assigned}
-              </span>
-            )}
+        <span className="shrink-0">
+          {isTeacher ? (
             <AssignmentStatusBadge status={assignment.status} />
-          </div>
-        ) : (
-          <SubmissionBadge status={(status as never) ?? null} />
+          ) : (
+            <SubmissionBadge status={(status as never) ?? null} />
+          )}
+        </span>
+      </div>
+
+      {assignment.description && (
+        <p className="mt-2 line-clamp-2 text-sm text-muted">{assignment.description}</p>
+      )}
+
+      {/*
+        `mt-auto` pega el pie al fondo: las tarjetas de una fila miden lo mismo
+        porque la retícula las estira, y sin esto la fecha de cada una quedaría
+        a una altura distinta según lo largo que fuera su objetivo.
+      */}
+      <p className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 pt-3 text-sm text-muted">
+        <TypeChip type={assignment.type} />
+        {assignment.collaborationMode === 'shared' && <span className="tag">En grupo</span>}
+        <DueDate value={assignment.dueDate} dueAt={assignment.dueAt} />
+        {isTeacher && progress && (
+          <span className="tabular-nums">
+            Entregaron {progress.submitted} / {progress.assigned}
+          </span>
         )}
-      </Link>
+        {isTeacher && !assignment.assignedToAll && (
+          <span className="text-subtle">
+            Asignada a {assignment.assignedTo?.length ?? 0} estudiantes
+          </span>
+        )}
+      </p>
     </li>
   );
 }
