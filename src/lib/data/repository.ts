@@ -47,6 +47,64 @@ export function isDemoMode(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Compilar no puede exigir una base de datos
+// ---------------------------------------------------------------------------
+
+/**
+ * ¿Estamos DENTRO de `next build`?
+ *
+ * Next pone esta variable sólo durante la compilación de producción. No sirve
+ * `NODE_ENV`, que vale `production` también cuando el servidor ya está
+ * atendiendo peticiones de verdad —y que además webpack inlinea, como quedó
+ * documentado al montar `npm run prod:local`—.
+ */
+function duringProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === 'phase-production-build';
+}
+
+/**
+ * Una lectura pública que puede faltar MIENTRAS SE COMPILA, y sólo entonces.
+ *
+ * ## El fallo que esto corrige
+ *
+ * La compilación en Vercel no lleva credenciales de AWS: el SDK las resuelve en
+ * tiempo de PETICIÓN, no de build. Cada página pública prerrenderizada que lee
+ * datos —`/courses`, `/courses/[slug]`, `/sitemap.xml`— lanzaba entonces
+ * `CredentialsProviderError` y **tiraba el despliegue entero**. En una máquina
+ * de desarrollo no se ve, porque ahí sí hay credenciales.
+ *
+ * Se arreglaron una a una y cada arreglo destapaba la siguiente, que es la
+ * señal de que el problema no estaba en ninguna de ellas: la regla que faltaba
+ * es **compilar Nextudio no puede exigir una base de datos alcanzable**. Es la
+ * misma que sostiene `npm run prod:local`, que sirve la compilación real sin
+ * base de datos.
+ *
+ * ## Por qué esto NO es tragarse errores
+ *
+ * Fuera del build vuelve a lanzar, intacto. Una consulta que falle atendiendo a
+ * una persona sigue siendo un error y se ve como tal. Lo único que cambia es
+ * que, al PRERRENDERIZAR, una página pública se genera vacía en vez de abortar
+ * el despliegue: `revalidate` la rellenará en cuanto haya datos, y mientras
+ * tanto el sitio existe. Un sitio desplegado con una galería vacía es
+ * recuperable; un despliegue fallido no.
+ *
+ * El motivo se registra siempre. Una lista vacía sin explicación en el log es
+ * justo el fallo que nadie encuentra.
+ */
+async function publicRead<T>(what: string, read: () => Promise<T>, empty: T): Promise<T> {
+  try {
+    return await read();
+  } catch (caught) {
+    if (!duringProductionBuild()) throw caught;
+    console.warn(
+      `[${what}] Sin base de datos al compilar; se prerrenderiza vacío y se servirá bajo demanda.`,
+      caught instanceof Error ? caught.message : caught
+    );
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Filtrado y orden (compartidos por ambas implementaciones para que el
 // comportamiento observable sea idéntico)
 // ---------------------------------------------------------------------------
@@ -111,19 +169,27 @@ async function readPublishedRecords(): Promise<Project[]> {
     return toPublicProjects(DEMO_PROJECTS.filter((project) => project.status === 'published'));
   }
 
-  const result = await db.send(
-    new QueryCommand({
-      TableName: TABLES.projects,
-      IndexName: INDEXES.projectsByStatus,
-      KeyConditionExpression: '#s = :published',
-      ExpressionAttributeNames: { '#s': 'statusKey' },
-      ExpressionAttributeValues: { ':published': PUBLISHED_KEY },
-      ScanIndexForward: false, // publishedAt descendente
-      Limit: HOT_PAGE_SIZE,
-    })
-  );
+  // Una sola envoltura cubre la galería, la portada, las facetas, los grupos y
+  // el sitemap: todos leen de aquí. Ver `publicRead`.
+  return publicRead(
+    'proyectos',
+    async () => {
+      const result = await db.send(
+        new QueryCommand({
+          TableName: TABLES.projects,
+          IndexName: INDEXES.projectsByStatus,
+          KeyConditionExpression: '#s = :published',
+          ExpressionAttributeNames: { '#s': 'statusKey' },
+          ExpressionAttributeValues: { ':published': PUBLISHED_KEY },
+          ScanIndexForward: false, // publishedAt descendente
+          Limit: HOT_PAGE_SIZE,
+        })
+      );
 
-  return toPublicProjects((result.Items ?? []) as ProjectRecord[]);
+      return toPublicProjects((result.Items ?? []) as ProjectRecord[]);
+    },
+    []
+  );
 }
 
 export async function listProjects(
@@ -285,21 +351,27 @@ export async function listCourses(): Promise<Course[]> {
   const db = getDynamo();
   if (!db) return DEMO_COURSES;
 
-  // La tabla de cursos es pequeña por naturaleza (unas decenas por institución):
-  // un Scan con filtro cuesta menos que mantener un índice para ello.
-  const result = await db.send(
-    new ScanCommand({
-      TableName: TABLES.courses,
-      FilterExpression: '#v = :public',
-      ExpressionAttributeNames: { '#v': 'visibility' },
-      ExpressionAttributeValues: { ':public': 'public' },
-    })
-  );
+  return publicRead(
+    'materias',
+    async () => {
+      // La tabla de cursos es pequeña por naturaleza (unas decenas por
+      // institución): un Scan con filtro cuesta menos que mantener un índice.
+      const result = await db.send(
+        new ScanCommand({
+          TableName: TABLES.courses,
+          FilterExpression: '#v = :public',
+          ExpressionAttributeNames: { '#v': 'visibility' },
+          ExpressionAttributeValues: { ':public': 'public' },
+        })
+      );
 
-  return ((result.Items ?? []) as Course[]).map((course) => ({
-    ...course,
-    activities: course.activities ?? [],
-  }));
+      return ((result.Items ?? []) as Course[]).map((course) => ({
+        ...course,
+        activities: course.activities ?? [],
+      }));
+    },
+    []
+  );
 }
 
 export async function getCourseBySlug(slug: string): Promise<Course | null> {
@@ -379,18 +451,24 @@ export async function listPublicHandles(): Promise<string[]> {
   const db = getDynamo();
   if (!db) return DEMO_USERS.filter((user) => user.role === 'student').map((u) => u.handle);
 
-  const result = await db.send(
-    new ScanCommand({
-      TableName: TABLES.users,
-      ProjectionExpression: '#h, #s',
-      ExpressionAttributeNames: { '#h': 'handle', '#s': 'suspended' },
-      Limit: 1000,
-    })
-  );
+  return publicRead(
+    'perfiles',
+    async () => {
+      const result = await db.send(
+        new ScanCommand({
+          TableName: TABLES.users,
+          ProjectionExpression: '#h, #s',
+          ExpressionAttributeNames: { '#h': 'handle', '#s': 'suspended' },
+          Limit: 1000,
+        })
+      );
 
-  return ((result.Items ?? []) as { handle?: string; suspended?: boolean }[])
-    .filter((user): user is { handle: string; suspended?: boolean } =>
-      Boolean(user.handle) && !user.suspended
-    )
-    .map((user) => user.handle);
+      return ((result.Items ?? []) as { handle?: string; suspended?: boolean }[])
+        .filter((user): user is { handle: string; suspended?: boolean } =>
+          Boolean(user.handle) && !user.suspended
+        )
+        .map((user) => user.handle);
+    },
+    []
+  );
 }

@@ -1017,3 +1017,31 @@ sin poder probarse en el sandbox. Fallan con un error legible, no en silencio.
 **La barra de navegación no se rediseñó.** Se corrigió el desbordamiento donde
 estaba la causa, pero a 360 px la barra sigue apretada: marca, búsqueda,
 publicar, cuenta y menú. Si crece un control más, volverá a no caber.
+
+---
+
+### 15. Una entrega con varias Partes de laboratorio puede no caber (RG-1)
+
+Encontrado al auditar el modelo para la iniciativa de calificación
+(`docs/GRADING-ROADMAP.md`), no en un fallo real de producción.
+
+Una `Submission` es **un** item de DynamoDB, y el límite duro de un item son
+**400 KB**. Dentro caben hasta 25 Partes (`WORKFLOW_LIMITS.maxSteps`), y cada
+Parte de laboratorio guarda un **snapshot completo del NexBook**, presupuestado
+en 300 000 bytes (`NEXBOOK_LIMITS.documentBytes`). **Dos Partes de laboratorio
+llenas ya no caben.**
+
+Cada snapshot se valida por separado —`nexBookDocumentSchema` comprueba
+`documentBytes` sobre el JSON serializado— pero **no hay ningún tope agregado
+sobre `stepEvidence`**, así que el fallo llegaría desde DynamoDB como
+`ValidationException: Item size has exceeded the maximum allowed size`, que es
+justamente el error ilegible que `NEXBOOK_LIMITS` existe para evitar.
+
+Por qué no se ha visto: hace falta una actividad por partes con dos o más
+laboratorios y documentos grandes de verdad —muchas salidas guardadas, tablas,
+imágenes en Base64—. Ninguna actividad sembrada ni ninguna prueba llega ahí.
+
+El arreglo es pequeño y tiene sitio evidente: un presupuesto agregado sobre la
+entrega entera al validarla, con el mismo mensaje temprano y legible que ya dan
+los topes de un NexBook. No se hizo al encontrarlo porque tocar la validación de
+entregas no era el alcance de la auditoría que lo descubrió.
