@@ -20,6 +20,7 @@ import type { CodeRunResult } from '@/lib/code-runner-contract';
 import {
   canRunInBrowser,
   getBrowserCodeRunner,
+  resolveExecutionLanguage,
   type BrowserCodeRunner,
   type BrowserCodeRunnerStatus,
 } from '@/lib/browser-code-runner';
@@ -130,6 +131,8 @@ export interface CodeEditorProps {
   /** El programa inicial de la docente, si lo hay. Habilita «Restablecer». */
   starterCode?: string;
   executionEnabled?: boolean;
+  /** Lenguaje del archivo que realmente se ejecuta (entryFile) cuando no es el visible. */
+  executionLanguage?: ProgrammingLanguage;
   /** Fuente que se ejecuta cuando no coincide con el buffer visible (proyectos multiarchivo). */
   executionSource?: string;
   /** Persiste el fuente antes de entregárselo a un ejecutor aislado. */
@@ -147,6 +150,7 @@ export function CodeEditor({
   readOnly = false,
   starterCode = '',
   executionEnabled = false,
+  executionLanguage,
   executionSource,
   beforeExecute,
   height = 420,
@@ -162,7 +166,9 @@ export function CodeEditor({
 
   const runnerRef = useRef<BrowserCodeRunner | null>(null);
   const executeRef = useRef<() => void>(() => undefined);
-  const label = programmingLanguageLabel(language);
+  const runnerLanguage = resolveExecutionLanguage(language, executionLanguage);
+  const editorLanguageLabel = programmingLanguageLabel(language);
+  const executionLanguageLabel = programmingLanguageLabel(runnerLanguage);
 
   /**
    * Tres estados, no dos.
@@ -172,9 +178,9 @@ export function CodeEditor({
    * compilan aquí, y callarlo dejaría a alguien buscando un botón que no
    * existe. El tercero —la actividad no pide ejecutar— no muestra nada.
    */
-  const runnable = executionEnabled && canRunInBrowser(language);
+  const runnable = executionEnabled && canRunInBrowser(runnerLanguage);
   const unavailable = executionEnabled && !runnable;
-  const executionNote = languageExecutionNote(language);
+  const executionNote = languageExecutionNote(runnerLanguage);
 
   useEffect(() => {
     setTheme(currentEditorTheme());
@@ -194,7 +200,7 @@ export function CodeEditor({
     return () => clearTimeout(timer);
   }, [mounted, fallback]);
 
-  // Cambiar de lenguaje invalida el runtime: el de Python no ejecuta R.
+  // Cambiar el lenguaje ejecutable invalida el runtime: el de Python no ejecuta R.
   useEffect(() => {
     const previous = runnerRef.current;
     runnerRef.current = null;
@@ -203,7 +209,7 @@ export function CodeEditor({
     return () => {
       void previous?.dispose();
     };
-  }, [language]);
+  }, [runnerLanguage]);
 
   useEffect(
     () => () => {
@@ -235,16 +241,28 @@ export function CodeEditor({
     if (!runner) {
       // El runtime se arranca AQUÍ, en la primera ejecución. Abrir una tarea de
       // programación no puede costar 13 MB de WebAssembly que nadie pidió.
-      runner = getBrowserCodeRunner(language, { onStatusChange: setRuntimeStatus });
+      runner = getBrowserCodeRunner(runnerLanguage, { onStatusChange: setRuntimeStatus });
       runnerRef.current = runner;
     }
     if (!runner) {
-      setResult(rejectedResult(`La ejecución de ${label} no está disponible en este navegador.`));
+      setResult(
+        rejectedResult(
+          `La ejecución de ${executionLanguageLabel} no está disponible en este navegador.`
+        )
+      );
       return;
     }
 
-    setResult(await runner.run({ language, source: executionSource ?? value }));
-  }, [beforeExecute, executionSource, label, language, runnable, runtimeStatus, value]);
+    setResult(await runner.run({ language: runnerLanguage, source: executionSource ?? value }));
+  }, [
+    beforeExecute,
+    executionLanguageLabel,
+    executionSource,
+    runnable,
+    runnerLanguage,
+    runtimeStatus,
+    value,
+  ]);
 
   executeRef.current = () => void execute();
 
@@ -263,7 +281,7 @@ export function CodeEditor({
   }
 
   const busy = runtimeStatus === 'running' || runtimeStatus === 'preparing';
-  const editorLabel = ariaLabel ?? `Editor de código ${label}`;
+  const editorLabel = ariaLabel ?? `Editor de código ${editorLanguageLabel}`;
   const canReset = !readOnly && Boolean(starterCode) && Boolean(onChange);
   const resetWouldDiscard = value.trim().length > 0 && value !== starterCode;
 
@@ -372,21 +390,24 @@ export function CodeEditor({
       {unavailable && (
         <section
           className="rounded-sm border border-line bg-sunken px-3 py-3"
-          aria-label={`Ejecución de ${label}`}
+          aria-label={`Ejecución de ${executionLanguageLabel}`}
         >
           <p className="text-sm font-medium">Ejecución no disponible</p>
           <p className="mt-1 text-sm text-muted">
-            {executionNote ?? `Nextudio todavía no puede ejecutar ${label}.`} Guardar y entregar
+            {executionNote ?? `Nextudio todavía no puede ejecutar ${executionLanguageLabel}.`} Guardar y entregar
             funciona con normalidad.
           </p>
         </section>
       )}
 
       {runnable && (
-        <section className="rounded-sm border border-line bg-sunken" aria-label={`Ejecución de ${label}`}>
+        <section
+          className="rounded-sm border border-line bg-sunken"
+          aria-label={`Ejecución de ${executionLanguageLabel}`}
+        >
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-3 py-2">
             <p className="text-sm font-medium" role="status">
-              {executionStatusLabel(runtimeStatus, result, label)}
+              {executionStatusLabel(runtimeStatus, result, executionLanguageLabel)}
             </p>
             <div className="flex flex-wrap gap-2">
               {busy && (
@@ -409,7 +430,7 @@ export function CodeEditor({
           {busy ? (
             <p className="px-3 py-3 text-sm text-muted">
               {runtimeStatus === 'preparing'
-                ? `Preparando ${label}… la primera vez tarda unos segundos.`
+                ? `Preparando ${executionLanguageLabel}… la primera vez tarda unos segundos.`
                 : 'Ejecutando…'}
             </p>
           ) : result ? (

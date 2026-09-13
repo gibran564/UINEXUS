@@ -99,6 +99,13 @@ function defaultWorkerFactory(language: BrowserRuntimeLanguage): Worker {
   });
 }
 
+export function resolveExecutionLanguage(
+  editorLanguage: ProgrammingLanguage,
+  executionLanguage?: ProgrammingLanguage
+): ProgrammingLanguage {
+  return executionLanguage ?? editorLanguage;
+}
+
 export function getBrowserCodeRunner(
   language: ProgrammingLanguage,
   options: BrowserCodeRunnerOptions = {}
