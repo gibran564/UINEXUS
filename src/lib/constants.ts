@@ -648,7 +648,8 @@ export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
     extension: 'js',
     monacoLanguage: 'javascript',
     capabilities: WEB_PROJECT_LANGUAGE,
-    executionNote: 'El JavaScript de un proyecto se ejecuta al publicarlo, en el origen aislado.',
+    executionNote:
+      'Puedes probar JavaScript dentro de la vista previa de NexCode, y publicarlo después en el origen aislado.',
   },
   {
     value: 'html',
@@ -656,7 +657,8 @@ export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
     extension: 'html',
     monacoLanguage: 'html',
     capabilities: WEB_PROJECT_LANGUAGE,
-    executionNote: 'El HTML se ve al publicar el proyecto, en el origen aislado.',
+    executionNote:
+      'Puedes ver el HTML en la vista previa de NexCode, y publicarlo después en el origen aislado.',
   },
   {
     value: 'css',
@@ -664,7 +666,8 @@ export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
     extension: 'css',
     monacoLanguage: 'css',
     capabilities: WEB_PROJECT_LANGUAGE,
-    executionNote: 'El CSS se ve al publicar el proyecto, en el origen aislado.',
+    executionNote:
+      'Puedes ver los estilos CSS en la vista previa de NexCode, y publicarlos después en el origen aislado.',
   },
   {
     value: 'sql',

@@ -17,8 +17,10 @@ import {
   createWorkspaceFile,
   deleteWorkspaceFile,
   detectLanguageFromPath,
+  pickWebPreviewEntry,
   renameWorkspaceFile,
   validateWorkspaceFilesConsistency,
+  workspaceFilesToStagedFiles,
 } from '../../src/lib/workspace-files';
 
 /**
@@ -449,5 +451,86 @@ describe('navegar un proyecto multiarchivo', () => {
         'main.py'
       )
     ).toThrow('al menos un archivo');
+  });
+});
+
+describe('elegir la entrada de la vista previa web', () => {
+  it('prefiere el archivo de entrada cuando es HTML y existe', () => {
+    const files = { 'index.html': 'raíz', 'pages/demo.htm': 'entrada' };
+    expect(pickWebPreviewEntry(files, 'pages/demo.htm')).toBe('pages/demo.htm');
+  });
+
+  it('elige index.html cuando la entrada no es HTML', () => {
+    expect(pickWebPreviewEntry({ 'main.js': '', 'index.html': '' }, 'main.js')).toBe(
+      'index.html'
+    );
+  });
+
+  it('prefiere el index de la raíz al de un subdirectorio', () => {
+    const files = { 'pages/index.html': '', 'index.htm': '' };
+    expect(pickWebPreviewEntry(files, 'main.js')).toBe('index.htm');
+  });
+
+  it('elige el único HTML cuando no hay index', () => {
+    expect(pickWebPreviewEntry({ 'demo.HTML': '', 'styles.css': '' }, 'styles.css')).toBe(
+      'demo.HTML'
+    );
+  });
+
+  it('no adivina entre dos HTML sin index ni entrada HTML', () => {
+    expect(pickWebPreviewEntry({ 'a.html': '', 'b.htm': '' }, 'main.js')).toBeNull();
+  });
+
+  it('devuelve null si el proyecto no contiene HTML', () => {
+    expect(pickWebPreviewEntry({ 'main.js': '', 'styles.css': '' }, 'main.js')).toBeNull();
+  });
+
+  it('no elige una entrada HTML que no pertenece a files', () => {
+    expect(pickWebPreviewEntry({ 'main.js': '' }, 'ausente.html')).toBeNull();
+  });
+});
+
+describe('adaptar archivos del workspace para la vista previa', () => {
+  it('asigna el Content-Type correcto a los formatos web admitidos', () => {
+    const staged = workspaceFilesToStagedFiles({
+      'index.html': '',
+      'styles.css': '',
+      'script.js': '',
+      'data.json': '',
+      'logo.svg': '',
+    });
+
+    expect(Object.fromEntries(staged.map((file) => [file.path, file.contentType]))).toEqual({
+      'index.html': 'text/html',
+      'styles.css': 'text/css',
+      'script.js': 'text/javascript',
+      'data.json': 'application/json',
+      'logo.svg': 'image/svg+xml',
+    });
+  });
+
+  it('mide bytes del Blob, no unidades UTF-16', () => {
+    const source = 'á';
+    const [file] = workspaceFilesToStagedFiles({ 'index.html': source });
+
+    expect(file?.size).toBe(new Blob([source]).size);
+    expect(file?.size).not.toBe(source.length);
+  });
+
+  it('descarta extensiones no admitidas', () => {
+    expect(
+      workspaceFilesToStagedFiles({ 'index.html': '', 'analisis.py': 'print(1)' }).map(
+        (file) => file.path
+      )
+    ).toEqual(['index.html']);
+  });
+
+  it('no modifica el mapa recibido', () => {
+    const files = { 'index.html': '<h1>Hola</h1>', 'script.js': 'console.log(1)' };
+    const snapshot = structuredClone(files);
+
+    workspaceFilesToStagedFiles(files);
+
+    expect(files).toEqual(snapshot);
   });
 });

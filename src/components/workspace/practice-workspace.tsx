@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { CodeEditor, sourceFilenameFor } from '@/components/aula/code-editor';
 import { Notice } from '@/components/aula/aula-ui';
+import { WorkspacePreview } from '@/components/workspace/workspace-preview';
 import { patchWorkspace, useApi } from '@/lib/aula-client';
 import { programmingLanguageLabel } from '@/lib/constants';
 import {
@@ -11,6 +12,7 @@ import {
   createWorkspaceFile,
   deleteWorkspaceFile,
   detectLanguageFromPath,
+  pickWebPreviewEntry,
   renameWorkspaceFile,
   type WorkspaceFileState,
   type WorkspaceFileTreeNode,
@@ -23,6 +25,7 @@ import type { Workspace } from '@/lib/types';
 const AUTOSAVE_DELAY_MS = 800;
 const AUTOSAVE_RETRY_MS = 2_000;
 const MAX_AUTOSAVE_RETRIES = 1;
+const PREVIEW_DELAY_MS = 400;
 
 export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
   const { data, state, error } = useApi<{ workspace: Workspace }>(
@@ -38,6 +41,8 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
   const [saveState, setSaveState] = useState<CodeSaveState>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'preview'>('editor');
+  const [previewFiles, setPreviewFiles] = useState<Record<string, string> | null>(null);
 
   const filesRef = useRef(files);
   const entryFileRef = useRef(entryFile);
@@ -48,6 +53,18 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
   const inFlightRef = useRef<Promise<void> | null>(null);
   const retryCountRef = useRef(0);
   const flushRef = useRef<() => Promise<void>>(async () => undefined);
+
+  const previewEntry = pickWebPreviewEntry(files, entryFile);
+
+  useEffect(() => {
+    if (workspaceMode !== 'preview') return;
+    const timer = setTimeout(() => setPreviewFiles({ ...files }), PREVIEW_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [files, workspaceMode]);
+
+  useEffect(() => {
+    if (!previewEntry && workspaceMode === 'preview') setWorkspaceMode('editor');
+  }, [previewEntry, workspaceMode]);
 
   const replaceProject = useCallback((next: WorkspaceFileState, isMultiFile = true): void => {
     filesRef.current = next.files;
@@ -296,35 +313,79 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
         </aside>
 
         <main className="min-w-0 bg-surface">
-          <WorkspaceTabs
-            paths={Object.keys(files).sort((left, right) => left.localeCompare(right))}
-            activeFile={activeFile}
-            entryFile={entryFile}
-            onSelect={selectFile}
-          />
-          <div className="p-3 sm:p-4">
-            {activeFile ? (
-              <CodeEditor
-                language={activeLanguage}
-                executionLanguage={entryLanguage}
-                value={files[activeFile] ?? ''}
-                onChange={edit}
-                executionEnabled
-                executionSource={files[entryFile] ?? ''}
-                // El workspace legacy usa una clave virtual; enviarla cambiaría
-                // una ejecución de un archivo por una ejecución de proyecto.
-                executionFiles={multiFile ? files : undefined}
-                executionEntryFile={multiFile ? entryFile : undefined}
-                beforeExecute={flush}
-                height={460}
-                ariaLabel={`Archivo ${activeFile} en ${programmingLanguageLabel(activeLanguage)}`}
-              />
-            ) : (
-              <div className="flex min-h-[460px] items-center justify-center p-8 text-center text-sm text-muted">
-                Crea un archivo para empezar a editar este proyecto.
+          {previewEntry && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2 sm:px-4">
+              <div className="flex gap-2" aria-label="Vista del proyecto">
+                <button
+                  type="button"
+                  className={`chip ${workspaceMode === 'editor' ? 'chip-selected' : ''}`}
+                  aria-pressed={workspaceMode === 'editor'}
+                  onClick={() => setWorkspaceMode('editor')}
+                >
+                  Editor
+                </button>
+                <button
+                  type="button"
+                  className={`chip ${workspaceMode === 'preview' ? 'chip-selected' : ''}`}
+                  aria-pressed={workspaceMode === 'preview'}
+                  onClick={() => {
+                    setPreviewFiles({ ...files });
+                    setWorkspaceMode('preview');
+                  }}
+                >
+                  Vista previa
+                </button>
               </div>
-            )}
+              {workspaceMode === 'preview' && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setPreviewFiles({ ...files })}
+                >
+                  Actualizar vista previa
+                </button>
+              )}
+            </div>
+          )}
+          {/* Oculto y NO desmontado: desmontarlo tiraría el modelo de Monaco, y
+              con él el deshacer y la posición del cursor de quien sólo quería
+              echar un vistazo a la vista previa. */}
+          <div hidden={workspaceMode !== 'editor'}>
+            <WorkspaceTabs
+              paths={Object.keys(files).sort((left, right) => left.localeCompare(right))}
+              activeFile={activeFile}
+              entryFile={entryFile}
+              onSelect={selectFile}
+            />
+            <div className="p-3 sm:p-4">
+              {activeFile ? (
+                <CodeEditor
+                  language={activeLanguage}
+                  executionLanguage={entryLanguage}
+                  value={files[activeFile] ?? ''}
+                  onChange={edit}
+                  executionEnabled
+                  executionSource={files[entryFile] ?? ''}
+                  // El workspace legacy usa una clave virtual; enviarla cambiaría
+                  // una ejecución de un archivo por una ejecución de proyecto.
+                  executionFiles={multiFile ? files : undefined}
+                  executionEntryFile={multiFile ? entryFile : undefined}
+                  beforeExecute={flush}
+                  height={460}
+                  ariaLabel={`Archivo ${activeFile} en ${programmingLanguageLabel(activeLanguage)}`}
+                />
+              ) : (
+                <div className="flex min-h-[460px] items-center justify-center p-8 text-center text-sm text-muted">
+                  Crea un archivo para empezar a editar este proyecto.
+                </div>
+              )}
+            </div>
           </div>
+          {workspaceMode === 'preview' && previewFiles && (
+            <div className="p-3 sm:p-4">
+              <WorkspacePreview files={previewFiles} entryFile={entryFile} />
+            </div>
+          )}
         </main>
       </div>
     </div>
