@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
+  workspaceFilesSchema,
   workspaceInputSchema,
+  workspacePathSchema,
   workspacePatchSchema,
 } from '../../src/lib/academic-schemas';
 import { normalizeWorkspace, toWorkspace } from '../../src/lib/data/workspaces';
-import { ACADEMIC_LIMITS, DEFAULT_PROGRAMMING_LANGUAGE } from '../../src/lib/constants';
+import {
+  ACADEMIC_LIMITS,
+  DEFAULT_PROGRAMMING_LANGUAGE,
+  WORKSPACE_LIMITS,
+} from '../../src/lib/constants';
 import type { WorkspaceRecord } from '../../src/lib/types';
+import { validateWorkspaceFilesConsistency } from '../../src/lib/workspace-files';
 
 /**
  * Prácticas de programación.
@@ -155,6 +162,14 @@ describe('leer un registro guardado', () => {
   it('un registro sin título se lee con uno, no con un hueco', () => {
     expect(normalizeWorkspace({ id: 'ws-3' }).title).toBeTruthy();
   });
+
+  it('un workspace legacy conserva exactamente su código sin inventar archivos', () => {
+    const normalized = normalizeWorkspace(record());
+
+    expect(normalized.code).toBe('print(2 + 2)');
+    expect('entryFile' in normalized).toBe(false);
+    expect('files' in normalized).toBe(false);
+  });
 });
 
 describe('la puerta a varios archivos', () => {
@@ -165,24 +180,132 @@ describe('la puerta a varios archivos', () => {
     expect('files' in normalized).toBe(false);
   });
 
-  it('si un registro ya trae `files`, se conserva tal cual', () => {
+  it('si un registro ya trae `files` y `entryFile`, se conservan tal cual', () => {
     const files = { 'main.py': 'import utils', 'utils.py': 'x = 1' };
-    const normalized = normalizeWorkspace(record({ files }));
+    const normalized = normalizeWorkspace(record({ entryFile: 'main.py', files }));
 
     expect(normalized.files).toEqual(files);
+    expect(normalized.entryFile).toBe('main.py');
     // Y `code` sigue siendo el archivo de entrada: es lo que se ejecuta.
     expect(normalized.code).toBe('print(2 + 2)');
   });
 
-  it('el esquema de entrada todavía no acepta `files`', () => {
-    // Aceptarlo antes de que el editor sepa escribirlos crearía registros que
-    // ninguna pantalla puede abrir.
+  it('acepta varios archivos y normaliza sus separadores', () => {
     const parsed = workspaceInputSchema.safeParse({
       title: 'Multi',
-      files: { 'a.py': 'x' },
+      entryFile: 'src\\main.py',
+      files: { 'src\\main.py': 'print(1)', 'src/utils.py': 'x = 1' },
     });
 
     expect(parsed.success).toBe(true);
-    if (parsed.success) expect('files' in parsed.data).toBe(false);
+    if (parsed.success) {
+      expect(parsed.data.entryFile).toBe('src/main.py');
+      expect(parsed.data.files).toEqual({
+        'src/main.py': 'print(1)',
+        'src/utils.py': 'x = 1',
+      });
+    }
+  });
+
+  it('valida la consistencia entre files y entryFile sin depender del esquema', () => {
+    expect(validateWorkspaceFilesConsistency(undefined, undefined).valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency({ 'main.ts': 'x' }, undefined).valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency(undefined, 'main.ts').valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency({ 'main.ts': '' }, 'main.ts').valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency({ 'other.ts': 'x' }, 'main.ts')).toEqual({
+      valid: false,
+      error: 'El archivo de entrada debe existir en files.',
+    });
+
+    const inheritedFiles = Object.create({ 'main.ts': 'x' }) as Record<string, string>;
+    expect(validateWorkspaceFilesConsistency(inheritedFiles, 'main.ts').valid).toBe(false);
+  });
+
+  it.each([
+    '',
+    '../secret.ts',
+    'src/../secret.ts',
+    '/etc/passwd',
+    'C:\\secret.ts',
+    '\\\\server\\secret.ts',
+    '.env',
+    'src/.git/config',
+    'src//main.ts',
+    'src/a?.ts',
+    `src/${'a'.repeat(101)}.ts`,
+    'a'.repeat(WORKSPACE_LIMITS.maxFilePathLength + 1),
+    'src/nu\0ll.ts',
+  ])('rechaza la ruta insegura %j', (path) => {
+    expect(workspacePathSchema.safeParse(path).success).toBe(false);
+  });
+
+  it('rechaza rutas duplicadas después de normalizar', () => {
+    expect(
+      workspaceFilesSchema.safeParse({ 'src/main.ts': 'a', 'src\\main.ts': 'b' }).success
+    ).toBe(false);
+  });
+
+  it('aplica el límite de cantidad de archivos', () => {
+    const files = Object.fromEntries(
+      Array.from({ length: WORKSPACE_LIMITS.maxFiles }, (_, index) => [`file-${index}.ts`, 'x'])
+    );
+
+    expect(workspaceFilesSchema.safeParse(files).success).toBe(true);
+    expect(workspaceFilesSchema.safeParse({ ...files, 'one-more.ts': 'x' }).success).toBe(false);
+  });
+
+  it('aplica los límites por archivo y del contenido total', () => {
+    expect(
+      workspaceFilesSchema.safeParse({ 'main.ts': 'x'.repeat(WORKSPACE_LIMITS.maxFileSize) }).success
+    ).toBe(true);
+    expect(
+      workspaceFilesSchema.safeParse({ 'main.ts': 'x'.repeat(WORKSPACE_LIMITS.maxFileSize + 1) })
+        .success
+    ).toBe(false);
+
+    const atTotalLimit = Object.fromEntries(
+      Array.from({ length: 5 }, (_, index) => [
+        `file-${index}.ts`,
+        'x'.repeat(WORKSPACE_LIMITS.maxFileSize),
+      ])
+    );
+    expect(workspaceFilesSchema.safeParse(atTotalLimit).success).toBe(true);
+    expect(
+      workspaceFilesSchema.safeParse({ ...atTotalLimit, 'extra.ts': 'x' }).success
+    ).toBe(false);
+  });
+
+  it('exige que el archivo de entrada exista cuando también vienen los archivos', () => {
+    expect(
+      workspaceInputSchema.safeParse({
+        title: 'Vacío pero válido',
+        entryFile: 'main.ts',
+        files: { 'main.ts': '' },
+      }).success
+    ).toBe(true);
+    expect(
+      workspaceInputSchema.safeParse({
+        title: 'Falta la entrada',
+        entryFile: 'main.ts',
+        files: { 'other.ts': '' },
+      }).success
+    ).toBe(false);
+  });
+
+  it('permite guardar parcialmente files y entryFile', () => {
+    expect(workspacePatchSchema.safeParse({ files: { 'main.ts': 'x' } }).success).toBe(true);
+    expect(workspacePatchSchema.safeParse({ entryFile: 'main.ts' }).success).toBe(true);
+    expect(
+      workspacePatchSchema.safeParse({
+        files: { 'main.ts': 'x' },
+        entryFile: 'main.ts',
+      }).success
+    ).toBe(true);
+    expect(
+      workspacePatchSchema.safeParse({
+        files: { 'other.ts': 'x' },
+        entryFile: 'main.ts',
+      }).success
+    ).toBe(false);
   });
 });
