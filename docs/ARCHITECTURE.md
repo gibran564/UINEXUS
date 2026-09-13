@@ -508,6 +508,21 @@ El corolario, que conviene tener presente: la ejecución **no es una corrección
 automática**. Cada estudiante ejecuta en su máquina, con su CPU y su memoria. La
 salida no se guarda ni se compara con nada.
 
+### Proveedores de ejecución
+
+**Browser** es el proveedor disponible hoy: ejecuta Python con Pyodide y R con
+webR en la máquina de cada estudiante. El coste de cómputo lo asume el cliente y
+esa ejecución sirve para probar el programa, no como corrección automática.
+
+**Bridge** será ejecución local administrada, con toolchains que Nextudio
+instalará y versionará sin depender de lo que cada persona tenga en su `PATH`.
+**Cloud** será ejecución controlada, útil como respaldo y para exámenes, pero no
+el camino principal por su coste.
+
+Hoy sólo Browser está disponible. Bridge y Cloud existen como declaraciones de
+capacidades y placeholders no ejecutables, para que incorporarlos después no
+obligue a rehacer `CodeEditor`.
+
 ### Un contrato, dos motores, ninguna arquitectura duplicada
 
 ```
