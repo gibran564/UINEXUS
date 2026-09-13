@@ -151,6 +151,13 @@ describe('resolveExecutionProvider', () => {
     });
   });
 
+  it('no elige un runtime sin versiones cuando se pide una concreta', () => {
+    const bridge = provider('bridge', [runtime('java')]);
+    expect(resolveExecutionProvider(javaRequest, [bridge], 'bridge-required', '21')).toMatchObject({
+      kind: 'unavailable',
+    });
+  });
+
   it('nunca elige un proveedor no disponible aunque declare el lenguaje', () => {
     const unavailable = provider('bridge', [runtime('java')], false);
     expect(resolveExecutionProvider(javaRequest, [unavailable], 'bridge-required')).toMatchObject({
