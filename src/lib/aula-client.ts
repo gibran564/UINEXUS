@@ -592,7 +592,13 @@ export const createWorkspace = (body: {
 /** Guarda sólo lo que cambió: es lo que usa el autoguardado del editor. */
 export const patchWorkspace = (
   workspaceId: string,
-  changes: { title?: string; code?: string; language?: string }
+  changes: {
+    title?: string;
+    code?: string;
+    language?: string;
+    entryFile?: string;
+    files?: Record<string, string>;
+  }
 ) =>
   apiFetch<{ workspace: Workspace }>(`/api/workspaces/${workspaceId}`, {
     method: 'PATCH',
