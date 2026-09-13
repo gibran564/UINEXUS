@@ -12,6 +12,7 @@ import {
   WORKSPACE_LIMITS,
 } from '../../src/lib/constants';
 import type { WorkspaceRecord } from '../../src/lib/types';
+import { validateWorkspaceFilesConsistency } from '../../src/lib/workspace-files';
 
 /**
  * Prácticas de programación.
@@ -204,6 +205,20 @@ describe('la puerta a varios archivos', () => {
         'src/utils.py': 'x = 1',
       });
     }
+  });
+
+  it('valida la consistencia entre files y entryFile sin depender del esquema', () => {
+    expect(validateWorkspaceFilesConsistency(undefined, undefined).valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency({ 'main.ts': 'x' }, undefined).valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency(undefined, 'main.ts').valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency({ 'main.ts': '' }, 'main.ts').valid).toBe(true);
+    expect(validateWorkspaceFilesConsistency({ 'other.ts': 'x' }, 'main.ts')).toEqual({
+      valid: false,
+      error: 'El archivo de entrada debe existir en files.',
+    });
+
+    const inheritedFiles = Object.create({ 'main.ts': 'x' }) as Record<string, string>;
+    expect(validateWorkspaceFilesConsistency(inheritedFiles, 'main.ts').valid).toBe(false);
   });
 
   it.each([

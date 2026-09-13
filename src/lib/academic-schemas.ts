@@ -12,7 +12,11 @@ import { collectAssetIds, documentBytes, emptyDocument } from './nexbook-documen
 import { detectTextFormat } from './ai-worklog';
 import { HANDLE_PATTERN } from './slug';
 import { assertAcyclicWorkflow } from './workflow';
-import { normalizeWorkspacePath } from './workspace-files';
+import {
+  normalizeWorkspacePath,
+  validateWorkspaceFilesConsistency,
+  WORKSPACE_FILES_CONSISTENCY_ERROR,
+} from './workspace-files';
 
 /**
  * Validación de la capa académica.
@@ -853,11 +857,8 @@ export const workspaceInputSchema = z
       .transform((value) => (value ? value : null)),
   })
   .refine(
-    (value) =>
-      !value.entryFile ||
-      !value.files ||
-      Object.prototype.hasOwnProperty.call(value.files, value.entryFile),
-    { path: ['entryFile'], message: 'El archivo de entrada debe existir en files.' }
+    (value) => validateWorkspaceFilesConsistency(value.files, value.entryFile).valid,
+    { path: ['entryFile'], message: WORKSPACE_FILES_CONSISTENCY_ERROR }
   );
 
 /**
@@ -876,11 +877,8 @@ export const workspacePatchSchema = z
     files: workspaceFilesSchema.optional(),
   })
   .refine(
-    (value) =>
-      !value.entryFile ||
-      !value.files ||
-      Object.prototype.hasOwnProperty.call(value.files, value.entryFile),
-    { path: ['entryFile'], message: 'El archivo de entrada debe existir en files.' }
+    (value) => validateWorkspaceFilesConsistency(value.files, value.entryFile).valid,
+    { path: ['entryFile'], message: WORKSPACE_FILES_CONSISTENCY_ERROR }
   )
   .refine(
     (value) =>

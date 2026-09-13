@@ -6,6 +6,7 @@ import {
   updateOwnWorkspace,
 } from '@/lib/data/workspaces';
 import { HttpError, errorResponse, readJson, requireWriter } from '@/lib/server/session';
+import { validateWorkspaceFilesConsistency } from '@/lib/workspace-files';
 
 /**
  * UNA de mis prácticas.
@@ -41,6 +42,17 @@ export async function PATCH(request: Request, { params }: Params): Promise<Respo
     const actor = await requireWriter(request);
     const { workspaceId } = await params;
     const changes = await readJson(request, workspacePatchSchema);
+
+    if (changes.files !== undefined || changes.entryFile !== undefined) {
+      const existing = await getOwnWorkspace(workspaceId, actor.uid);
+      if (!existing) throw new HttpError(404, 'Ese espacio no existe.');
+
+      const resultingFiles = changes.files !== undefined ? changes.files : existing.files;
+      const resultingEntryFile =
+        changes.entryFile !== undefined ? changes.entryFile : existing.entryFile;
+      const consistency = validateWorkspaceFilesConsistency(resultingFiles, resultingEntryFile);
+      if (!consistency.valid) throw new HttpError(422, consistency.error);
+    }
 
     /**
      * Se escribe SÓLO lo que vino.

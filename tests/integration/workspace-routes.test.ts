@@ -239,6 +239,96 @@ describe('guardar mientras se escribe', () => {
     expect(reopened.entryFile).toBe('src/index.ts');
   });
 
+  it('cambia sólo files cuando conserva el entryFile existente', async () => {
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Multi',
+      entryFile: 'main.py',
+      files: { 'main.py': 'print(1)' },
+    });
+    const files = { 'main.py': 'print(2)', 'extra.py': 'answer = 42' };
+
+    const response = await patch(ACTORS.studentA, workspace.id, { files });
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()).workspace as Workspace)).toMatchObject({
+      entryFile: 'main.py',
+      files,
+    });
+  });
+
+  it('rechaza files que eliminan el entryFile existente', async () => {
+    const originalFiles = { 'main.py': 'print(1)' };
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Multi',
+      entryFile: 'main.py',
+      files: originalFiles,
+    });
+
+    const response = await patch(ACTORS.studentA, workspace.id, {
+      files: { 'other.py': 'print(2)' },
+    });
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'El archivo de entrada debe existir en files.',
+    });
+    const reopened = (await (await read(ACTORS.studentA, workspace.id)).json())
+      .workspace as Workspace;
+    expect(reopened).toMatchObject({ entryFile: 'main.py', files: originalFiles });
+  });
+
+  it('cambia sólo entryFile cuando el archivo ya existe', async () => {
+    const files = { 'a.py': 'print("a")', 'b.py': 'print("b")' };
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Multi',
+      entryFile: 'a.py',
+      files,
+    });
+
+    const response = await patch(ACTORS.studentA, workspace.id, { entryFile: 'b.py' });
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()).workspace as Workspace)).toMatchObject({
+      entryFile: 'b.py',
+      files,
+    });
+  });
+
+  it('rechaza cambiar sólo entryFile a un archivo inexistente', async () => {
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Multi',
+      entryFile: 'a.py',
+      files: { 'a.py': 'print("a")', 'b.py': 'print("b")' },
+    });
+
+    const response = await patch(ACTORS.studentA, workspace.id, { entryFile: 'c.py' });
+
+    expect(response.status).toBe(422);
+    const reopened = (await (await read(ACTORS.studentA, workspace.id)).json())
+      .workspace as Workspace;
+    expect(reopened.entryFile).toBe('a.py');
+  });
+
+  it('cambia files y entryFile juntos cuando son consistentes', async () => {
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Multi',
+      entryFile: 'a.py',
+      files: { 'a.py': 'print("a")' },
+    });
+    const files = { 'b.py': 'print("b")' };
+
+    const response = await patch(ACTORS.studentA, workspace.id, {
+      files,
+      entryFile: 'b.py',
+    });
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()).workspace as Workspace)).toMatchObject({
+      entryFile: 'b.py',
+      files,
+    });
+  });
+
   it('`createdAt` no se puede reescribir desde el cliente', async () => {
     const workspace = await create(ACTORS.studentA, { title: 'Fechas' });
 
