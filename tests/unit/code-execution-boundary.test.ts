@@ -187,3 +187,24 @@ describe('los Workers no reciben nada de la sesión', () => {
     }
   });
 });
+
+describe('la vista previa web del workspace conserva la frontera de origen', () => {
+  it('declara un sandbox que sólo habilita scripts', async () => {
+    const text = await readFile(
+      new URL('../../src/components/workspace/workspace-preview.tsx', import.meta.url),
+      'utf8'
+    );
+
+    expect(text).toContain('sandbox="allow-scripts"');
+  });
+
+  it('no comparte origen ni inserta HTML en el DOM de Nextudio', async () => {
+    const text = await readFile(
+      new URL('../../src/components/workspace/workspace-preview.tsx', import.meta.url),
+      'utf8'
+    );
+
+    expect(text).not.toContain('allow-same-origin');
+    expect(text).not.toContain('dangerouslySetInnerHTML');
+  });
+});

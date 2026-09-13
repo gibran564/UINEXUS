@@ -656,7 +656,8 @@ export const PROGRAMMING_LANGUAGES: readonly ProgrammingLanguageOption[] = [
     extension: 'html',
     monacoLanguage: 'html',
     capabilities: WEB_PROJECT_LANGUAGE,
-    executionNote: 'El HTML se ve al publicar el proyecto, en el origen aislado.',
+    executionNote:
+      'Puedes ver el HTML en la vista previa de NexCode, y publicarlo después en el origen aislado.',
   },
   {
     value: 'css',

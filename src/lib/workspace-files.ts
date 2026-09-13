@@ -1,11 +1,47 @@
 import { WORKSPACE_LIMITS } from './constants';
-import type { ProgrammingLanguage } from './types';
+import { contentTypeFor, isAllowedExtension, pickEntryFile } from './files';
+import type { ProgrammingLanguage, StagedFile } from './types';
 
 const MAX_WORKSPACE_PATH_SEGMENT_LENGTH = 100;
 const ILLEGAL_WORKSPACE_PATH_CHARACTERS = /[<>:"|?*\u0000-\u001f]/;
 
 export const WORKSPACE_FILES_CONSISTENCY_ERROR =
   'El archivo de entrada debe existir en files.';
+
+/**
+ * El archivo HTML con el que se abre la vista previa.
+ * Es distinto del archivo de ejecución y nunca lo modifica.
+ */
+export function pickWebPreviewEntry(
+  files: Record<string, string>,
+  entryFile: string
+): string | null {
+  if (
+    /\.html?$/i.test(entryFile) &&
+    Object.prototype.hasOwnProperty.call(files, entryFile)
+  ) {
+    return entryFile;
+  }
+
+  const paths = Object.keys(files);
+  const index = pickEntryFile(paths);
+  if (index) return index;
+
+  const htmlFiles = paths.filter((path) => /\.html?$/i.test(path));
+  return htmlFiles.length === 1 ? htmlFiles[0] ?? null : null;
+}
+
+/** Los archivos del NexCode en la forma que consume la vista previa existente. */
+export function workspaceFilesToStagedFiles(
+  files: Record<string, string>
+): StagedFile[] {
+  return Object.entries(files).flatMap(([path, source]) => {
+    if (!isAllowedExtension(path)) return [];
+    const contentType = contentTypeFor(path);
+    const blob = new Blob([source], { type: contentType });
+    return [{ path, blob, contentType, size: blob.size }];
+  });
+}
 
 /** Comprueba que el archivo de entrada pertenezca al conjunto de archivos declarado. */
 export function validateWorkspaceFilesConsistency(
