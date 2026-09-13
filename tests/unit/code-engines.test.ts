@@ -102,6 +102,104 @@ describe('Python se ejecuta de verdad', () => {
   });
 });
 
+describe('Python ejecuta un proyecto multiarchivo real', () => {
+  it('resuelve from utils import suma', async () => {
+    const source = 'from utils import suma\nprint(suma(2, 3))';
+    const result = await python.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.py': source, 'utils.py': 'def suma(a, b):\n    return a + b' },
+      entryFile: 'main.py',
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.stdout).toBe('5\n');
+  });
+
+  it('resuelve from models.user import User desde un subdirectorio', async () => {
+    const source = 'from models.user import User\nprint(User("Ana").name)';
+    const result = await python.run(source, LIMIT, 'isolated', undefined, {
+      files: {
+        'main.py': source,
+        'models/user.py': 'class User:\n    def __init__(self, name):\n        self.name = name',
+      },
+      entryFile: 'main.py',
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.stdout).toBe('Ana\n');
+  });
+
+  it('no conserva archivos de una ejecución anterior', async () => {
+    const source = 'import old\nprint(old.VALUE)';
+    const first = await python.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.py': source, 'old.py': 'VALUE = "anterior"' },
+      entryFile: 'main.py',
+    });
+    expect(first.stdout).toBe('anterior\n');
+
+    const second = await python.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.py': source },
+      entryFile: 'main.py',
+    });
+    expect(second.status).toBe('failed');
+    expect(second.stderr).toContain('ModuleNotFoundError');
+  });
+
+  it('vuelve a importar un módulo cuando su contenido cambia', async () => {
+    const source = 'import utils\nprint(utils.VALUE)';
+    await python.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.py': source, 'utils.py': 'VALUE = "primero"' },
+      entryFile: 'main.py',
+    });
+    const second = await python.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.py': source, 'utils.py': 'VALUE = "segundo"' },
+      entryFile: 'main.py',
+    });
+
+    expect(second.status).toBe('ok');
+    expect(second.stdout).toBe('segundo\n');
+  });
+
+  it('materializa archivos de datos que Python puede abrir', async () => {
+    const source = 'print(open("data.csv").read())';
+    const result = await python.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.py': source, 'data.csv': 'nombre,edad\nAna,20' },
+      entryFile: 'main.py',
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.stdout).toContain('nombre,edad\nAna,20');
+  });
+
+  it('ejecuta el fuente aunque el entryFile esté en un subdirectorio', async () => {
+    const source = 'from models.user import User\nprint(User("Ana").name)';
+    const result = await python.run(source, LIMIT, 'isolated', undefined, {
+      files: {
+        'app/main.py': source,
+        'models/user.py': 'class User:\n    def __init__(self, name):\n        self.name = name',
+      },
+      entryFile: 'app/main.py',
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.stdout).toBe('Ana\n');
+  });
+
+  it('mantiene la ejecución legacy después de un proyecto', async () => {
+    const source = 'print("proyecto")';
+    await python.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.py': source },
+      entryFile: 'main.py',
+    });
+
+    const legacy = await python.run(
+      'import sys\nprint(2 + 2)\nprint("/workspace" in sys.path)',
+      LIMIT
+    );
+    expect(legacy.status).toBe('ok');
+    expect(legacy.stdout).toBe('4\nFalse\n');
+  });
+});
+
 /**
  * La sesión persistente, ejecutando Python de verdad.
  *
@@ -234,27 +332,95 @@ describe('el motor de R', () => {
     captureOptions: Record<string, unknown>;
     evaluated: string[];
     captured: string[];
+    fsOperations: { type: string; path: string; content?: string }[];
+    events: string[];
+    presentPaths: Set<string>;
+    instances: number;
     purges: number;
     closed: boolean;
   }
 
   function fakeWebR(output: { type: string; data: unknown }[] | (() => never)) {
+    interface FakeFSNode {
+      name: string;
+      isFolder: boolean;
+      contents?: Record<string, FakeFSNode>;
+    }
+
+    const root: FakeFSNode = { name: '/', isFolder: true, contents: {} };
+    const segments = (path: string) => path.split('/').filter(Boolean);
+    const lookup = (path: string): FakeFSNode => {
+      let node = root;
+      for (const segment of segments(path)) {
+        const child = node.contents?.[segment];
+        if (!child) throw new Error(`No existe ${path}`);
+        node = child;
+      }
+      return node;
+    };
+    const parentOf = (path: string): [FakeFSNode, string] => {
+      const parts = segments(path);
+      const name = parts.pop();
+      if (!name) throw new Error(`Ruta inválida ${path}`);
+      return [lookup(`/${parts.join('/')}`), name];
+    };
+
     const state: FakeState = {
       options: {},
       captureOptions: {},
       evaluated: [],
       captured: [],
+      fsOperations: [],
+      events: [],
+      presentPaths: new Set(),
+      instances: 0,
       purges: 0,
       closed: false,
     };
 
     class FakeWebR {
       Shelter: new () => Promise<unknown>;
+      currentWorkingDirectory = '/home/web_user';
+      FS = {
+        lookupPath: async (path: string) => lookup(path),
+        mkdir: async (path: string) => {
+          const [parent, name] = parentOf(path);
+          if (parent.contents?.[name]) throw new Error(`Ya existe ${path}`);
+          const node: FakeFSNode = { name, isFolder: true, contents: {} };
+          parent.contents![name] = node;
+          state.presentPaths.add(path);
+          state.fsOperations.push({ type: 'mkdir', path });
+          return node;
+        },
+        writeFile: async (path: string, data: ArrayBufferView) => {
+          const [parent, name] = parentOf(path);
+          parent.contents![name] = { name, isFolder: false };
+          const content = new TextDecoder().decode(data as Uint8Array);
+          state.presentPaths.add(path);
+          state.fsOperations.push({ type: 'writeFile', path, content });
+        },
+        unlink: async (path: string) => {
+          const [parent, name] = parentOf(path);
+          delete parent.contents![name];
+          state.presentPaths.delete(path);
+          state.fsOperations.push({ type: 'unlink', path });
+        },
+        rmdir: async (path: string) => {
+          const [parent, name] = parentOf(path);
+          delete parent.contents![name];
+          for (const present of [...state.presentPaths]) {
+            if (present === path || present.startsWith(`${path}/`)) state.presentPaths.delete(present);
+          }
+          state.fsOperations.push({ type: 'rmdir', path });
+        },
+      };
 
       constructor(options: Record<string, unknown>) {
+        state.instances += 1;
         state.options = options;
         const shelter = {
           captureR: async (code: string, captureOptions: Record<string, unknown>) => {
+            state.events.push('captureR');
             state.captured.push(code);
             state.captureOptions = captureOptions;
             if (typeof output === 'function') output();
@@ -274,6 +440,15 @@ describe('el motor de R', () => {
       async init(): Promise<void> {}
       async evalRVoid(code: string): Promise<void> {
         state.evaluated.push(code);
+        const setwd = /^setwd\((.*)\)$/.exec(code);
+        if (setwd) {
+          this.currentWorkingDirectory = JSON.parse(setwd[1]!) as string;
+          state.events.push(`setwd:${this.currentWorkingDirectory}`);
+        }
+      }
+      async evalRRaw(code: string, outputType: string): Promise<string> {
+        if (code !== 'getwd()' || outputType !== 'string') throw new Error('Consulta no simulada.');
+        return this.currentWorkingDirectory;
       }
       close(): void {
         state.closed = true;
@@ -459,6 +634,93 @@ describe('el motor de R', () => {
     await engine.run('stop("boom")', LIMIT);
 
     expect(state.purges).toBe(1);
+  });
+
+  it('materializa todos los archivos bajo /workspace con su contenido', async () => {
+    const { engine, state } = fakeWebR([]);
+    const source = 'source("helpers.R")';
+    await engine.run(source, LIMIT, 'isolated', undefined, {
+      files: { 'main.R': source, 'helpers.R': 'suma <- function(a, b) a + b' },
+      entryFile: 'main.R',
+    });
+
+    expect(state.fsOperations.filter((operation) => operation.type === 'writeFile')).toEqual(
+      expect.arrayContaining([
+        { type: 'writeFile', path: '/workspace/main.R', content: source },
+        {
+          type: 'writeFile',
+          path: '/workspace/helpers.R',
+          content: 'suma <- function(a, b) a + b',
+        },
+      ])
+    );
+  });
+
+  it('crea los directorios intermedios de un archivo', async () => {
+    const { engine, state } = fakeWebR([]);
+    await engine.run('source("lib/helpers.R")', LIMIT, 'isolated', undefined, {
+      files: {
+        'main.R': 'source("lib/helpers.R")',
+        'lib/helpers.R': 'valor <- 5',
+      },
+      entryFile: 'main.R',
+    });
+
+    expect(state.fsOperations).toContainEqual({ type: 'mkdir', path: '/workspace/lib' });
+    expect(state.fsOperations).toContainEqual({
+      type: 'writeFile',
+      path: '/workspace/lib/helpers.R',
+      content: 'valor <- 5',
+    });
+  });
+
+  it('cambia al proyecto antes de capturar y restaura el directorio después', async () => {
+    const { engine, state } = fakeWebR([]);
+    await engine.run('source("helpers.R")', LIMIT, 'isolated', undefined, {
+      files: { 'main.R': 'source("helpers.R")', 'helpers.R': 'valor <- 5' },
+      entryFile: 'main.R',
+    });
+
+    expect(state.events).toEqual(['setwd:/workspace', 'captureR', 'setwd:/home/web_user']);
+  });
+
+  it('elimina los archivos del proyecto entre ejecuciones', async () => {
+    const { engine, state } = fakeWebR([]);
+    await engine.run('source("helpers.R")', LIMIT, 'isolated', undefined, {
+      files: { 'main.R': 'source("helpers.R")', 'helpers.R': 'valor <- 5' },
+      entryFile: 'main.R',
+    });
+    const beforeSecondRun = state.fsOperations.length;
+
+    await engine.run('cat(1)', LIMIT, 'isolated', undefined, {
+      files: { 'main.R': 'cat(1)' },
+      entryFile: 'main.R',
+    });
+
+    expect(state.presentPaths.has('/workspace/helpers.R')).toBe(false);
+    expect(
+      state.fsOperations
+        .slice(beforeSecondRun)
+        .some((operation) => operation.path === '/workspace/helpers.R')
+    ).toBe(false);
+  });
+
+  it('una ejecución legacy no toca el FS ni cambia el directorio', async () => {
+    const { engine, state } = fakeWebR([]);
+    await engine.run('cat(1)', LIMIT);
+
+    expect(state.fsOperations).toEqual([]);
+    expect(state.events).toEqual(['captureR']);
+  });
+
+  it('materializar proyectos reutiliza webR sin cerrarlo', async () => {
+    const { engine, state } = fakeWebR([]);
+    const project = { files: { 'main.R': 'cat(1)' }, entryFile: 'main.R' };
+    await engine.run('cat(1)', LIMIT, 'isolated', undefined, project);
+    await engine.run('cat(2)', LIMIT, 'isolated', undefined, project);
+
+    expect(state.instances).toBe(1);
+    expect(state.closed).toBe(false);
   });
 
   it('cerrar el motor cierra webR', async () => {

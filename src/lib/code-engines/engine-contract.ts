@@ -1,4 +1,5 @@
 import type { BrowserExecutionOptions, BrowserRuntimeLanguage } from '../browser-code-runner-protocol';
+import type { CodeProject } from '../code-runner-contract';
 import type { LabDataset } from '../lab/dataset';
 import { OutputRecorder, type RecordedOutput } from './output-recorder';
 
@@ -63,7 +64,8 @@ export interface CodeEngine {
      * un paso de actividad, una celda que sólo calcula. Cuando viene, el motor
      * lo instala como la API `nex` ANTES de ejecutar el fuente.
      */
-    lab?: LabDataset
+    lab?: LabDataset,
+    project?: CodeProject
   ): Promise<CodeEngineRun>;
   /**
    * Vacía el estado de la sesión SIN tirar el runtime.
