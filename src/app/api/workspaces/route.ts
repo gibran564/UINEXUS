@@ -46,8 +46,8 @@ export async function POST(request: Request): Promise<Response> {
     const record: WorkspaceRecord = {
       id: randomUUID(),
       ownerUid: actor.uid,
-      // Esta ruta crea prácticas de un solo archivo. Los NexBooks tienen la
-      // suya (`/api/nexbooks`) porque su cuerpo y sus límites son otros.
+      // Los NexBooks tienen su propia ruta (`/api/nexbooks`) porque su cuerpo
+      // y sus límites son otros.
       kind: 'code',
       // Hoy sólo existe el personal. No se acepta del cliente: un `context`
       // en el cuerpo sería la forma de colgar una práctica de una actividad
@@ -55,7 +55,12 @@ export async function POST(request: Request): Promise<Response> {
       context: 'personal',
       title: input.title,
       language: input.language,
-      code: input.code,
+      code:
+        input.code === '' && input.entryFile && input.files
+          ? input.files[input.entryFile] ?? ''
+          : input.code,
+      ...(input.entryFile !== undefined ? { entryFile: input.entryFile } : {}),
+      ...(input.files !== undefined ? { files: input.files } : {}),
       courseId: input.courseId,
       createdAt: now,
       updatedAt: now,

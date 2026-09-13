@@ -280,6 +280,14 @@ export const ACADEMIC_LIMITS = {
   codeMax: 60000,
 } as const;
 
+/** Topes de un NexCode multi-archivo guardado en un solo item de DynamoDB. */
+export const WORKSPACE_LIMITS = {
+  maxFiles: 50,
+  maxFilePathLength: 200,
+  maxFileSize: ACADEMIC_LIMITS.codeMax,
+  maxTotalWorkspaceChars: 300_000,
+} as const;
+
 export interface AssignmentTypeOption {
   value: AssignmentType;
   label: string;

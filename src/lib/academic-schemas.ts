@@ -3,6 +3,7 @@ import {
   ACADEMIC_LIMITS,
   DEFAULT_CODE_MODE,
   NEXBOOK_LIMITS,
+  WORKSPACE_LIMITS,
   WORKFLOW_LIMITS,
 } from './constants';
 import { NEXBOOK_FORMAT_VERSION } from './types';
@@ -11,6 +12,7 @@ import { collectAssetIds, documentBytes, emptyDocument } from './nexbook-documen
 import { detectTextFormat } from './ai-worklog';
 import { HANDLE_PATTERN } from './slug';
 import { assertAcyclicWorkflow } from './workflow';
+import { normalizeWorkspacePath } from './workspace-files';
 
 /**
  * Validación de la capa académica.
@@ -771,6 +773,60 @@ export const moderationInputSchema = z.object({
 // Workspace de programación (iteración 7)
 // ---------------------------------------------------------------------------
 
+export const workspacePathSchema = z.string().transform((value, context) => {
+  const normalized = normalizeWorkspacePath(value);
+  if (normalized === null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Esa ruta de archivo no es válida.' });
+    return z.NEVER;
+  }
+  return normalized;
+});
+
+export const workspaceFilesSchema = z
+  .record(z.string(), z.string().max(WORKSPACE_LIMITS.maxFileSize, 'Ese archivo es demasiado grande.'))
+  .transform((files, context) => {
+    const normalizedEntries: Array<[string, string]> = [];
+    const normalizedPaths = new Set<string>();
+    for (const [path, source] of Object.entries(files)) {
+      const normalizedPath = normalizeWorkspacePath(path);
+      if (normalizedPath === null) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [path],
+          message: 'Esa ruta de archivo no es válida.',
+        });
+        continue;
+      }
+      if (normalizedPaths.has(normalizedPath)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [path],
+          message: 'Dos rutas representan el mismo archivo.',
+        });
+        continue;
+      }
+      normalizedPaths.add(normalizedPath);
+      normalizedEntries.push([normalizedPath, source]);
+    }
+    return Object.fromEntries(normalizedEntries);
+  })
+  .superRefine((files, context) => {
+    if (Object.keys(files).length > WORKSPACE_LIMITS.maxFiles) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Un NexCode admite como máximo ${WORKSPACE_LIMITS.maxFiles} archivos.`,
+      });
+    }
+
+    const totalCharacters = Object.values(files).reduce((total, source) => total + source.length, 0);
+    if (totalCharacters > WORKSPACE_LIMITS.maxTotalWorkspaceChars) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'El contenido total del NexCode es demasiado grande.',
+      });
+    }
+  });
+
 /**
  * Lo que se acepta al crear o guardar una práctica.
  *
@@ -783,16 +839,26 @@ export const moderationInputSchema = z.object({
  * `code` comparte el tope de `CodeData.code`: una práctica y una entrega son el
  * mismo tipo de texto y no tiene sentido que quepan cosas distintas.
  */
-export const workspaceInputSchema = z.object({
-  title: z.string().trim().min(1, 'Ponle un nombre a tu NexCode.').max(120),
-  language: programmingLanguageSchema.default('python'),
-  code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese código es demasiado largo.').default(''),
-  /** Se relaciona con una materia sólo si se dice; una práctica suelta no la tiene. */
-  courseId: z
-    .union([z.literal(''), z.string().trim().max(120)])
-    .nullish()
-    .transform((value) => (value ? value : null)),
-});
+export const workspaceInputSchema = z
+  .object({
+    title: z.string().trim().min(1, 'Ponle un nombre a tu NexCode.').max(120),
+    language: programmingLanguageSchema.default('python'),
+    code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese código es demasiado largo.').default(''),
+    entryFile: workspacePathSchema.optional(),
+    files: workspaceFilesSchema.optional(),
+    /** Se relaciona con una materia sólo si se dice; una práctica suelta no la tiene. */
+    courseId: z
+      .union([z.literal(''), z.string().trim().max(120)])
+      .nullish()
+      .transform((value) => (value ? value : null)),
+  })
+  .refine(
+    (value) =>
+      !value.entryFile ||
+      !value.files ||
+      Object.prototype.hasOwnProperty.call(value.files, value.entryFile),
+    { path: ['entryFile'], message: 'El archivo de entrada debe existir en files.' }
+  );
 
 /**
  * Un guardado parcial: title y/o code, sin obligar a reenviar todo.
@@ -806,9 +872,23 @@ export const workspacePatchSchema = z
     title: z.string().trim().min(1).max(120).optional(),
     code: z.string().max(ACADEMIC_LIMITS.codeMax, 'Ese código es demasiado largo.').optional(),
     language: programmingLanguageSchema.optional(),
+    entryFile: workspacePathSchema.optional(),
+    files: workspaceFilesSchema.optional(),
   })
   .refine(
-    (value) => value.title !== undefined || value.code !== undefined || value.language !== undefined,
+    (value) =>
+      !value.entryFile ||
+      !value.files ||
+      Object.prototype.hasOwnProperty.call(value.files, value.entryFile),
+    { path: ['entryFile'], message: 'El archivo de entrada debe existir en files.' }
+  )
+  .refine(
+    (value) =>
+      value.title !== undefined ||
+      value.code !== undefined ||
+      value.language !== undefined ||
+      value.entryFile !== undefined ||
+      value.files !== undefined,
     'No hay nada que guardar.'
   );
 

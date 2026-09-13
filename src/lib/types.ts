@@ -1248,14 +1248,15 @@ export type WorkspaceContext = 'personal' | 'activity' | 'project';
  * único que existe hoy, y es un `string` por la misma razón que `CodeData.code`:
  * ya funciona y ya está probado.
  *
- * `files` es la puerta a varios archivos, y está OPCIONAL a propósito. Cuando
- * llegue, `code` seguirá siendo el archivo de entrada —el que se ejecuta— y
- * `files` el resto. Un workspace guardado hoy se leerá entonces sin migrar
- * nada; convertir `code` en `files` de golpe habría obligado a reescribir el
- * editor, el runner y todas las prácticas existentes a la vez.
+ * `files` contiene el árbol completo cuando hay varios archivos y está OPCIONAL
+ * a propósito. `entryFile` señala cuál de sus claves se refleja en `code`, que
+ * sigue siendo lo que ejecuta el runner. Un workspace anterior se lee sin
+ * migrar nada; convertir `code` en `files` de golpe habría obligado a reescribir
+ * el editor, el runner y todas las prácticas existentes a la vez.
  */
 export interface WorkspaceFiles {
   code: string;
+  entryFile?: string;
   files?: Record<string, string>;
 }
 

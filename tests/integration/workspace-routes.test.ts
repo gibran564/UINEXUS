@@ -106,6 +106,33 @@ describe('crear y abrir una práctica', () => {
     expect((await patch(ACTORS.studentA, workspace.id, { code: 'class Main { }' })).status).toBe(200);
   });
 
+  it('crea y reabre una práctica con varios archivos', async () => {
+    const files = {
+      'src/main.py': 'from utils import answer\nprint(answer)',
+      'src/utils.py': 'answer = 42',
+    };
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Proyecto Python',
+      language: 'python',
+      entryFile: 'src/main.py',
+      files,
+    });
+
+    expect(workspace).toMatchObject({
+      entryFile: 'src/main.py',
+      files,
+      code: files['src/main.py'],
+    });
+
+    const reopened = await read(ACTORS.studentA, workspace.id);
+    expect(reopened.status).toBe(200);
+    expect((await reopened.json()).workspace).toMatchObject({
+      entryFile: 'src/main.py',
+      files,
+      code: files['src/main.py'],
+    });
+  });
+
   it('rechaza una práctica sin nombre', async () => {
     const response = await createRoute(
       jsonRequestAs(ACTORS.studentA, 'http://localhost/api/workspaces', 'POST', { title: '  ' })
@@ -181,6 +208,35 @@ describe('guardar mientras se escribe', () => {
     // Lo que no se mandó no se toca. Un `Put` completo habría borrado las dos.
     expect(saved.title).toBe('Método simplex');
     expect(saved.language).toBe('r');
+  });
+
+  it('actualiza files y entryFile con un PATCH parcial', async () => {
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Multi',
+      language: 'typescript',
+      code: 'legacy source',
+    });
+    const files = { 'src/index.ts': 'import "./helper"', 'src/helper.ts': 'export {}' };
+
+    const response = await patch(ACTORS.studentA, workspace.id, {
+      files,
+      entryFile: 'src/index.ts',
+    });
+    expect(response.status).toBe(200);
+
+    const saved = (await response.json()).workspace as Workspace;
+    expect(saved).toMatchObject({
+      title: 'Multi',
+      language: 'typescript',
+      code: 'legacy source',
+      files,
+      entryFile: 'src/index.ts',
+    });
+
+    const reopened = (await (await read(ACTORS.studentA, workspace.id)).json())
+      .workspace as Workspace;
+    expect(reopened.files).toEqual(files);
+    expect(reopened.entryFile).toBe('src/index.ts');
   });
 
   it('`createdAt` no se puede reescribir desde el cliente', async () => {

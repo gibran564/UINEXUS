@@ -42,12 +42,12 @@ export function normalizeWorkspace(raw: Partial<WorkspaceRecord>): WorkspaceReco
     title: raw.title ?? 'Práctica sin título',
     language: raw.language ?? DEFAULT_PROGRAMMING_LANGUAGE,
     code: raw.code ?? '',
+    ...(raw.entryFile !== undefined ? { entryFile: raw.entryFile } : {}),
     /**
-     * Ausente hoy en todos los registros, y por eso se omite en vez de poner
-     * `{}`: un objeto vacío y «no hay varios archivos» son estados distintos, y
-     * el día que exista multi-archivo hará falta distinguirlos.
+     * Se omite cuando no fue persistido: un objeto vacío y «nunca tuvo varios
+     * archivos» son estados distintos para los workspaces legacy.
      */
-    ...(raw.files ? { files: raw.files } : {}),
+    ...(raw.files !== undefined ? { files: raw.files } : {}),
     courseId: raw.courseId ?? null,
     createdAt: raw.createdAt ?? new Date(0).toISOString(),
     updatedAt: raw.updatedAt ?? raw.createdAt ?? new Date(0).toISOString(),
@@ -184,7 +184,13 @@ export async function putWorkspace(record: WorkspaceRecord): Promise<WorkspaceRe
 export async function updateOwnWorkspace(
   workspaceId: string,
   ownerUid: string,
-  changes: { title?: string; code?: string; language?: string }
+  changes: {
+    title?: string;
+    code?: string;
+    language?: string;
+    entryFile?: string;
+    files?: Record<string, string>;
+  }
 ): Promise<WorkspaceRecord | null> {
   const client = getDynamo();
   if (!client) return null;
