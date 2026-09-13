@@ -598,6 +598,7 @@ export const patchWorkspace = (
     language?: string;
     entryFile?: string;
     files?: Record<string, string>;
+    publishedProjectId?: string;
   }
 ) =>
   apiFetch<{ workspace: Workspace }>(`/api/workspaces/${workspaceId}`, {

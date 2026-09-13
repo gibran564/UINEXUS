@@ -1283,6 +1283,19 @@ export interface Workspace extends WorkspaceFiles {
   language: ProgrammingLanguage;
   /** Materia con la que se relaciona, si nació dentro de una. */
   courseId: string | null;
+  /**
+   * El proyecto publicado desde este NexCode, si ya se publicó alguna vez.
+   *
+   * Sólo el identificador. Ni slug, ni versión, ni estado: todo eso vive en la
+   * entidad publicada y se lee de ella. Copiarlo aquí crearía una segunda
+   * fuente de verdad que se desincroniza en cuanto alguien renombre el proyecto
+   * desde el panel.
+   *
+   * Es un PUNTERO, no un permiso. Aunque llegara manipulado, el servidor
+   * resuelve la propiedad por su cuenta al firmar y al finalizar, así que
+   * apuntar al proyecto de otra persona devuelve 404 en vez de escribir en él.
+   */
+  publishedProjectId?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -875,6 +875,8 @@ export const workspacePatchSchema = z
     language: programmingLanguageSchema.optional(),
     entryFile: workspacePathSchema.optional(),
     files: workspaceFilesSchema.optional(),
+    /** A qué proyecto publicado apunta este NexCode. Ver `Workspace`. */
+    publishedProjectId: z.string().trim().min(1).max(64).optional(),
   })
   .refine(
     (value) => validateWorkspaceFilesConsistency(value.files, value.entryFile).valid,
@@ -886,7 +888,8 @@ export const workspacePatchSchema = z
       value.code !== undefined ||
       value.language !== undefined ||
       value.entryFile !== undefined ||
-      value.files !== undefined,
+      value.files !== undefined ||
+      value.publishedProjectId !== undefined,
     'No hay nada que guardar.'
   );
 

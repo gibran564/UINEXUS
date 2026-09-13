@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { CodeEditor, sourceFilenameFor } from '@/components/aula/code-editor';
 import { Notice } from '@/components/aula/aula-ui';
 import { WorkspacePreview } from '@/components/workspace/workspace-preview';
+import { WorkspacePublish } from '@/components/workspace/workspace-publish';
 import { patchWorkspace, useApi } from '@/lib/aula-client';
 import { programmingLanguageLabel } from '@/lib/constants';
 import {
@@ -43,6 +44,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
   const [fileError, setFileError] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'preview'>('editor');
   const [previewFiles, setPreviewFiles] = useState<Record<string, string> | null>(null);
+  const [publishedProjectId, setPublishedProjectId] = useState<string | undefined>(undefined);
 
   const filesRef = useRef(files);
   const entryFileRef = useRef(entryFile);
@@ -100,8 +102,24 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
       },
       isMultiFile
     );
+    setPublishedProjectId(workspace.publishedProjectId);
     setHydrated(true);
   }, [data, hydrated, replaceProject]);
+
+  /**
+   * Guarda a qué proyecto publicado apunta este NexCode.
+   *
+   * Deja escapar el fallo a propósito: quien publica necesita distinguir «no se
+   * publicó» de «se publicó pero no pude recordarlo», y esa segunda no puede
+   * reintentarse volviendo a publicar. Ver `lib/workspace-publish.ts`.
+   */
+  const linkPublishedProject = useCallback(
+    async (projectId: string): Promise<void> => {
+      await patchWorkspace(workspaceId, { publishedProjectId: projectId });
+      setPublishedProjectId(projectId);
+    },
+    [workspaceId]
+  );
 
   const scheduleFlush = useCallback((delay = AUTOSAVE_DELAY_MS): void => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -346,6 +364,17 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
                 </button>
               )}
             </div>
+          )}
+          {/* Publicar aparece con la misma condición que la vista previa —hay
+              un HTML—, así que un NexCode de Python o R no lo ve. */}
+          {previewEntry && (
+            <WorkspacePublish
+              files={files}
+              entryFile={entryFile}
+              title={workspace.title}
+              publishedProjectId={publishedProjectId}
+              onLinked={linkPublishedProject}
+            />
           )}
           {/* Oculto y NO desmontado: desmontarlo tiraría el modelo de Monaco, y
               con él el deshacer y la posición del cursor de quien sólo quería
