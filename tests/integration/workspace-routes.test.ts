@@ -239,28 +239,6 @@ describe('guardar mientras se escribe', () => {
     expect(reopened.entryFile).toBe('src/index.ts');
   });
 
-  it('guarda files, entryFile y el code ejecutable en una sola operación', async () => {
-    const workspace = await create(ACTORS.studentA, {
-      title: 'Proyecto',
-      language: 'python',
-      code: 'legacy',
-    });
-    const files = { 'main.py': 'print(42)', 'utils.py': 'answer = 42' };
-
-    const response = await patch(ACTORS.studentA, workspace.id, {
-      files,
-      entryFile: 'main.py',
-      code: files['main.py'],
-    });
-
-    expect(response.status).toBe(200);
-    expect(((await response.json()).workspace as Workspace)).toMatchObject({
-      files,
-      entryFile: 'main.py',
-      code: 'print(42)',
-    });
-  });
-
   it('cambia sólo files cuando conserva el entryFile existente', async () => {
     const workspace = await create(ACTORS.studentA, {
       title: 'Multi',

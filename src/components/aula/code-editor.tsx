@@ -130,8 +130,6 @@ export interface CodeEditorProps {
   /** El programa inicial de la docente, si lo hay. Habilita «Restablecer». */
   starterCode?: string;
   executionEnabled?: boolean;
-  /** Fuente que se ejecuta cuando no coincide con el buffer visible (proyectos multiarchivo). */
-  executionSource?: string;
   /** Persiste el fuente antes de entregárselo a un ejecutor aislado. */
   beforeExecute?: () => Promise<void>;
   height?: number;
@@ -147,7 +145,6 @@ export function CodeEditor({
   readOnly = false,
   starterCode = '',
   executionEnabled = false,
-  executionSource,
   beforeExecute,
   height = 420,
   ariaLabel,
@@ -243,8 +240,8 @@ export function CodeEditor({
       return;
     }
 
-    setResult(await runner.run({ language, source: executionSource ?? value }));
-  }, [beforeExecute, executionSource, label, language, runnable, runtimeStatus, value]);
+    setResult(await runner.run({ language, source: value }));
+  }, [beforeExecute, label, language, runnable, runtimeStatus, value]);
 
   executeRef.current = () => void execute();
 
