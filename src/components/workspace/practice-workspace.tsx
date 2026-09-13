@@ -311,6 +311,10 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
                 onChange={edit}
                 executionEnabled
                 executionSource={files[entryFile] ?? ''}
+                // El workspace legacy usa una clave virtual; enviarla cambiaría
+                // una ejecución de un archivo por una ejecución de proyecto.
+                executionFiles={multiFile ? files : undefined}
+                executionEntryFile={multiFile ? entryFile : undefined}
                 beforeExecute={flush}
                 height={460}
                 ariaLabel={`Archivo ${activeFile} en ${programmingLanguageLabel(activeLanguage)}`}

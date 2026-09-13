@@ -1,5 +1,6 @@
-import type { CodeRunStatus } from './code-runner-contract';
+import type { CodeProject, CodeRunStatus } from './code-runner-contract';
 import type { LabDataset, LabTable } from './lab/dataset';
+import { normalizeWorkspacePath } from './workspace-files';
 
 /**
  * El único lenguaje que hablan los Workers de ejecución.
@@ -54,6 +55,8 @@ export type CodeWorkerRequest =
        * un token: ver `lib/lab/dataset.ts`.
        */
       lab?: LabDataset;
+      /** Proyecto multiarchivo ya reducido a rutas seguras para el runtime. */
+      project?: CodeProject;
     }
   /** Vacía el estado de la sesión sin tirar el runtime. */
   | { type: 'reset'; id: number };
@@ -125,8 +128,10 @@ export function sanitizeWorkerRun(
   source: string,
   executionOptions: BrowserExecutionOptions,
   mode: BrowserExecutionMode = 'isolated',
-  lab?: LabDataset
+  lab?: LabDataset,
+  project?: CodeProject
 ): Extract<CodeWorkerRequest, { type: 'run' }> {
+  const safeProject = project ? sanitizeCodeProject(project) : undefined;
   return {
     type: 'run',
     id,
@@ -145,7 +150,28 @@ export function sanitizeWorkerRun(
      * añadirlo es el momento de preguntarse si debería cruzar.
      */
     ...(lab ? { lab: sanitizeLabDataset(lab) } : {}),
+    ...(safeProject ? { project: safeProject } : {}),
   };
+}
+
+/**
+ * El proyecto se reconstruye aquí porque ésta es la ÚNICA frontera del Worker.
+ * Depender de que una validación vecina siga rechazando rutas inseguras no
+ * garantiza qué datos cruzarán si esa validación cambia en el futuro.
+ */
+function sanitizeCodeProject(project: CodeProject): CodeProject | undefined {
+  const files: Record<string, string> = {};
+  for (const [path, source] of Object.entries(project.files)) {
+    if (normalizeWorkspacePath(path) !== path) continue;
+    Object.defineProperty(files, path, {
+      configurable: true,
+      enumerable: true,
+      value: source,
+      writable: true,
+    });
+  }
+  if (!Object.prototype.hasOwnProperty.call(files, project.entryFile)) return undefined;
+  return { files, entryFile: project.entryFile };
 }
 
 /** El dataset, campo a campo. Ver la nota de arriba. */

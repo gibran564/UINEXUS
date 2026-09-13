@@ -209,7 +209,8 @@ export function serveCodeEngine(
           message.source,
           message.executionOptions,
           message.mode ?? 'isolated',
-          message.lab
+          message.lab,
+          message.project
         );
         post({ type: 'result', id: message.id, ...result });
       } catch (caught) {

@@ -1,14 +1,24 @@
-import { ACADEMIC_LIMITS, PROGRAMMING_LANGUAGES } from './constants';
+import { ACADEMIC_LIMITS, PROGRAMMING_LANGUAGES, WORKSPACE_LIMITS } from './constants';
 import type { BrowserRichOutput } from './browser-code-runner-protocol';
 import type { ProgrammingLanguage } from './types';
+import { normalizeWorkspacePath } from './workspace-files';
 
 export type CodeRunStatus = 'ok' | 'failed' | 'timeout' | 'rejected' | 'stopped';
 
 export interface CodeRunRequest {
   language: ProgrammingLanguage;
   source: string;
+  /** El proyecto completo, cuando la ejecución es multiarchivo. Ausente = legacy. */
+  files?: Record<string, string>;
+  /** Cuál de `files` es el punto de entrada. Obligatorio si viene `files`. */
+  entryFile?: string;
   /** Standard input is optional and never contains identity or session data. */
   stdin?: string;
+}
+
+export interface CodeProject {
+  files: Record<string, string>;
+  entryFile: string;
 }
 
 export interface CodeRunResult {
@@ -81,6 +91,30 @@ export function validateCodeRunRequest(
   }
   if (request.source.length > CODE_RUN_LIMITS.maxSourceChars) {
     return rejectedCodeRun('El código es demasiado largo para ejecutarlo.');
+  }
+  const hasFiles = request.files !== undefined;
+  const hasEntryFile = request.entryFile !== undefined;
+  if (hasFiles !== hasEntryFile) {
+    return rejectedCodeRun('Los archivos del proyecto y su archivo principal deben enviarse juntos.');
+  }
+  if (!request.files || request.entryFile === undefined) return null;
+
+  const paths = Object.keys(request.files);
+  if (paths.length === 0) {
+    return rejectedCodeRun('El proyecto debe contener al menos un archivo.');
+  }
+  if (paths.length > WORKSPACE_LIMITS.maxFiles) {
+    return rejectedCodeRun(`El proyecto admite como máximo ${WORKSPACE_LIMITS.maxFiles} archivos.`);
+  }
+  const totalChars = Object.values(request.files).reduce((total, file) => total + file.length, 0);
+  if (totalChars > WORKSPACE_LIMITS.maxTotalWorkspaceChars) {
+    return rejectedCodeRun('El contenido total del proyecto es demasiado grande.');
+  }
+  if (paths.some((path) => normalizeWorkspacePath(path) !== path)) {
+    return rejectedCodeRun('El proyecto contiene una ruta de archivo no válida.');
+  }
+  if (!Object.prototype.hasOwnProperty.call(request.files, request.entryFile)) {
+    return rejectedCodeRun('El archivo principal no existe en el proyecto.');
   }
   return null;
 }

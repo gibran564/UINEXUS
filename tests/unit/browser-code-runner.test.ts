@@ -187,6 +187,31 @@ describe('una ejecución normal', () => {
     ]);
   });
 
+  it('envía el proyecto completo cuando la petición es multiarchivo', async () => {
+    const runner = runnerWith(okResult('5\n'));
+    const files = {
+      'main.py': 'from utils import suma\nprint(suma(2, 3))',
+      'utils.py': 'def suma(a, b): return a + b',
+    };
+    await runner.run({
+      language: 'python',
+      source: files['main.py'],
+      files,
+      entryFile: 'main.py',
+    });
+
+    const sent = FakeWorker.created[0]!.received.find((message) => message.type === 'run');
+    expect(sent).toMatchObject({ project: { files, entryFile: 'main.py' } });
+  });
+
+  it('no añade project a una petición legacy', async () => {
+    const runner = runnerWith(okResult('4\n'));
+    await runner.run({ language: 'python', source: 'print(2 + 2)' });
+
+    const sent = FakeWorker.created[0]!.received.find((message) => message.type === 'run');
+    expect(sent).not.toHaveProperty('project');
+  });
+
   it('un error del programa llega como fallo, no como avería', async () => {
     const runner = runnerWith(
       scripted((message) => ({

@@ -7,7 +7,7 @@ import {
   rejectedCodeRun,
   validateCodeRunRequest,
 } from '../../src/lib/code-runner-contract';
-import { ACADEMIC_LIMITS } from '../../src/lib/constants';
+import { ACADEMIC_LIMITS, WORKSPACE_LIMITS } from '../../src/lib/constants';
 import { sanitizeWorkerRun } from '../../src/lib/browser-code-runner-protocol';
 import { LimitedOutput } from '../../src/lib/code-engines/engine-contract';
 
@@ -67,6 +67,108 @@ describe('lo que se rechaza antes de arrancar un runtime', () => {
 
   it('nada más: el código válido pasa', () => {
     expect(validateCodeRunRequest({ language: 'r', source: 'cat(1)' }, always)).toBeNull();
+  });
+});
+
+describe('un proyecto multiarchivo antes de llegar al runtime', () => {
+  it('conserva intacta la petición legacy', () => {
+    expect(validateCodeRunRequest({ language: 'python', source: 'print(1)' }, always)).toBeNull();
+  });
+
+  it('acepta un proyecto válido', () => {
+    expect(
+      validateCodeRunRequest(
+        {
+          language: 'python',
+          source: 'from utils import suma',
+          files: { 'main.py': 'from utils import suma', 'utils.py': 'def suma(a, b): return a + b' },
+          entryFile: 'main.py',
+        },
+        always
+      )
+    ).toBeNull();
+  });
+
+  it('exige que files y entryFile viajen juntos', () => {
+    expect(
+      validateCodeRunRequest(
+        { language: 'python', source: 'print(1)', files: { 'main.py': 'print(1)' } },
+        always
+      )?.status
+    ).toBe('rejected');
+    expect(
+      validateCodeRunRequest(
+        { language: 'python', source: 'print(1)', entryFile: 'main.py' },
+        always
+      )?.status
+    ).toBe('rejected');
+  });
+
+  it('rechaza un proyecto vacío', () => {
+    expect(
+      validateCodeRunRequest(
+        { language: 'python', source: 'print(1)', files: {}, entryFile: 'main.py' },
+        always
+      )?.status
+    ).toBe('rejected');
+  });
+
+  it('rechaza un archivo principal que no pertenece al proyecto', () => {
+    const result = validateCodeRunRequest(
+      {
+        language: 'python',
+        source: 'print(1)',
+        files: { 'otro.py': 'print(2)' },
+        entryFile: 'main.py',
+      },
+      always
+    );
+
+    expect(result?.status).toBe('rejected');
+    expect(result?.stderr).toContain('archivo principal no existe');
+  });
+
+  it.each(['src/../main.py', '/main.py', 'src/.oculto/main.py'])(
+    'rechaza la ruta insegura %s',
+    (path) => {
+      expect(
+        validateCodeRunRequest(
+          {
+            language: 'python',
+            source: 'print(1)',
+            files: { [path]: 'print(1)' },
+            entryFile: path,
+          },
+          always
+        )?.status
+      ).toBe('rejected');
+    }
+  );
+
+  it('rechaza demasiados archivos', () => {
+    const files = Object.fromEntries(
+      Array.from({ length: WORKSPACE_LIMITS.maxFiles + 1 }, (_, index) => [`${index}.py`, 'x'])
+    );
+    expect(
+      validateCodeRunRequest(
+        { language: 'python', source: 'print(1)', files, entryFile: '0.py' },
+        always
+      )?.status
+    ).toBe('rejected');
+  });
+
+  it('rechaza un proyecto cuyo contenido total supera el límite', () => {
+    expect(
+      validateCodeRunRequest(
+        {
+          language: 'python',
+          source: 'print(1)',
+          files: { 'main.py': 'x'.repeat(WORKSPACE_LIMITS.maxTotalWorkspaceChars + 1) },
+          entryFile: 'main.py',
+        },
+        always
+      )?.status
+    ).toBe('rejected');
   });
 });
 
@@ -226,6 +328,49 @@ describe('el mensaje que llega al Worker', () => {
     for (const secret of ['firebase-id-token', 'session=abc', 'AKIA', 'uid-christian']) {
       expect(serialized, secret).not.toContain(secret);
     }
+  });
+
+  it('reconstruye el proyecto y filtra otra vez sus rutas', () => {
+    const files = Object.assign(Object.create({ 'heredado.py': 'secreto' }), {
+      'main.py': 'print(1)',
+      '../inyectado.py': 'secreto',
+    }) as Record<string, string>;
+    const contaminated = {
+      files,
+      entryFile: 'main.py',
+      token: 'no debe cruzar',
+    };
+
+    const message = sanitizeWorkerRun(
+      1,
+      'python',
+      'print(1)',
+      { maxOutputChars: 10 },
+      'isolated',
+      undefined,
+      contaminated
+    );
+
+    expect(message.project).toEqual({ files: { 'main.py': 'print(1)' }, entryFile: 'main.py' });
+    expect(message.project?.files).not.toBe(files);
+    expect(Object.keys(message.project ?? {}).sort()).toEqual(['entryFile', 'files']);
+    expect(JSON.stringify(message)).not.toContain('heredado');
+    expect(JSON.stringify(message)).not.toContain('inyectado');
+    expect(JSON.stringify(message)).not.toContain('no debe cruzar');
+  });
+
+  it('omite el proyecto si el entryFile desaparece al filtrar', () => {
+    const message = sanitizeWorkerRun(
+      1,
+      'python',
+      'print(1)',
+      { maxOutputChars: 10 },
+      'isolated',
+      undefined,
+      { files: { '../main.py': 'print(1)' }, entryFile: '../main.py' }
+    );
+
+    expect(message).not.toHaveProperty('project');
   });
 });
 

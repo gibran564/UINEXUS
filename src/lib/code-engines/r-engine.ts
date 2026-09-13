@@ -1,4 +1,4 @@
-import type { WebR as WebRType } from 'webr';
+import type { FSNode, WebR as WebRType } from 'webr';
 import {
   LimitedOutput,
   type CodeEngine,
@@ -9,6 +9,7 @@ import { NEXBOOK_LIMITS } from '../constants';
 import { rLabPrelude } from './r-lab';
 import type { LabDataset } from '../lab/dataset';
 import type { BrowserExecutionOptions, BrowserTableCell } from '../browser-code-runner-protocol';
+import type { CodeProject } from '../code-runner-contract';
 
 /**
  * Lo mínimo que este motor necesita saber del valor que devuelve `captureR`.
@@ -64,6 +65,7 @@ type WebRInstance = InstanceType<WebRConstructor>;
 
 /** Canal `PostMessage` de webR. Ver `ChannelType` en `webr`. */
 const POST_MESSAGE_CHANNEL = 3;
+const PROJECT_DIR = '/workspace';
 
 /**
  * Lo que R ejecuta antes que nada.
@@ -195,10 +197,12 @@ export function createREngine(options: REngineOptions): CodeEngine {
       source: string,
       runOptions: BrowserExecutionOptions,
       mode: CodeExecutionMode = 'isolated',
-      lab?: LabDataset
+      lab?: LabDataset,
+      project?: CodeProject
     ): Promise<CodeEngineRun> {
       const webR = await boot();
       const output = new LimitedOutput(runOptions.maxOutputChars);
+      let previousWorkingDirectory: string | null = null;
 
       /**
        * R es al revés que Python: aquí lo difícil es NO conservar el estado.
@@ -216,74 +220,98 @@ export function createREngine(options: REngineOptions): CodeEngine {
        */
       if (mode === 'isolated') await clearGlobalEnv(webR);
 
-      /**
-       * El prólogo del laboratorio, DESPUÉS de limpiar y ANTES de la celda.
-       *
-       * `evalRVoid` y no dentro del `captureR` de abajo: definir la API no es
-       * salida del programa, y meterla en la captura llenaría la consola de
-       * quien ejecuta con el eco de doscientas líneas de `data.frame`.
-       */
-      if (lab) await webR.evalRVoid(rLabPrelude(lab));
-
-      // El refugio libera de golpe todo lo que R reservó durante ESTA
-      // ejecución. Sin él, veinte ejecuciones seguidas van dejando objetos
-      // vivos hasta que el runtime se queda sin memoria.
-      const shelter = await new webR.Shelter();
       try {
-        const captured = await shelter.captureR(source, {
-          withAutoprint: true,
-          captureStreams: true,
-          /**
-           * Con `false`, un `print(no_existe)` acababa en la consola como
-           * «Finalizado» con un error escondido en stderr. Con `true`, webR
-           * detecta la condición de error y LANZA, que es lo que convierte la
-           * ejecución en un fallo de verdad. Se comprobó en el navegador antes
-           * de dejarlo así.
-           */
-          captureConditions: true,
-          /**
-           * Las gráficas SÍ se capturan desde la iteración 9.
-           *
-           * webR trae su propio dispositivo gráfico de canvas: `plot()` no
-           * necesita ningún paquete extra ni ninguna descarga, sólo que se
-           * encienda el dispositivo. Estaba apagado porque hasta ahora la salida
-           * era una consola de texto y una figura no tenía dónde ir.
-           *
-           * El tamaño se fija aquí y no se deja al defecto para que una gráfica
-           * tenga la misma forma en todos los navegadores; el fondo es blanco
-           * porque una figura transparente sobre el tema oscuro deja los ejes
-           * negros invisibles.
-           */
-          captureGraphics: { width: 720, height: 460, bg: 'white', capture: true },
-        });
-
-        /**
-         * `captured.output` YA VIENE ORDENADO.
-         *
-         * Ésta es la mitad de R de la corrección del orden real: webR devuelve
-         * un array con los trozos en la secuencia en que se produjeron, y hasta
-         * la iteración 8 se recorría para volcarlo en dos cadenas separadas. El
-         * recorrido es el mismo; lo que cambia es que ahora el registro conserva
-         * la posición de cada trozo.
-         */
-        for (const line of captured.output) {
-          if (line.type === 'stdout') output.line('stdout', String(line.data));
-          else if (line.type === 'stderr') output.line('stderr', String(line.data));
-          // Con las condiciones capturadas, avisos y mensajes ya no pasan por
-          // stderr. Perderlos dejaría a alguien sin ver «NaNs produced».
-          else if (line.type === 'warning' || line.type === 'message') {
-            output.line('stderr', conditionMessage(line.data, line.type));
-          }
+        if (project) {
+          await removeRProjectDirectory(webR);
+          await materializeRProject(webR, project);
+          previousWorkingDirectory = await webR.evalRRaw('getwd()', 'string');
+          await webR.evalRVoid(`setwd(${JSON.stringify(PROJECT_DIR)})`);
         }
 
-        await emitRImages(captured.images, output);
-        await emitRTable(captured.result as unknown as CapturedValue | undefined, output);
-        return output.toRun('ok');
-      } catch (caught) {
-        output.append('error', describeRError(caught));
-        return output.toRun('failed');
+        /**
+         * El prólogo del laboratorio, DESPUÉS de limpiar y ANTES de la celda.
+         *
+         * `evalRVoid` y no dentro del `captureR` de abajo: definir la API no es
+         * salida del programa, y meterla en la captura llenaría la consola de
+         * quien ejecuta con el eco de doscientas líneas de `data.frame`.
+         */
+        if (lab) await webR.evalRVoid(rLabPrelude(lab));
+
+        // El refugio libera de golpe todo lo que R reservó durante ESTA
+        // ejecución. Sin él, veinte ejecuciones seguidas van dejando objetos
+        // vivos hasta que el runtime se queda sin memoria.
+        const shelter = await new webR.Shelter();
+        try {
+          const captured = await shelter.captureR(source, {
+            withAutoprint: true,
+            captureStreams: true,
+            /**
+             * Con `false`, un `print(no_existe)` acababa en la consola como
+             * «Finalizado» con un error escondido en stderr. Con `true`, webR
+             * detecta la condición de error y LANZA, que es lo que convierte la
+             * ejecución en un fallo de verdad. Se comprobó en el navegador antes
+             * de dejarlo así.
+             */
+            captureConditions: true,
+            /**
+             * Las gráficas SÍ se capturan desde la iteración 9.
+             *
+             * webR trae su propio dispositivo gráfico de canvas: `plot()` no
+             * necesita ningún paquete extra ni ninguna descarga, sólo que se
+             * encienda el dispositivo. Estaba apagado porque hasta ahora la salida
+             * era una consola de texto y una figura no tenía dónde ir.
+             *
+             * El tamaño se fija aquí y no se deja al defecto para que una gráfica
+             * tenga la misma forma en todos los navegadores; el fondo es blanco
+             * porque una figura transparente sobre el tema oscuro deja los ejes
+             * negros invisibles.
+             */
+            captureGraphics: { width: 720, height: 460, bg: 'white', capture: true },
+          });
+
+          /**
+           * `captured.output` YA VIENE ORDENADO.
+           *
+           * Ésta es la mitad de R de la corrección del orden real: webR devuelve
+           * un array con los trozos en la secuencia en que se produjeron, y hasta
+           * la iteración 8 se recorría para volcarlo en dos cadenas separadas. El
+           * recorrido es el mismo; lo que cambia es que ahora el registro conserva
+           * la posición de cada trozo.
+           */
+          for (const line of captured.output) {
+            if (line.type === 'stdout') output.line('stdout', String(line.data));
+            else if (line.type === 'stderr') output.line('stderr', String(line.data));
+            // Con las condiciones capturadas, avisos y mensajes ya no pasan por
+            // stderr. Perderlos dejaría a alguien sin ver «NaNs produced».
+            else if (line.type === 'warning' || line.type === 'message') {
+              output.line('stderr', conditionMessage(line.data, line.type));
+            }
+          }
+
+          await emitRImages(captured.images, output);
+          await emitRTable(captured.result as unknown as CapturedValue | undefined, output);
+          return output.toRun('ok');
+        } catch (caught) {
+          output.append('error', describeRError(caught));
+          return output.toRun('failed');
+        } finally {
+          await shelter.purge();
+        }
       } finally {
-        await shelter.purge();
+        if (project) {
+          try {
+            if (previousWorkingDirectory !== null) {
+              await webR.evalRVoid(`setwd(${JSON.stringify(previousWorkingDirectory)})`);
+            }
+          } catch {
+            // La ejecución siguiente volverá a establecer su propio directorio.
+          }
+          try {
+            await removeRProjectDirectory(webR);
+          } catch {
+            // El siguiente proyecto siempre empieza borrando este directorio.
+          }
+        }
       }
     },
 
@@ -466,4 +494,49 @@ function toTableCell(value: unknown): BrowserTableCell {
  */
 async function clearGlobalEnv(webR: WebRInstance): Promise<void> {
   await webR.evalRVoid('rm(list = ls(envir = globalenv(), all.names = TRUE), envir = globalenv())');
+}
+
+async function removeRProjectDirectory(webR: WebRInstance): Promise<void> {
+  let root: FSNode;
+  try {
+    root = await webR.FS.lookupPath(PROJECT_DIR);
+  } catch {
+    return;
+  }
+
+  const remove = async (path: string, node: FSNode): Promise<void> => {
+    if (!node.isFolder) {
+      await webR.FS.unlink(path);
+      return;
+    }
+    for (const [name, child] of Object.entries(node.contents ?? {})) {
+      if (name === '.' || name === '..') continue;
+      await remove(`${path}/${name}`, child);
+    }
+    await webR.FS.rmdir(path);
+  };
+
+  await remove(PROJECT_DIR, root);
+}
+
+async function materializeRProject(webR: WebRInstance, project: CodeProject): Promise<void> {
+  try {
+    await webR.FS.mkdir(PROJECT_DIR);
+  } catch {
+    // La ruta puede haber sido creada por otro archivo del mismo proyecto.
+  }
+
+  for (const [path, source] of Object.entries(project.files)) {
+    const segments = path.split('/');
+    let directory = PROJECT_DIR;
+    for (const segment of segments.slice(0, -1)) {
+      directory += `/${segment}`;
+      try {
+        await webR.FS.mkdir(directory);
+      } catch {
+        // Los prefijos compartidos sólo se crean una vez.
+      }
+    }
+    await webR.FS.writeFile(`${PROJECT_DIR}/${path}`, new TextEncoder().encode(source));
+  }
 }

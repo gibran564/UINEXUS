@@ -135,6 +135,10 @@ export interface CodeEditorProps {
   executionLanguage?: ProgrammingLanguage;
   /** Fuente que se ejecuta cuando no coincide con el buffer visible (proyectos multiarchivo). */
   executionSource?: string;
+  /** El proyecto completo cuando la ejecución es multiarchivo. */
+  executionFiles?: Record<string, string>;
+  /** El punto de entrada dentro de `executionFiles`. */
+  executionEntryFile?: string;
   /** Persiste el fuente antes de entregárselo a un ejecutor aislado. */
   beforeExecute?: () => Promise<void>;
   height?: number;
@@ -152,6 +156,8 @@ export function CodeEditor({
   executionEnabled = false,
   executionLanguage,
   executionSource,
+  executionFiles,
+  executionEntryFile,
   beforeExecute,
   height = 420,
   ariaLabel,
@@ -253,10 +259,20 @@ export function CodeEditor({
       return;
     }
 
-    setResult(await runner.run({ language: runnerLanguage, source: executionSource ?? value }));
+    setResult(
+      await runner.run({
+        language: runnerLanguage,
+        source: executionSource ?? value,
+        ...(executionFiles && executionEntryFile
+          ? { files: executionFiles, entryFile: executionEntryFile }
+          : {}),
+      })
+    );
   }, [
     beforeExecute,
     executionLanguageLabel,
+    executionEntryFile,
+    executionFiles,
     executionSource,
     runnable,
     runnerLanguage,

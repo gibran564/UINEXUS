@@ -11,6 +11,7 @@ import type { LabDataset } from '../lab/dataset';
 import { requiredPythonPackages } from './python-packages';
 import { NEXBOOK_LIMITS } from '../constants';
 import type { BrowserExecutionOptions, BrowserTableCell } from '../browser-code-runner-protocol';
+import type { CodeProject } from '../code-runner-contract';
 
 /**
  * Python dentro del navegador, con Pyodide.
@@ -49,6 +50,8 @@ import type { BrowserExecutionOptions, BrowserTableCell } from '../browser-code-
 
 type PyodideAPI = Awaited<ReturnType<typeof loadPyodideType>>;
 type LoadPyodide = typeof loadPyodideType;
+
+const PROJECT_DIR = '/workspace';
 
 export interface PythonEngineOptions {
   /** Dónde están los assets del runtime. */
@@ -127,10 +130,12 @@ export function createPythonEngine(options: PythonEngineOptions): CodeEngine {
       source: string,
       runOptions: BrowserExecutionOptions,
       mode: CodeExecutionMode = 'isolated',
-      lab?: LabDataset
+      lab?: LabDataset,
+      project?: CodeProject
     ): Promise<CodeEngineRun> {
       const pyodide = await boot();
       const output = new LimitedOutput(runOptions.maxOutputChars);
+      let previousWorkingDirectory: string | null = null;
       active = output;
 
       /**
@@ -152,6 +157,13 @@ export function createPythonEngine(options: PythonEngineOptions): CodeEngine {
       if (mode === 'isolated') await clearNamespace(pyodide);
 
       try {
+        if (project) {
+          removePythonProjectDirectory(pyodide);
+          materializePythonProject(pyodide, project);
+          previousWorkingDirectory = String(pyodide.runPython('__import__("os").getcwd()'));
+          await preparePythonProject(pyodide);
+        }
+
         /**
          * Las ruedas se cargan ANTES de ejecutar y sólo las de la lista blanca.
          *
@@ -159,7 +171,11 @@ export function createPythonEngine(options: PythonEngineOptions): CodeEngine {
          * esto lanza contra el propio origen y el mensaje lo dice. Es preferible
          * a un `ImportError` seco, que haría pensar que el paquete no existe.
          */
-        await loadRequiredPackages(pyodide, source, output);
+        await loadRequiredPackages(
+          pyodide,
+          project ? Object.values(project.files).join('\n') : source,
+          output
+        );
 
         /**
          * La API del laboratorio se instala DESPUÉS de limpiar y ANTES del
@@ -190,6 +206,18 @@ export function createPythonEngine(options: PythonEngineOptions): CodeEngine {
         emitFigures(pyodide, output);
         return output.toRun('failed');
       } finally {
+        if (project) {
+          try {
+            await cleanPythonProject(pyodide, previousWorkingDirectory);
+          } catch {
+            // La limpieza previa de la siguiente ejecución vuelve a intentarlo.
+          }
+          try {
+            removePythonProjectDirectory(pyodide);
+          } catch {
+            // El siguiente proyecto siempre empieza borrando este directorio.
+          }
+        }
         /**
          * Aislado limpia ANTES y DESPUÉS.
          *
@@ -269,6 +297,97 @@ const CLEAR_NAMESPACE =
 
 async function clearNamespace(pyodide: PyodideAPI): Promise<void> {
   await pyodide.runPythonAsync(CLEAR_NAMESPACE);
+}
+
+function removePythonProjectDirectory(pyodide: PyodideAPI): void {
+  const remove = (path: string): void => {
+    let entries: string[];
+    try {
+      entries = pyodide.FS.readdir(path);
+    } catch {
+      pyodide.FS.unlink(path);
+      return;
+    }
+
+    for (const name of entries) {
+      if (name === '.' || name === '..') continue;
+      remove(`${path}/${name}`);
+    }
+    pyodide.FS.rmdir(path);
+  };
+
+  try {
+    remove(PROJECT_DIR);
+  } catch {
+    // No había un proyecto anterior, o ya estaba limpio.
+  }
+}
+
+function materializePythonProject(pyodide: PyodideAPI, project: CodeProject): void {
+  try {
+    pyodide.FS.mkdir(PROJECT_DIR);
+  } catch {
+    // La ruta puede haber sido creada por otro archivo del mismo proyecto.
+  }
+
+  for (const [path, source] of Object.entries(project.files)) {
+    const segments = path.split('/');
+    let directory = PROJECT_DIR;
+    for (const segment of segments.slice(0, -1)) {
+      directory += `/${segment}`;
+      try {
+        pyodide.FS.mkdir(directory);
+      } catch {
+        // Los prefijos compartidos sólo se crean una vez.
+      }
+    }
+    pyodide.FS.writeFile(`${PROJECT_DIR}/${path}`, new TextEncoder().encode(source));
+  }
+}
+
+const PURGE_PROJECT_MODULES = `
+import os as __nexus_os
+import sys as __nexus_sys
+for __nexus_name, __nexus_module in list(__nexus_sys.modules.items()):
+    __nexus_file = getattr(__nexus_module, "__file__", None)
+    if isinstance(__nexus_file, str):
+        __nexus_file = __nexus_os.path.abspath(__nexus_file)
+        if __nexus_file == "${PROJECT_DIR}" or __nexus_file.startswith("${PROJECT_DIR}/"):
+            __nexus_sys.modules.pop(__nexus_name, None)
+`;
+
+async function preparePythonProject(pyodide: PyodideAPI): Promise<void> {
+  await pyodide.runPythonAsync(`
+import importlib as __nexus_importlib
+import os as __nexus_os
+import sys as __nexus_sys
+__nexus_os.chdir("${PROJECT_DIR}")
+if "${PROJECT_DIR}" not in __nexus_sys.path:
+    __nexus_sys.path.insert(0, "${PROJECT_DIR}")
+__nexus_importlib.invalidate_caches()
+${PURGE_PROJECT_MODULES}
+`);
+}
+
+async function cleanPythonProject(
+  pyodide: PyodideAPI,
+  previousWorkingDirectory: string | null
+): Promise<void> {
+  await pyodide.runPythonAsync(`
+import importlib as __nexus_importlib
+import os as __nexus_os
+import sys as __nexus_sys
+${
+  previousWorkingDirectory === null
+    ? ''
+    : `__nexus_os.chdir(${JSON.stringify(previousWorkingDirectory)})`
+}
+while "${PROJECT_DIR}" in __nexus_sys.path:
+    __nexus_sys.path.remove("${PROJECT_DIR}")
+${PURGE_PROJECT_MODULES}
+__nexus_importlib.invalidate_caches()
+[globals().pop(__nexus_key, None) for __nexus_key in list(globals()) if __nexus_key.startswith("__nexus_")]
+`);
 }
 
 // ---------------------------------------------------------------------------

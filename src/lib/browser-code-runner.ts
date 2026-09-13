@@ -167,6 +167,10 @@ class WorkerCodeRunner implements BrowserCodeRunner {
 
     this.setStatus('running');
     const runStarted = Date.now();
+    const project =
+      request.files && request.entryFile
+        ? { files: request.files, entryFile: request.entryFile }
+        : undefined;
 
     try {
       const response = await this.send(
@@ -177,7 +181,8 @@ class WorkerCodeRunner implements BrowserCodeRunner {
             request.source,
             { maxOutputChars: CODE_RUN_LIMITS.maxOutputChars },
             this.options.executionMode ?? 'isolated',
-            lab
+            lab,
+            project
           ),
         this.options.timeoutMs ?? CODE_RUN_LIMITS.timeoutMs
       );
