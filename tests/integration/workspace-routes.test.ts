@@ -278,6 +278,61 @@ describe('guardar mientras se escribe', () => {
     });
   });
 
+  /**
+   * El vínculo con el proyecto publicado (N5).
+   *
+   * Se guarda solo el identificador: slug, versión y estado viven en la entidad
+   * publicada. Y es un puntero, no un permiso — quien firma las subidas vuelve
+   * a resolver la propiedad por su cuenta.
+   */
+  it('guarda el vínculo con el proyecto publicado y lo devuelve al reabrir', async () => {
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Sitio',
+      language: 'html',
+      code: '<h1>Hola</h1>',
+    });
+
+    const response = await patch(ACTORS.studentA, workspace.id, {
+      publishedProjectId: 'proj-abc',
+    });
+    expect(response.status).toBe(200);
+
+    const reopened = (await (await read(ACTORS.studentA, workspace.id)).json())
+      .workspace as Workspace;
+    expect(reopened.publishedProjectId).toBe('proj-abc');
+  });
+
+  it('un PATCH que sólo trae el vínculo es suficiente para guardar', async () => {
+    // Sin esto, la regla «no hay nada que guardar» rechazaría justo la
+    // operación que ocurre tras publicar, que no cambia ni un byte del código.
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Sitio',
+      language: 'html',
+      code: '<h1>Hola</h1>',
+    });
+
+    const response = await patch(ACTORS.studentA, workspace.id, {
+      publishedProjectId: 'solo-el-vinculo',
+    });
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()).workspace as Workspace).code).toBe('<h1>Hola</h1>');
+  });
+
+  it('nadie puede vincular el NexCode de otra persona', async () => {
+    const workspace = await create(ACTORS.studentA, {
+      title: 'Sitio',
+      language: 'html',
+      code: '<h1>Hola</h1>',
+    });
+
+    const response = await patch(ACTORS.studentB, workspace.id, {
+      publishedProjectId: 'proj-ajeno',
+    });
+
+    expect(response.status).toBe(404);
+  });
+
   it('rechaza files que eliminan el entryFile existente', async () => {
     const originalFiles = { 'main.py': 'print(1)' };
     const workspace = await create(ACTORS.studentA, {

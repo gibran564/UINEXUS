@@ -48,6 +48,14 @@ export function normalizeWorkspace(raw: Partial<WorkspaceRecord>): WorkspaceReco
      * archivos» son estados distintos para los workspaces legacy.
      */
     ...(raw.files !== undefined ? { files: raw.files } : {}),
+    /**
+     * Igual que arriba: ausente es «nunca se publicó», que no es lo mismo que
+     * publicado en ninguna parte. Esta función es una lista blanca, así que un
+     * campo que no se nombre aquí se pierde al leer aunque se haya escrito.
+     */
+    ...(raw.publishedProjectId !== undefined
+      ? { publishedProjectId: raw.publishedProjectId }
+      : {}),
     courseId: raw.courseId ?? null,
     createdAt: raw.createdAt ?? new Date(0).toISOString(),
     updatedAt: raw.updatedAt ?? raw.createdAt ?? new Date(0).toISOString(),
@@ -190,6 +198,7 @@ export async function updateOwnWorkspace(
     language?: string;
     entryFile?: string;
     files?: Record<string, string>;
+    publishedProjectId?: string;
   }
 ): Promise<WorkspaceRecord | null> {
   const client = getDynamo();
