@@ -246,6 +246,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
 
   const { workspace } = data;
   const activeLanguage = detectLanguageFromPath(activeFile, workspace.language);
+  const entryLanguage = detectLanguageFromPath(entryFile, workspace.language);
 
   return (
     <div>
@@ -305,6 +306,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
             {activeFile ? (
               <CodeEditor
                 language={activeLanguage}
+                executionLanguage={entryLanguage}
                 value={files[activeFile] ?? ''}
                 onChange={edit}
                 executionEnabled

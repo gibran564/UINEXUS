@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canRunInBrowser,
   getBrowserCodeRunner,
+  resolveExecutionLanguage,
   type BrowserCodeRunnerStatus,
 } from '../../src/lib/browser-code-runner';
 import { CODE_RUN_LIMITS } from '../../src/lib/code-runner-contract';
@@ -98,6 +99,33 @@ const okResult = (stdout: string) =>
     stderr: '',
     truncated: false,
   }));
+
+describe('selección del lenguaje de ejecución', () => {
+  it('mantiene Python cuando editor y ejecutable son Python', () => {
+    expect(resolveExecutionLanguage('python', 'python')).toBe('python');
+  });
+
+  it('ejecuta Python aunque el archivo visible sea R', () => {
+    expect(resolveExecutionLanguage('r', 'python')).toBe('python');
+  });
+
+  it('ejecuta R aunque el archivo visible sea Python', () => {
+    expect(resolveExecutionLanguage('python', 'r')).toBe('r');
+  });
+
+  it('conserva el comportamiento anterior cuando no hay lenguaje ejecutable', () => {
+    expect(resolveExecutionLanguage('r')).toBe('r');
+  });
+
+  it('no cambia el runtime al navegar entre archivos si el ejecutable es el mismo', () => {
+    // Las pestañas cambian el lenguaje de Monaco, pero no deben reiniciar un
+    // runtime que sigue apuntando al mismo archivo principal.
+    const beforeTabChange = resolveExecutionLanguage('python', 'python');
+    const afterTabChange = resolveExecutionLanguage('r', 'python');
+
+    expect(afterTabChange).toBe(beforeTabChange);
+  });
+});
 
 describe('a quién se le ofrece ejecutar', () => {
   it('a R y a Python', () => {
