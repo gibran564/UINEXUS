@@ -143,6 +143,7 @@ export function NexBookImage({
             </p>
             <button
               type="button"
+              data-block-focus
               onClick={() => inputRef.current?.click()}
               disabled={busy}
               className="btn btn-secondary btn-sm"

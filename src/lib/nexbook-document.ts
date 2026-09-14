@@ -119,6 +119,30 @@ export function pruneOrphanResults(document: NexBookDocument): NexBookDocument {
   return { ...document, results: Object.fromEntries(entries) };
 }
 
+/**
+ * Inserta bloques en una POSICIÓN del documento.
+ *
+ * Existe porque insertar era, hasta ahora, tres `splice` distintos repartidos
+ * por el editor —añadir, duplicar e importar un libro de varias hojas—, y los
+ * tres tenían que acordarse de lo mismo: que `results` se indexa por bloque y
+ * NO se toca. Un resultado que se perdiera al insertar un bloque en medio
+ * borraría la salida de una celda que nadie ejecutó otra vez.
+ *
+ * `index` se recorta al rango del documento en vez de fallar: quien inserta
+ * detrás del último bloque de una lista que acaba de encoger quiere el final,
+ * no una excepción.
+ */
+export function insertBlocksAt(
+  document: NexBookDocument,
+  index: number,
+  blocks: NexBookBlock[]
+): NexBookDocument {
+  const at = Math.max(0, Math.min(Math.trunc(index), document.blocks.length));
+  const next = [...document.blocks];
+  next.splice(at, 0, ...blocks);
+  return { ...document, blocks: next };
+}
+
 /** Un documento vacío y VÁLIDO. */
 export function emptyDocument(blocks: NexBookBlock[] = []): NexBookDocument {
   return { formatVersion: NEXBOOK_FORMAT_VERSION, blocks, results: {} };
