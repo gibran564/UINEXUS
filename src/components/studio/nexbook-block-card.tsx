@@ -5,6 +5,7 @@ import { CodeEditor } from '@/components/aula/code-editor';
 import { MarkdownContent } from '@/components/aula/markdown-content';
 import { ENABLED_PROGRAMMING_LANGUAGES, languageCapabilities } from '@/lib/constants';
 import { NEXBOOK_LIMITS } from '@/lib/constants';
+import { nexBookBlockLabel } from '@/lib/nexbook-blocks';
 import type {
   NexBookBlock,
   NexBookCellResult,
@@ -72,16 +73,6 @@ export interface NexBookBlockCardProps {
   onAddSheets?: (sheets: { name: string; sheet: NexBookSheetData }[]) => void;
 }
 
-const BLOCK_LABEL: Record<NexBookBlock['type'], string> = {
-  markdown: 'Texto',
-  code: 'Código',
-  image: 'Imagen',
-  spreadsheet: 'Hoja de cálculo',
-  // «Registrar» y no «IA» a secas: la etiqueta tiene que decir qué hace el
-  // bloque, y lo que hace es documentar, no consultar un modelo.
-  ai_worklog: 'Registro de uso de IA',
-};
-
 export function NexBookBlockCard({
   block,
   index,
@@ -102,7 +93,7 @@ export function NexBookBlockCard({
   onAddSheets,
 }: NexBookBlockCardProps) {
   const [editingMarkdown, setEditingMarkdown] = useState(false);
-  const label = BLOCK_LABEL[block.type];
+  const label = nexBookBlockLabel(block.type);
   const locked = 'editableByStudent' in block && block.editableByStudent === false;
   const writable = editable && !locked;
 
@@ -173,6 +164,7 @@ export function NexBookBlockCard({
           {block.type === 'markdown' && writable && (
             <button
               type="button"
+              data-block-focus
               onClick={() => setEditingMarkdown((value) => !value)}
               className="btn btn-ghost btn-sm"
               aria-pressed={editingMarkdown}
