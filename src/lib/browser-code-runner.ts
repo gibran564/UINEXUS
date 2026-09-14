@@ -13,7 +13,7 @@ import {
   type BrowserRuntimeLanguage,
   type CodeWorkerResponse,
 } from './browser-code-runner-protocol';
-import { CODE_WORKER_URLS } from './code-engines/runtime-assets';
+import { CODE_WORKER_TYPES, CODE_WORKER_URLS } from './code-engines/runtime-assets';
 import type { LabDataset } from './lab/dataset';
 import type { ProgrammingLanguage } from './types';
 
@@ -89,12 +89,18 @@ export interface BrowserCodeRunner extends CodeRunner {
  * `code-engines/runtime-assets.ts`). Con `worker-src 'self'` basta y no hay
  * ninguna URL de terceros que autorizar.
  *
- * `type: 'module'` no es opcional: Pyodide y webR cargan su WebAssembly con
- * `import()` dinámico, que en un Worker clásico no existe.
+ * El TIPO sale de la tabla, no de una constante.
+ *
+ * `type: 'module'` sigue sin ser opcional para Pyodide y webR: cargan su
+ * WebAssembly con `import()` dinámico, que en un Worker clásico no existe. Y Java
+ * necesita exactamente lo contrario, porque `loader.js` de CheerpJ es un script
+ * clásico y `importScripts()` no está permitido en un Worker de módulo. Un solo
+ * `type` para los tres habría roto un lado o el otro, así que cada runtime
+ * declara el suyo en `CODE_WORKER_TYPES` y aquí sólo se lee.
  */
 function defaultWorkerFactory(language: BrowserRuntimeLanguage): Worker {
   return new Worker(CODE_WORKER_URLS[language], {
-    type: 'module',
+    type: CODE_WORKER_TYPES[language],
     name: `uinexus-${language}`,
   });
 }
@@ -111,6 +117,29 @@ export function getBrowserCodeRunner(
   options: BrowserCodeRunnerOptions = {}
 ): BrowserCodeRunner | null {
   if (!isBrowserExecutableLanguage(language)) return null;
+  return new WorkerCodeRunner(language, options);
+}
+
+/**
+ * El mismo ejecutor, SIN la puerta del catálogo. No es para la interfaz.
+ *
+ * Existe por un problema concreto de la fase J1: el runtime de Java ya funciona
+ * —compila, ejecuta, aísla y limpia— y todavía no debe poder ofrecerse a nadie.
+ * `getBrowserCodeRunner` respeta `browserExecution` y por tanto devuelve `null`
+ * para Java, que es exactamente lo que se quiere en el editor y en NexBook. Pero
+ * un runtime que no se puede instanciar tampoco se puede PROBAR, y entregar un
+ * motor sin pruebas de navegador habría sido peor que no entregarlo.
+ *
+ * Así que la puerta se abre sólo aquí, con el nombre diciéndolo, y una prueba de
+ * frontera comprueba que ni `src/components/**` ni `src/app/**` la llaman
+ * (ver `tests/unit/code-execution-boundary.test.ts`). El día que la fase de
+ * activación marque `browserExecution: true`, `getBrowserCodeRunner` empieza a
+ * devolver un ejecutor de Java y esta función deja de tener razón de ser.
+ */
+export function getInternalBrowserCodeRunner(
+  language: BrowserRuntimeLanguage,
+  options: BrowserCodeRunnerOptions = {}
+): BrowserCodeRunner {
   return new WorkerCodeRunner(language, options);
 }
 

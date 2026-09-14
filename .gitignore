@@ -25,10 +25,9 @@ public/runtime/
 # Sandbox local (scripts/dev-local.mjs). Datos de DynamoDB Local, borrables.
 .local-sandbox/
 
-# Herramientas Java del navegador: el JAR de ECJ se descarga con su SHA-256
-# fijado (scripts/fetch-java-toolchain.mjs) y no tiene por qué vivir en git.
-public/java/
-# Igual para el JAR del spike J0 y las fuentes que genera cada corrida.
+# El JAR de ECJ vive en public/runtime/java/, ya ignorado arriba: lo descarga
+# `scripts/fetch-java-toolchain.mjs` verificando su SHA-256.
+# Igual el JAR del spike J0 y las fuentes que genera cada corrida.
 spikes/j0-cheerpj/assets/
 
 # Playwright (tests/e2e). Informes y trazas de una ejecución local.

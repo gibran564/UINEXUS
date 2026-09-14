@@ -1045,3 +1045,73 @@ El arreglo es pequeño y tiene sitio evidente: un presupuesto agregado sobre la
 entrega entera al validarla, con el mismo mensaje temprano y legible que ya dan
 los topes de un NexBook. No se hizo al encontrarlo porque tocar la validación de
 entregas no era el alcance de la auditoría que lo descubrió.
+
+---
+
+### 16. El runtime de Java del navegador: lo que falta antes de ofrecerlo (J1)
+
+El motor existe, compila y ejecuta Java real en el navegador, y **no está
+ofrecido**: `browserExecution: false`. Esta lista es lo que la fase de activación
+tendrá que resolver, no una lista de averías.
+
+**16.1 Sólo Java 8.** Es la única combinación demostrada: ECJ 3.13.102 con el
+`rt.jar` del JRE 8 de CheerpJ como `-bootclasspath`. ECJ moderno con Java 17
+falla porque intenta montar un `JrtFileSystem` sobre una imagen modular que
+CheerpJ no expone. No hay detección de versiones ni promesa de 11, 17 o 21: una
+tarea que use `var`, `record` o streams de Java 9+ no compilará. Subir de versión
+es una investigación aparte, no un parámetro.
+
+**16.2 Sólo Chromium, y sólo headless en loopback.** `npm run test:java` corre en
+el Chromium de Playwright. Firefox y Safari **no están probados**, y hay motivo
+para sospechar de ellos: el arranque de CheerpJ depende de `importScripts` en un
+Worker clásico y de `import()` dinámico dentro de ese Worker, que es precisamente
+donde los navegadores han diferido. Tampoco se ha probado con una CSP desplegada,
+ni con COOP/COEP, ni con service workers por medio.
+
+**16.3 CheerpJ viene de un CDN ajeno.** Es la única dependencia de terceros que
+este proyecto carga así, y no por comodidad: la edición Community no se puede
+autoalojar sin licencia comercial (ver `docs/SECURITY.md`). Dos consecuencias que
+no se pueden esconder: una clase con Java depende de que
+`cjrtnc.leaningtech.com` esté disponible esa mañana, y la versión que se ejecuta
+es la que ese CDN sirva bajo `/4.3/`. La URL fija la versión; no fija el
+contenido.
+
+**16.4 Un `java.net.Socket` cuelga el programa.** CheerpJ acepta `new Socket()` y
+`connect()` y luego el primer `read()` no vuelve nunca. **No es un agujero**: el
+servidor no recibe nada, y se comprobó que pasa igual sin ningún firewall
+aplicado, así que es comportamiento de CheerpJ —su capa de sockets necesita un
+proxy que este despliegue no tiene—. Pero el síntoma para quien programa es malo:
+su programa se queda parado hasta que el tiempo límite termina el Worker, sin un
+error que explique por qué. Cuando Java se ofrezca habrá que decirlo en la
+interfaz o detectarlo antes.
+
+**16.5 Sin argumentos de programa.** `main(String[] args)` recibe siempre un
+arreglo vacío. El transporte existe —el manifiesto del harness acepta entradas
+`arg=`— pero `CodeRunRequest` no tiene dónde ponerlos, y añadirle un campo que
+nadie usa habría sido ampliar el protocolo sin un caso que lo pida.
+
+**16.6 Sin sesión.** Cada ejecución compila desde cero en su propio namespace, así
+que no hay equivalente a definir una clase en una celda y usarla en la siguiente.
+El hueco está declarado (`JAVA_VFS_SESSIONS_DIR`) para que la limpieza de hoy no
+lo pise, y nada más.
+
+**16.7 Sin `stdin`, sin Swing/AWT, sin JAR subidos, sin Maven.** Fuera de alcance
+por decisión, no por descubrimiento.
+
+**16.8 Sólo archivos `.java`.** Un proyecto puede traer un `.csv` o un `.txt`, y
+el compilador no los ve. Un programa que lea un recurso del classpath no lo
+encontrará.
+
+**16.9 El coste.** Arrancar CheerpJ y compilar el harness es la parte lenta, y se
+paga una vez por Worker; a partir de ahí una compilación pequeña ronda los cinco
+segundos en la máquina de desarrollo. Un tiempo límite se lleva el Worker, así que
+la ejecución siguiente vuelve a pagar el arranque completo. El tope de ejecución
+por defecto (10 s) es **demasiado corto para Java** tal y como está: la suite de
+navegador usa márgenes mayores a propósito. Elegir ese número es trabajo de la
+fase de activación, porque es una decisión de producto y no del motor.
+
+**16.10 `indexedDB` sobrevive al endurecimiento en el Worker de Java.** Hace falta:
+`/files` de CheerpJ vive ahí y es donde se compilan las clases. El código del
+alumnado no lo alcanza —no hay puente de Java a JavaScript— y el namespace se
+borra al terminar, pero es una diferencia real con Python y R que conviene tener
+presente al revisar el modelo de amenaza.

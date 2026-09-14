@@ -633,7 +633,7 @@ interface LanguageCapabilities {
 | --- | --- | --- | --- | --- |
 | Python | ✅ | ✅ | Pyodide, en el navegador | Soportado |
 | R | ✅ | ✅ | webR, en el navegador | Soportado |
-| Java | ✅ | ❌ | Necesita sandbox remoto | Planeado |
+| Java | ✅ | ❌ | CheerpJ + ECJ, runtime interno listo y **sin ofrecer** (§18) | Runtime en J1 |
 | C, C++ | ✅ | ❌ | Necesita sandbox remoto | Planeado |
 | JavaScript, HTML, CSS | ✅ | ❌ | Se ven al publicar el proyecto | Soportado (vía publicación) |
 | SQL | ✅ | ❌ | No hay base de datos | Sólo edición |
@@ -1083,8 +1083,199 @@ consecuencia de una garantía que vale más que la comodidad de probar.
 |---|---|---|
 | Monaco | NexCode, bloque de código de un NexLab | al abrir el editor |
 | Pyodide / webR | al ejecutar una celda | nunca antes |
+| CheerpJ / ECJ | al ejecutar Java (hoy sólo desde pruebas) | nunca antes |
 | Parser de CSV/XLSX | al importar | nunca antes |
 | `NexBookStudio` | laboratorio | `next/dynamic`, al abrirlo |
 
 Ninguna ruta los carga de inicio. Lo comprueba el manifiesto de compilación, y
 un recorrido de Playwright sobre el build real lo confirma en el navegador.
+
+## 18. Java en el navegador (fase J1)
+
+### Estado: existe y NO se ofrece
+
+Java tiene desde J1 un runtime de navegador completo —compila, ejecuta, aísla y
+limpia— y sigue declarado como `browserExecution: false`. No es un descuido: es
+el alcance de la fase. Lo que J1 entrega es el motor; ofrecerlo en NexCode, en
+NexBook y en el botón de ejecutar son fases posteriores, y cada una tiene su
+propio trabajo de interfaz y de compatibilidad de navegadores.
+
+La separación se sostiene en `isBrowserExecutableLanguage`, que exige **dos**
+condiciones: que exista código de verdad (`BROWSER_RUNTIME_LANGUAGES`) y que el
+catálogo lo prometa (`capabilities.browserExecution`). Java cumple la primera y
+no la segunda, así que `getBrowserCodeRunner('java')` devuelve `null` y ninguna
+interfaz puede arrancarlo. Activarlo será cambiar **una línea del catálogo**.
+
+Para poder probar un runtime que no se puede instanciar existe
+`getInternalBrowserCodeRunner`, que salta esa puerta, lo dice en el nombre, y
+tiene una prueba de frontera que comprueba que ningún componente ni ninguna ruta
+la llama.
+
+### La cadena de herramientas, y por qué es Java 8
+
+```
+CheerpJ 4.3      https://cjrtnc.leaningtech.com/4.3/   (CDN, no autoalojable)
+Java             8                                      (/lt/8/jre/lib/rt.jar)
+ECJ              3.13.102                               (/runtime/java/, EPL-2.0)
+```
+
+Java 8 no es nostalgia: es lo único que se demostró funcionando en el spike J0
+(`spikes/j0-cheerpj/`). ECJ moderno con Java 17 intenta montar un
+`JrtFileSystem` sobre una imagen modular que CheerpJ no expone; la ruta Java 8
+con `rt.jar` explícito como `-bootclasspath` compila y ejecuta. Declarar 11, 17
+o 21 habría sido prometer algo que nadie comprobó.
+
+Todo eso vive fijado en un solo archivo, `code-engines/java-toolchain.ts`:
+versiones, URLs, SHA-256, rutas del sistema de archivos virtual y lista blanca de
+red. Ninguna de esas cadenas se escribe dos veces.
+
+### El Worker de Java es CLÁSICO, y es la única excepción
+
+```
+python   module    Pyodide carga su WebAssembly con import() dinámico
+r        module    webR, igual
+java     classic   CheerpJ 4.3 se carga con importScripts(loader.js)
+```
+
+`loader.js` de CheerpJ es un script clásico y Chromium prohíbe
+`importScripts()` dentro de un Worker de módulo. Convertir los tres a clásicos
+habría roto Pyodide y webR, que necesitan `import()` dinámico. Así que el sistema
+**no finge** que todos los runtimes arrancan igual: `CODE_WORKER_TYPES` dice cuál
+arranca cómo, `browser-code-runner.ts` lee la tabla en vez de escribir un tipo
+fijo, y `copy-code-runtimes.mjs` hace dos compilaciones de esbuild —ESM para
+Python y R, IIFE para Java— porque son dos formatos.
+
+### Una sola invocación de Java por ejecución
+
+```
+prepare()                       una vez por Worker
+  importScripts(loader.js)
+  cheerpjInit({ version: 8 })
+  compila el harness            -> /files/nextudio/runtime/harness
+
+run(project)                    una vez por ejecución
+  resuelve la clase de entrada    en TypeScript, probado en Node
+  escribe las fuentes           -> /str/nextudio.src.N   (JS escribe, Java lee)
+  escribe el manifiesto         -> /str/nextudio.manifest
+  cheerpjRunMain(harness)       -> barre, compila, ejecuta, limpia
+  descodifica el registro         orden global, canal por canal
+  vacía las ranuras de /str
+```
+
+El harness (`code-engines/java-harness.ts`) es la única pieza de Java en la que
+el proyecto confía, y hace tres cosas que el spike no hacía:
+
+1. **compila él mismo.** ECJ se invoca en proceso con
+   `BatchCompiler.compile(...)`, así que los diagnósticos del compilador pasan
+   por los mismos flujos etiquetados que la salida del programa y comparten un
+   único orden. Antes hacía falta otra invocación y filtrar lo que CheerpJ
+   escribe por su cuenta en la consola.
+2. **classpath cerrado.** Compila con `-classpath ""` y carga el código del
+   alumnado con un `URLClassLoader` cuyo padre es el cargador de **arranque**. No
+   es que el harness y ECJ estén protegidos: es que no existen para ese código, y
+   tampoco existe ninguna clase que otra ejecución dejara suelta.
+3. **limpieza pase lo que pase.** Un `finally` borra el namespace aunque el
+   compilador falle, aunque `main` lance y aunque lance el propio harness.
+
+El harness se compila **una vez por Worker**, en `prepare()`, no en cada
+ejecución. No se puede compilar antes porque el único compilador de Java que
+existe aquí es ECJ dentro del navegador; por eso vive como una cadena de
+TypeScript y no como un `.java` que nadie podría compilar.
+
+### Cómo llegan las fuentes: `/str`, que es plano
+
+CheerpJ documenta `cheerpOSAddStringFile(path, bytes)` para escribir en `/str`:
+JavaScript escribe, Java lee, no hay servidor en medio. El spike usaba un
+endpoint auxiliar del servidor y **eso no llegó a producción**: mandar el código
+de alguien a un endpoint privado para fingir ejecución en el navegador habría
+sido exactamente lo contrario de lo que se está construyendo.
+
+Dos detalles que sólo se ven ejecutándolo:
+
+- **`/str` no tiene carpetas.** CheerpJ responde «Directories are not supported»
+  a cualquier ruta con subdirectorios. Por eso los archivos viajan en ranuras
+  numeradas y un **manifiesto** dice qué ruta real le corresponde a cada una; el
+  harness reconstruye el árbol dentro de su namespace.
+- **ECJ exige que el archivo se llame como su tipo público.** De ahí que la
+  ranura del harness sí sea `NxRunHarness.java` —es el único fuente que se
+  compila directamente desde `/str`— y que las del proyecto no necesiten nombre:
+  nadie compila desde ellas.
+
+La autoridad de rutas sigue siendo `normalizeWorkspacePath`, la misma que el
+resto del proyecto. No hay una sanitización de rutas de Java aparte.
+
+### Namespaces y contaminación entre ejecuciones
+
+`/files` de CheerpJ es **persistente** (IndexedDB), así que no basta con escribir
+bien: hay que borrar.
+
+```
+/files/nextudio/runtime/harness            el harness, una vez por Worker
+/files/nextudio/runs/<runId>/src           las fuentes de ESTA ejecución
+/files/nextudio/runs/<runId>/classes       sus clases
+/files/nextudio/sessions/<sessionId>/...   reservado, sin usar en J1
+```
+
+`runId` lo crea Nextudio con `crypto.getRandomValues`. No sale del nombre del
+archivo, ni del paquete, ni de nada que escriba el alumnado: un identificador
+derivado del fuente permitiría que dos ejecuciones compartieran namespace a
+propósito.
+
+El `finally` del harness cubre los fallos. Lo que **no** puede cubrir es
+`Worker.terminate()`, que no ejecuta ningún `finally`: para eso el harness
+**barre los namespaces ajenos al empezar**, antes de crear el suyo. El resultado
+observable es el que importa: una clase compilada en una ejecución anterior no se
+resuelve en la siguiente, y hay una prueba de navegador que lo comprueba
+compilando `Ghost` y usándolo después sin incluirlo.
+
+### La salida conserva el orden y el canal
+
+CheerpJ entrega `System.out` y `System.err` por el mismo `console.log`: se puede
+conservar el orden parcheando la consola, pero no la identidad del flujo. El
+harness instala dos `PrintStream` etiquetados sobre un registro compartido y
+sincronizado, y al terminar emite un registro troceado y en base64 que el motor
+descodifica. `A` en stdout, `B` en stderr y `C` en stdout vuelven como tres
+tramos en ese orden, no como «todo stdout y luego todo stderr».
+
+El tope de salida se aplica **mientras se escribe**, dentro de Java. Un
+`while (true) System.out.println(...)` deja de almacenar al llegar al límite y
+marca `truncated`, pero **sigue aceptando escrituras**: cortar con una excepción
+cambiaría el comportamiento del programa y dejar de aceptar bloquearía un
+`println`. El programa sigue corriendo, sigue siendo terminable desde fuera, y la
+salida no crece.
+
+### Tiempo límite, parada y errores
+
+Lo mismo que Python y R, sin nada nuevo: el reloj vive en el hilo principal y su
+forma de aplicarlo es `worker.terminate()`. No se intenta parar un hilo de Java
+cooperativamente. Tras un tiempo límite o una parada el runtime se descarta
+entero y la siguiente ejecución arranca en limpio; hay pruebas de navegador para
+las dos cosas y para que la ejecución siguiente funcione.
+
+Los fallos del **entorno** se distinguen de los del **programa**, porque no se le
+enseña lo mismo a quien programa: que CheerpJ no se pueda descargar es una
+avería; que un programa no compile es un resultado (`failed`) con sus
+diagnósticos en `stderr`.
+
+### Cómo se prueba
+
+En dos sitios, y la división no es arbitraria:
+
+| | Dónde | Qué cubre |
+|---|---|---|
+| `npm test` | `tests/unit/java-runtime.test.ts` | contratos: clase de entrada, registro, manifiesto, firewall, catálogo |
+| `npm run test:java` | `tests/browser/java-runtime/` | que Java compile y se ejecute de verdad, en Chromium |
+
+Lo segundo no se puede simular. CheerpJ es WebAssembly cargado con
+`importScripts` en un Worker clásico que compila con ECJ y escribe en un sistema
+de archivos respaldado por IndexedDB; un doble produciría una prueba verde que no
+ha ejecutado una línea de Java. Por eso la suite de navegador usa el ejecutor
+real, el Worker publicado y el CheerpJ del CDN, con su propio servidor de
+loopback en vez del sandbox completo del aula.
+
+### Qué NO hace
+
+Sin sesión (cada ejecución compila desde cero), sin `stdin`, sin argumentos de
+programa expuestos en `CodeRunRequest`, sin Swing/AWT, sin JAR subidos, sin
+Maven. Y sin Firefox ni Safari certificados todavía. Está anotado en
+`docs/LIMITATIONS.md`.

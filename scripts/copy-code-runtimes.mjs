@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
+import { publishJavaToolchain } from './fetch-java-toolchain.mjs';
 
 /**
  * Copia los runtimes de Python y R desde `node_modules` a `public/runtime`.
@@ -161,34 +162,55 @@ async function resolvePackageDir(specifier) {
  * El precio, y conviene saberlo: editar `src/workers/**` o `src/lib/code-engines/**`
  * NO se recarga solo en `next dev`. Hay que volver a ejecutar `npm run runtimes`.
  */
+/**
+ * Y por qué Java sale en OTRO formato.
+ *
+ * Pyodide y webR necesitan `import()` dinámico, que sólo existe en un Worker de
+ * módulo, así que sus Workers se emiten ESM. CheerpJ necesita lo contrario:
+ * `loader.js` es un script clásico y Chromium no permite `importScripts()` dentro
+ * de un Worker de módulo. Emitir Java como ESM produciría un Worker que no puede
+ * cargar su runtime, y emitir los tres como IIFE rompería Python y R.
+ *
+ * Son dos compilaciones porque son dos formatos, no por gusto. La tabla de qué
+ * runtime usa cuál está en `src/lib/code-engines/runtime-assets.ts`
+ * (`CODE_WORKER_TYPES`), y una prueba comprueba que esta lista y esa tabla no se
+ * separen.
+ */
+const WORKER_BUNDLES = [
+  { format: 'esm', entries: ['python-runner.worker.ts', 'r-runner.worker.ts'] },
+  { format: 'iife', entries: ['java-runner.worker.ts'] },
+];
+
 async function buildWorkers(sourceDir, outDir) {
-  const entries = ['python-runner.worker.ts', 'r-runner.worker.ts'].map((name) =>
-    path.join(sourceDir, name)
-  );
+  let built = 0;
 
-  const result = await esbuild.build({
-    entryPoints: entries,
-    outdir: outDir,
-    bundle: true,
-    format: 'esm',
-    target: 'es2022',
-    platform: 'browser',
-    // Los runtimes se cargan por URL en tiempo de ejecución (ver
-    // `code-engines/*-engine.ts`); empaquetarlos aquí sería duplicarlos.
-    external: ['pyodide', 'webr'],
-    minify: true,
-    sourcemap: false,
-    logLevel: 'silent',
-    entryNames: '[name]',
-    tsconfigRaw: { compilerOptions: { target: 'es2022', useDefineForClassFields: true } },
-    // `@/…` es el alias del proyecto; esbuild no lee `tsconfig.paths` aquí.
-    alias: { '@': path.join(sourceDir, '..') },
-  });
+  for (const bundle of WORKER_BUNDLES) {
+    const result = await esbuild.build({
+      entryPoints: bundle.entries.map((name) => path.join(sourceDir, name)),
+      outdir: outDir,
+      bundle: true,
+      format: bundle.format,
+      target: 'es2022',
+      platform: 'browser',
+      // Los runtimes se cargan por URL en tiempo de ejecución (ver
+      // `code-engines/*-engine.ts`); empaquetarlos aquí sería duplicarlos.
+      external: ['pyodide', 'webr'],
+      minify: true,
+      sourcemap: false,
+      logLevel: 'silent',
+      entryNames: '[name]',
+      tsconfigRaw: { compilerOptions: { target: 'es2022', useDefineForClassFields: true } },
+      // `@/…` es el alias del proyecto; esbuild no lee `tsconfig.paths` aquí.
+      alias: { '@': path.join(sourceDir, '..') },
+    });
 
-  if (result.errors.length > 0) {
-    throw new Error(`No se pudieron compilar los Workers:\n${JSON.stringify(result.errors)}`);
+    if (result.errors.length > 0) {
+      throw new Error(`No se pudieron compilar los Workers:\n${JSON.stringify(result.errors)}`);
+    }
+    built += bundle.entries.length;
   }
-  return entries.length;
+
+  return built;
 }
 
 /**
@@ -244,9 +266,28 @@ async function main() {
   // fuente cambió costaría más que rehacerlos.
   const workers = await buildWorkers(path.join(root, 'src', 'workers'), path.join(target, 'workers'));
 
+  /**
+   * El compilador de Java, si se puede.
+   *
+   * Un fallo aquí NO tumba el arranque ni el build. Java todavía no es una
+   * capacidad ofrecida (`browserExecution: false`), así que quedarse sin ECJ
+   * significa que su runtime interno no funciona, no que la plataforma no
+   * arranque. Python y R no dependen de esto para nada, y una máquina sin acceso
+   * a Maven Central tiene que poder seguir desarrollando el resto.
+   */
+  let java = null;
+  try {
+    // Las versiones las devuelve el propio script, que las lee de
+    // `java-toolchain.ts`: aquí no se escribe ningún número.
+    java = await publishJavaToolchain();
+  } catch (caught) {
+    console.warn(`Java en el navegador no disponible: ${caught.message}`);
+  }
+
   await writeManifest({
     python: { engine: 'pyodide', version: await versionOf(pyodideDir), path: '/runtime/pyodide/' },
     r: { engine: 'webr', version: await versionOf(path.dirname(webrDir)), path: '/runtime/webr/' },
+    ...(java ? { java } : {}),
   });
 
   console.log(

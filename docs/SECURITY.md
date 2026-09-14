@@ -1173,3 +1173,163 @@ del snapshot haría que el congelado dejara de existir sin que nadie lo notara.
 | Claves de S3 que emitió este servidor | `isAcademicFileKeyFor` al guardar una entrega |
 | El profesorado no entrega sus propias tareas | 403 explícito en la ruta |
 | Fecha límite con el reloj del SERVIDOR | `assertOpenForSubmission` |
+
+## Java en el navegador (fase J1)
+
+El runtime de Java **existe y no está ofrecido**: `browserExecution: false` sigue
+siendo la respuesta de la plataforma, y activarlo es una fase aparte. Lo que sigue
+es el modelo de amenaza del motor que J1 entrega, para que la fase de activación
+parta de algo escrito y no de una lectura del código.
+
+### El firewall del Worker: DENY por defecto, dos excepciones exactas
+
+```
+✓  https://cjrtnc.leaningtech.com/4.3/…    el runtime de CheerpJ y sus recursos tardíos
+✓  /runtime/java/ecj-3.13.102.jar          el compilador, del propio origen
+✗  /api/private/hit                        mismo origen, API de Nextudio
+✗  /runtime/pyodide/…                      otro runtime del mismo prefijo
+✗  https://cjrtnc.leaningtech.com/4.4/…    otra versión de CheerpJ
+✗  https://otro.leaningtech.com/4.3/…      otro subdominio
+✗  cualquier otro origen
+```
+
+Dos cosas que **no** se hicieron, y son las importantes:
+
+- **No hay regla «mismo origen vale».** Sería lo cómodo y dejaría `/api/*` al
+  alcance de cualquier `HttpURLConnection` escrito en una tarea. Es literalmente
+  el agujero que el control negativo del spike J0 demostró alcanzable.
+- **No hay comodines.** El prefijo de CheerpJ incluye la **versión**, así que un
+  `4.4` futuro no entra sin que alguien lo escriba en
+  `code-engines/java-toolchain.ts`, donde la lista vive fijada y versionada.
+
+La lista se aplica en `hardenWorkerScope`, **después** de que CheerpJ haya
+arrancado —arrancar es justo lo que necesita la red— y sobre cuatro superficies:
+`fetch` (acotado), `XMLHttpRequest` (acotado en `open()`, porque quitarlo rompe la
+lectura de `/app`), y `WebSocket`, `EventSource` e `importScripts`, que desaparecen
+enteros. Cada global se sustituye con `configurable: false`, así que el propio
+runtime no puede devolverlos a su sitio.
+
+Un detalle que costó una ejecución colgada: un `fetch` bloqueado **rechaza la
+promesa**, no lanza en síncrono. La capa de red de CheerpJ hace
+`fetch(url).then(…)`; con una excepción síncrona el hilo de Java no recibía su
+`IOException` y el programa se quedaba esperando hasta el tiempo límite.
+
+### Qué se probó de verdad contra `/api/*`
+
+No sólo `HttpURLConnection` —eso fue el alcance del spike y no dice nada de las
+demás vías—. La suite de navegador lanza código Java real contra
+`/api/private/hit` por cinco caminos y el servidor de la prueba **cuenta las
+visitas**, que es la evidencia que no se puede maquillar:
+
+| Vía | Resultado |
+|---|---|
+| `HttpURLConnection.getResponseCode()` | `IOException` |
+| `URLConnection.connect()` + `getInputStream().read()` | `IOException` |
+| `URL.openStream()` | `IOException` |
+| `URL.getContent()` | `IOException` |
+| `java.net.Socket` + escribir y leer HTTP a mano | no llega nada (ver abajo) |
+
+Contador del servidor tras toda la suite: **0**.
+
+El socket crudo merece la nota completa, porque su desenlace es distinto: CheerpJ
+acepta `new Socket()` y `connect()` sin pedir nada al navegador, y el primer
+`read()` **no vuelve nunca**. Se comprobó que pasa igual **sin ningún firewall
+aplicado**, así que es comportamiento de CheerpJ —su capa de sockets necesita un
+proxy que este despliegue no tiene— y no algo que introduzca esta fase. El
+programa queda colgado hasta que el tiempo límite termina el Worker, que es el
+mecanismo que ya existía. Ninguna garantía se apoya en que un socket lance: se
+apoya en que el servidor no reciba nada.
+
+### Credenciales: lo que el Worker no tiene
+
+El Worker de Java recibe lo mismo que los de Python y R, es decir el tipo cerrado
+de `CodeWorkerRequest` montado campo a campo por `sanitizeWorkerRun`: lenguaje,
+fuente, proyecto y límites. No hay hueco para un token, una cookie, una clave de
+AWS ni el perfil de nadie, y hay una prueba que falla si alguien nombra una
+credencial en cualquiera de esos archivos.
+
+Sobre `credentials: 'omit'`: no se aplica a mano porque las peticiones que el
+runtime hace no las emite este código, las emite CheerpJ. Lo que sí se puede
+afirmar es más fuerte que una opción de `fetch`: los dos únicos destinos
+permitidos son un CDN de terceros —que no tiene cookies de Nextudio que enviar— y
+un archivo estático de `/runtime/java/`, cuya respuesta no depende de la sesión.
+Todo lo demás está bloqueado antes de salir. Y la frontera real del navegador
+conviene decirla en voz alta: **CORS no es un sandbox**. Una petición de mismo
+origen la haría el navegador con cookies encantado; lo que impide que ocurra es la
+lista blanca, no CORS.
+
+Un hueco honesto: la carga inicial de CheerpJ usa `import()` dinámico dentro de
+`loader.js`, y eso **no se puede interceptar** desde el Worker. El control para
+ese camino es la CSP (`script-src`), no el firewall. Está en la lista de abajo.
+
+### `indexedDB` sigue existiendo en el Worker de Java, y sólo ahí
+
+Python y R lo pierden al endurecer el Worker. Java no puede: `/files` de CheerpJ
+—donde se compilan las clases de cada ejecución— está respaldado por IndexedDB, y
+esas escrituras ocurren durante la ejecución, después del endurecimiento.
+
+La frontera que importa no cambia: el código del alumnado corre dentro de la JVM
+de CheerpJ y **no tiene ningún puente hacia JavaScript**, así que `indexedDB` no
+está a su alcance ni con el objeto presente. Y el namespace que se escribe ahí se
+borra al terminar cada ejecución.
+
+### Aislamiento entre ejecuciones
+
+Tres capas, y la tercera es la que no depende de ningún nombre:
+
+1. cada ejecución compila en `/files/nextudio/runs/<runId>/`, con `runId` creado
+   por Nextudio con `crypto.getRandomValues` —nunca derivado del nombre del
+   archivo, del paquete ni de nada que escriba el alumnado—;
+2. el harness borra su namespace en un `finally` y **barre los ajenos al
+   empezar**, que es lo único que cubre un `Worker.terminate()`;
+3. el código del alumnado se compila con `-classpath ""` y se carga con un
+   `URLClassLoader` cuyo padre es el cargador de **arranque**: el harness, ECJ y
+   cualquier clase de otra ejecución no están protegidos, es que **no existen**
+   para él.
+
+La tercera capa es la que hace que el paquete reservado
+(`io.nextudio.runtime.*`) sea una segunda línea y no la defensa. Aun así se
+rechaza antes de compilar cualquier proyecto que lo declare, en **cualquiera** de
+sus archivos y no sólo en el de entrada.
+
+### Lo que la CSP tendrá que decir cuando se active
+
+Añadido a las directivas de la sección de R y Python, y sólo lo mínimo:
+
+```
+script-src  … https://cjrtnc.leaningtech.com   ← loader.js y cj3.js de CheerpJ
+connect-src … https://cjrtnc.leaningtech.com   ← cj3.wasm y los recursos del JRE 8
+```
+
+Nada de `script-src *`, `connect-src *`, `worker-src *` ni `unsafe-eval`
+indiscriminado. El host es el mismo que ya está en la lista blanca del Worker, así
+que las dos capas dicen lo mismo. La plataforma sigue sin enviar CSP hoy, y esta
+fase **no la ha introducido**: lo que deja es la lista escrita para la fase que lo
+haga.
+
+### Licencias: dos dependencias, dos condiciones
+
+No comparten términos y no se pueden tratar igual.
+
+| | CheerpJ | ECJ |
+|---|---|---|
+| Qué es | runtime de Java sobre WebAssembly | compilador de Java |
+| Versión | 4.3 | 3.13.102 |
+| Licencia | Community Edition, de Leaning Technologies | EPL-2.0 (Eclipse) |
+| Dónde se sirve | **CDN de Leaning Technologies** | propio origen, `/runtime/java/` |
+| Verificación | versión fijada en la URL | SHA-256 comprobado en la descarga |
+
+La consecuencia práctica es que **CheerpJ no se autoaloja**, al contrario de lo
+que se hace con Pyodide y webR: la documentación de Community Edition indica que
+el runtime se sirve desde `cjrtnc.leaningtech.com` y autoalojarlo requiere
+licencia comercial. Por eso `public/` no lo contiene y es la única dependencia de
+terceros que este proyecto carga desde un CDN ajeno.
+
+Dos cosas que eso implica y conviene no descubrir en producción: una clase con
+Java depende de que ese CDN esté disponible esa mañana, y el uso institucional
+tiene que revisarse contra la licencia aplicable antes de ofrecer Java a nadie.
+Las dos son decisiones de la fase de activación, no del motor.
+
+ECJ sí se autoaloja porque EPL-2.0 lo permite, y conserva su atribución. Su
+SHA-256 se verifica byte a byte antes de escribir el archivo: un JAR con otra
+huella no se publica, y da igual si es más nuevo.

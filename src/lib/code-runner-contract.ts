@@ -56,7 +56,14 @@ export const CODE_RUN_LIMITS = {
   maxSourceChars: ACADEMIC_LIMITS.codeMax,
 } as const;
 
-const BROWSER_RUNTIME_LANGUAGES = new Set<ProgrammingLanguage>(['r', 'python']);
+/**
+ * Para qué existe un Worker de verdad en `src/workers/`.
+ *
+ * Java entró aquí en J1 y NO se puede ejecutar: la segunda condición de
+ * `isBrowserExecutableLanguage` —lo que el catálogo promete— sigue diciendo que
+ * no. Ver la nota de esa función.
+ */
+const BROWSER_RUNTIME_LANGUAGES = new Set<ProgrammingLanguage>(['r', 'python', 'java']);
 
 /**
  * Sólo lo que de verdad tiene un runtime en el navegador llega a un Worker.
@@ -67,10 +74,16 @@ const BROWSER_RUNTIME_LANGUAGES = new Set<ProgrammingLanguage>(['r', 'python']);
  * error de configuración —marcar Java como ejecutable— en un Worker que se
  * arranca para nada; fiarse sólo del conjunto dejaría que la promesa de la
  * interfaz y la realidad se separaran sin que nadie lo notara.
+ *
+ * Desde J1 esa distinción tiene un caso REAL, y no es un ejemplo: Java está en
+ * el conjunto —su motor y su Worker existen y están probados— y el catálogo dice
+ * `browserExecution: false`, así que esta función devuelve `false` y ni el botón
+ * de ejecutar ni el selector de NexBook lo ofrecen. Activar Java es cambiar UNA
+ * línea del catálogo cuando la fase de activación lo autorice, no tocar esto.
  */
 export function isBrowserExecutableLanguage(
   language: ProgrammingLanguage
-): language is 'r' | 'python' {
+): language is 'r' | 'python' | 'java' {
   return (
     BROWSER_RUNTIME_LANGUAGES.has(language) &&
     PROGRAMMING_LANGUAGES.some(
