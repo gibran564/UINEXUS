@@ -5,9 +5,11 @@ import {
   Component,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ErrorInfo,
+  type MutableRefObject,
   type ReactNode,
 } from 'react';
 import type { OnMount } from '@monaco-editor/react';
@@ -16,7 +18,7 @@ import {
   languageExecutionNote,
   programmingLanguageLabel,
 } from '@/lib/constants';
-import type { CodeRunResult } from '@/lib/code-runner-contract';
+import type { CodeRunRequest, CodeRunResult } from '@/lib/code-runner-contract';
 import {
   canRunInBrowser,
   getBrowserCodeRunner,
@@ -25,6 +27,11 @@ import {
   type BrowserCodeRunnerStatus,
 } from '@/lib/browser-code-runner';
 import type { ProgrammingLanguage } from '@/lib/types';
+import type { EditorDiagnostic } from '@/lib/editor-diagnostics';
+import {
+  MonacoWorkspaceSession,
+  type WorkspaceEditorPosition,
+} from '@/components/aula/monaco-workspace-session';
 
 /**
  * El editor de código, uno solo para todos los lenguajes.
@@ -69,10 +76,30 @@ const MonacoEditor = dynamic(
         MonacoEnvironment?: { getWorker: (_id: string, _label: string) => Worker };
       };
       scope.MonacoEnvironment = {
-        getWorker: () =>
-          new Worker(new URL('monaco-editor/editor/editor.worker.js', import.meta.url), {
+        getWorker: (_id, label) => {
+          const workerKind = monacoWorkerKind(label);
+          if (workerKind === 'css') {
+            return new Worker(
+              new URL('monaco-editor/language/css/css.worker.js', import.meta.url),
+              { type: 'module' }
+            );
+          }
+          if (workerKind === 'html') {
+            return new Worker(
+              new URL('monaco-editor/language/html/html.worker.js', import.meta.url),
+              { type: 'module' }
+            );
+          }
+          if (workerKind === 'typescript') {
+            return new Worker(
+              new URL('monaco-editor/language/typescript/ts.worker.js', import.meta.url),
+              { type: 'module' }
+            );
+          }
+          return new Worker(new URL('monaco-editor/editor/editor.worker.js', import.meta.url), {
             type: 'module',
-          }),
+          });
+        },
       };
     }
 
@@ -84,6 +111,14 @@ const MonacoEditor = dynamic(
 
 /** Si Monaco no ha montado para entonces, se asume que no va a montar. */
 const MONACO_GIVE_UP_MS = 10_000;
+const NO_DIAGNOSTICS: readonly EditorDiagnostic[] = [];
+
+export function monacoWorkerKind(label: string): 'css' | 'html' | 'typescript' | 'editor' {
+  if (['css', 'scss', 'less'].includes(label)) return 'css';
+  if (['html', 'handlebars', 'razor'].includes(label)) return 'html';
+  if (['typescript', 'javascript'].includes(label)) return 'typescript';
+  return 'editor';
+}
 
 /** Lenguajes cuya convención es sangrar con cuatro espacios. */
 const INDENT_FOUR = new Set<ProgrammingLanguage>(['python', 'java', 'c', 'cpp']);
@@ -145,6 +180,21 @@ export interface CodeEditorProps {
   ariaLabel?: string;
   /** Se pinta encima de la consola: estado de guardado, avisos del paso… */
   toolbar?: ReactNode;
+  /** Archivo/model activo cuando el editor participa en un workspace. */
+  filePath?: string;
+  /** Snapshot React del proyecto; Monaco conserva el estado efímero de cada model. */
+  workspaceFiles?: Readonly<Record<string, string>>;
+  workspaceLanguages?: Readonly<Record<string, ProgrammingLanguage>>;
+  onFileChange?: (file: string, value: string) => void;
+  onSelectFile?: (file: string) => void;
+  diagnostics?: readonly EditorDiagnostic[];
+  editorSessionRef?: MutableRefObject<CodeEditorSessionHandle | null>;
+}
+
+export interface CodeEditorSessionHandle {
+  renameFile(oldFile: string, newFile: string, language: ProgrammingLanguage): boolean;
+  deleteFile(file: string): boolean;
+  openFile(file: string, position?: WorkspaceEditorPosition): boolean;
 }
 
 export function CodeEditor({
@@ -162,6 +212,13 @@ export function CodeEditor({
   height = 420,
   ariaLabel,
   toolbar,
+  filePath,
+  workspaceFiles,
+  workspaceLanguages,
+  onFileChange,
+  onSelectFile,
+  diagnostics = NO_DIAGNOSTICS,
+  editorSessionRef,
 }: CodeEditorProps) {
   const [theme, setTheme] = useState<EditorTheme>('vs');
   const [mounted, setMounted] = useState(false);
@@ -169,9 +226,25 @@ export function CodeEditor({
   const [runtimeStatus, setRuntimeStatus] = useState<BrowserCodeRunnerStatus>('idle');
   const [result, setResult] = useState<CodeRunResult | null>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const [problems, setProblems] = useState<EditorDiagnostic[]>([]);
+  const [bottomPanel, setBottomPanel] = useState<'problems' | 'output'>('output');
 
   const runnerRef = useRef<BrowserCodeRunner | null>(null);
   const executeRef = useRef<() => void>(() => undefined);
+  const workspaceSessionRef = useRef<MonacoWorkspaceSession | null>(null);
+  const onFileChangeRef = useRef(onFileChange);
+  onFileChangeRef.current = onFileChange;
+  const workspaceFilesRef = useRef(workspaceFiles);
+  const workspaceLanguagesRef = useRef(workspaceLanguages);
+  const filePathRef = useRef(filePath);
+  const diagnosticsRef = useRef(diagnostics);
+  const languageRef = useRef(language);
+  workspaceFilesRef.current = workspaceFiles;
+  workspaceLanguagesRef.current = workspaceLanguages;
+  filePathRef.current = filePath;
+  diagnosticsRef.current = diagnostics;
+  languageRef.current = language;
+  const workspaceMode = Boolean(filePath && workspaceFiles);
   const runnerLanguage = resolveExecutionLanguage(language, executionLanguage);
   const editorLanguageLabel = programmingLanguageLabel(language);
   const executionLanguageLabel = programmingLanguageLabel(runnerLanguage);
@@ -226,6 +299,37 @@ export function CodeEditor({
     []
   );
 
+  useEffect(
+    () => () => {
+      workspaceSessionRef.current?.dispose();
+      workspaceSessionRef.current = null;
+      if (editorSessionRef) editorSessionRef.current = null;
+    },
+    [editorSessionRef]
+  );
+
+  useEffect(() => {
+    if (!fallback) return;
+    workspaceSessionRef.current?.dispose();
+    workspaceSessionRef.current = null;
+    setProblems([]);
+    if (editorSessionRef) editorSessionRef.current = null;
+  }, [editorSessionRef, fallback]);
+
+  useLayoutEffect(() => {
+    const session = workspaceSessionRef.current;
+    if (!session || !workspaceFiles || !filePath) return;
+    session.reconcile(
+      workspaceFiles,
+      (file) => monacoLanguageFor(workspaceLanguages?.[file] ?? language)
+    );
+    session.openFile(filePath);
+  }, [filePath, language, mounted, workspaceFiles, workspaceLanguages]);
+
+  useEffect(() => {
+    workspaceSessionRef.current?.setDiagnostics(diagnostics);
+  }, [diagnostics, mounted]);
+
   const execute = useCallback(async (): Promise<void> => {
     if (!runnable || runtimeStatus === 'running' || runtimeStatus === 'preparing') return;
 
@@ -260,13 +364,14 @@ export function CodeEditor({
     }
 
     setResult(
-      await runner.run({
-        language: runnerLanguage,
-        source: executionSource ?? value,
-        ...(executionFiles && executionEntryFile
-          ? { files: executionFiles, entryFile: executionEntryFile }
-          : {}),
-      })
+      await runner.run(
+        buildCodeRunRequest(
+          runnerLanguage,
+          executionSource ?? value,
+          executionFiles,
+          executionEntryFile
+        )
+      )
     );
   }, [
     beforeExecute,
@@ -283,9 +388,42 @@ export function CodeEditor({
   executeRef.current = () => void execute();
 
   const handleMount: OnMount = (editor, monaco) => {
+    const bootstrapModel = editor.getModel();
+    const latestFiles = workspaceFilesRef.current;
+    const latestFilePath = filePathRef.current;
+    if (latestFiles && latestFilePath) {
+      const session = new MonacoWorkspaceSession({
+        editor,
+        monaco,
+        onChange: (file, next) => onFileChangeRef.current?.(file, next),
+        onDiagnosticsChange: (next) =>
+          setProblems((current) => (diagnosticsEqual(current, next) ? current : next)),
+      });
+      workspaceSessionRef.current = session;
+      session.reconcile(
+        latestFiles,
+        (file) =>
+          monacoLanguageFor(workspaceLanguagesRef.current?.[file] ?? languageRef.current)
+      );
+      session.setDiagnostics(diagnosticsRef.current);
+      session.openFile(latestFilePath);
+      if (bootstrapModel && bootstrapModel !== editor.getModel()) bootstrapModel.dispose();
+      if (editorSessionRef) {
+        editorSessionRef.current = {
+          renameFile: (oldFile, newFile, nextLanguage) =>
+            session.renameFile(oldFile, newFile, monacoLanguageFor(nextLanguage)),
+          deleteFile: (file) => session.deleteFile(file),
+          openFile: (file, position) => session.openFile(file, position),
+        };
+      }
+    }
     setMounted(true);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => executeRef.current());
   };
+
+  function openProblem(problem: EditorDiagnostic): void {
+    activateEditorProblem(problem, workspaceSessionRef.current, onSelectFile);
+  }
 
   async function stop(): Promise<void> {
     await runnerRef.current?.interrupt();
@@ -305,30 +443,26 @@ export function CodeEditor({
     <div className="space-y-3">
       <div className="overflow-hidden rounded-sm border border-line-strong bg-sunken">
         {fallback ? (
-          <textarea
-            aria-label={editorLabel}
-            spellCheck={false}
+          <FallbackCodeEditor
+            ariaLabel={editorLabel}
             readOnly={readOnly}
             value={value}
-            onChange={(event) => onChange?.(event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-                event.preventDefault();
-                executeRef.current();
-              }
-            }}
-            style={{ minHeight: height }}
-            className="field resize-y rounded-none border-0 font-mono text-sm"
+            onChange={onChange}
+            onExecute={() => executeRef.current()}
+            height={height}
           />
         ) : (
           <MonacoBoundary onError={() => setFallback(true)}>
             <MonacoEditor
               height={height}
-              language={monacoLanguageFor(language)}
-              value={value}
+              defaultLanguage={monacoLanguageFor(language)}
+              defaultValue={value}
+              language={workspaceMode ? undefined : monacoLanguageFor(language)}
+              value={workspaceMode ? undefined : value}
               theme={theme}
-              onChange={(next) => onChange?.(next ?? '')}
+              onChange={workspaceMode ? undefined : (next) => onChange?.(next ?? '')}
               onMount={handleMount}
+              keepCurrentModel={workspaceMode}
               options={{
                 readOnly,
                 // Sin esto el textarea oculto de Monaco sigue siendo editable
@@ -368,6 +502,35 @@ export function CodeEditor({
         </p>
       )}
 
+      {workspaceMode && (
+        <section className="overflow-hidden rounded-sm border border-line bg-sunken" aria-label="Panel del editor">
+          <div className="flex border-b border-line px-2 pt-2" role="tablist" aria-label="Paneles del editor">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={bottomPanel === 'problems'}
+              className={`min-h-9 px-3 text-sm ${bottomPanel === 'problems' ? 'border-b-2 border-accent text-fg' : 'text-muted'}`}
+              onClick={() => setBottomPanel('problems')}
+            >
+              Problemas{problems.length > 0 ? ` (${problems.length})` : ''}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={bottomPanel === 'output'}
+              className={`min-h-9 px-3 text-sm ${bottomPanel === 'output' ? 'border-b-2 border-accent text-fg' : 'text-muted'}`}
+              onClick={() => setBottomPanel('output')}
+            >
+              Salida
+            </button>
+          </div>
+          {bottomPanel === 'problems' && <ProblemsPanel problems={problems} onOpen={openProblem} />}
+          {bottomPanel === 'output' && !runnable && !unavailable && (
+            <p className="px-3 py-3 text-sm text-subtle">La ejecución no está habilitada.</p>
+          )}
+        </section>
+      )}
+
       {(toolbar || canReset) && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">{toolbar}</div>
@@ -403,7 +566,7 @@ export function CodeEditor({
         </div>
       )}
 
-      {unavailable && (
+      {unavailable && (!workspaceMode || bottomPanel === 'output') && (
         <section
           className="rounded-sm border border-line bg-sunken px-3 py-3"
           aria-label={`Ejecución de ${executionLanguageLabel}`}
@@ -416,7 +579,7 @@ export function CodeEditor({
         </section>
       )}
 
-      {runnable && (
+      {runnable && (!workspaceMode || bottomPanel === 'output') && (
         <section
           className="rounded-sm border border-line bg-sunken"
           aria-label={`Ejecución de ${executionLanguageLabel}`}
@@ -517,5 +680,123 @@ function ExecutionResult({ result }: { result: CodeRunResult }) {
         <p className="text-subtle">El programa terminó sin escribir nada.</p>
       )}
     </div>
+  );
+}
+
+export function buildCodeRunRequest(
+  language: ProgrammingLanguage,
+  source: string,
+  files?: Record<string, string>,
+  entryFile?: string
+): CodeRunRequest {
+  return {
+    language,
+    source,
+    ...(files && entryFile ? { files, entryFile } : {}),
+  };
+}
+
+export function activateEditorProblem(
+  problem: EditorDiagnostic,
+  session: Pick<CodeEditorSessionHandle, 'openFile'> | null,
+  onSelectFile?: (file: string) => void
+): void {
+  onSelectFile?.(problem.file);
+  session?.openFile(problem.file, {
+    line: problem.startLine,
+    column: problem.startColumn,
+  });
+}
+
+function diagnosticsEqual(
+  left: readonly EditorDiagnostic[],
+  right: readonly EditorDiagnostic[]
+): boolean {
+  return left.length === right.length && left.every((item, index) => {
+    const candidate = right[index];
+    return candidate !== undefined &&
+      item.file === candidate.file &&
+      item.severity === candidate.severity &&
+      item.message === candidate.message &&
+      item.startLine === candidate.startLine &&
+      item.startColumn === candidate.startColumn &&
+      item.endLine === candidate.endLine &&
+      item.endColumn === candidate.endColumn &&
+      item.source === candidate.source &&
+      item.code === candidate.code;
+  });
+}
+
+export function FallbackCodeEditor({
+  ariaLabel,
+  readOnly,
+  value,
+  onChange,
+  onExecute,
+  height,
+}: {
+  ariaLabel: string;
+  readOnly: boolean;
+  value: string;
+  onChange?: (value: string) => void;
+  onExecute: () => void;
+  height: number;
+}) {
+  return (
+    <textarea
+      aria-label={ariaLabel}
+      spellCheck={false}
+      readOnly={readOnly}
+      value={value}
+      onChange={(event) => onChange?.(event.target.value)}
+      onKeyDown={(event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault();
+          onExecute();
+        }
+      }}
+      style={{ minHeight: height }}
+      className="field resize-y rounded-none border-0 font-mono text-sm"
+    />
+  );
+}
+
+export function ProblemsPanel({
+  problems,
+  onOpen,
+}: {
+  problems: readonly EditorDiagnostic[];
+  onOpen: (problem: EditorDiagnostic) => void;
+}) {
+  if (problems.length === 0) {
+    return <p className="px-3 py-3 text-sm text-subtle">Sin problemas detectados</p>;
+  }
+
+  return (
+    <ul className="max-h-64 divide-y divide-line overflow-auto" aria-label="Problemas detectados">
+      {problems.map((problem, index) => (
+        <li key={`${problem.file}:${problem.startLine}:${problem.startColumn}:${problem.source}:${problem.code ?? ''}:${index}`}>
+          <button
+            type="button"
+            className="flex w-full gap-3 px-3 py-2 text-left text-sm hover:bg-surface"
+            onClick={() => onOpen(problem)}
+          >
+            <span
+              className={problem.severity === 'error' ? 'text-danger' : 'text-muted'}
+              aria-label={problem.severity}
+            >
+              {problem.severity === 'error' ? '●' : problem.severity === 'warning' ? '▲' : 'ⓘ'}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-fg">{problem.message}</span>
+              <span className="mt-0.5 block truncate font-mono text-xs text-muted">
+                {problem.file}:{problem.startLine}:{problem.startColumn}
+                {' · '}{problem.source}{problem.code ? ` ${problem.code}` : ''}
+              </span>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

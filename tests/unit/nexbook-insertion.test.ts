@@ -113,7 +113,15 @@ describe('inserción posicional del documento', () => {
     const a = markdown('a');
     const b = markdown('b');
     const nuevo = markdown('nuevo');
-    const results = { a: { status: 'ok' as const, outputs: [], durationMs: 4 } };
+    const results = {
+      a: {
+        blockId: 'a',
+        status: 'ok' as const,
+        outputs: [],
+        durationMs: 4,
+        ranAt: '2026-09-14T00:00:00.000Z',
+      },
+    };
     const original: NexBookDocument = { ...documentWith(a, b), results };
 
     const inserted = insertBlocksAt(original, 1, [nuevo]);
