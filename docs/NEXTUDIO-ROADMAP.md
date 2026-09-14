@@ -1764,10 +1764,17 @@ propio coste, y la decisión no es de este documento.
 - Ruta autorizada para las imágenes de un snapshot (cierra R14).
 - S3 local o un almacén equivalente en el sandbox (cierra media docena de huecos
   de prueba a la vez).
-- `RemoteRunner`: ejecutar Java, C y C++ en un sandbox remoto. Es lo que la
-  tabla de lenguajes del README promete que **no** se hace.
+- **Java ya no necesita sandbox remoto.** La fase J1 entregó un runtime de
+  navegador con CheerpJ 4.3 y ECJ 3.13.102 —compila, ejecuta, aísla y limpia— que
+  sigue **sin ofrecerse** (`browserExecution: false`). Lo que queda es conectarlo:
+  NexCode, NexBook, matriz de navegadores y activación pública, en ese orden. El
+  motor está en `docs/ARCHITECTURE.md` §18; lo que falta antes de ofrecerlo, en
+  `docs/LIMITATIONS.md` §16.
+- `RemoteRunner`: ejecutar C y C++ en un sandbox remoto. Es lo que la tabla de
+  lenguajes del README promete que **no** se hace.
 - Una CSP en este origen. Las directivas necesarias ya están listadas en
-  `docs/SECURITY.md`; escribirla entera es un cambio con su propia validación.
+  `docs/SECURITY.md` —incluidas las dos que añade CheerpJ—; escribirla entera es
+  un cambio con su propia validación.
 
 **Mantenimiento**
 

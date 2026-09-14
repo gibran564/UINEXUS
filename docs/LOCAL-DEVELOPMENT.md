@@ -285,6 +285,19 @@ ejecución. `npm run dev:local` los recompila al arrancar; si arrancaste con
 embebidos los admiten. En un Chrome o Firefox normal funciona. Ver
 `docs/LIMITATIONS.md`.
 
+**`Falta el Worker de Java` al lanzar `npm run test:java`** — ejecuta
+`npm run runtimes`, que compila los tres Workers y publica el compilador de Java.
+
+**`Java en el navegador no disponible` al ejecutar `npm run runtimes`** — no se
+pudo descargar ECJ de Maven Central con su SHA-256 esperado. **No rompe nada más**:
+es un aviso, Python y R no dependen de eso y Java todavía no está ofrecido. Se
+reintenta con `npm run runtimes:java`, que sí falla si no puede.
+
+Ojo con el doble sentido de «Java» aquí: el de más arriba es el JDK **de tu
+máquina**, que necesitan DynamoDB Local y el emulador. Éste es el runtime de Java
+**del navegador** (CheerpJ + ECJ), que no necesita ningún JDK instalado. Son cosas
+distintas que se llaman igual.
+
 **`prod:local` dice que el puerto 3000 está ocupado** — `dev:local` sigue vivo.
 Los dos sirven Nextudio en el mismo puerto a propósito: dos sandboxes a la vez
 serían dos verdades distintas sobre el mismo producto.
@@ -307,3 +320,6 @@ serían dos verdades distintas sobre el mismo producto.
 | `scripts/e2e-prod.mjs` | Lanza Playwright en modo compilado |
 | `playwright.config.ts` | La suite E2E. Sólo acepta destinos loopback |
 | `tests/e2e/` | Los recorridos, el responsive, la accesibilidad y el build compilado |
+| `scripts/fetch-java-toolchain.mjs` | Publica ECJ en `public/runtime/java/`, con su SHA-256 |
+| `scripts/run-java-browser-tests.mjs` | `npm run test:java`: el runtime de Java en Chromium, con su propio servidor |
+| `tests/browser/java-runtime/` | El guion de esa suite y el informe de la última corrida |

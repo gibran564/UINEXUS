@@ -17,8 +17,17 @@ import { normalizeWorkspacePath } from './workspace-files';
  * futuro es exactamente la forma en que estos contratos se rompen.
  */
 
-/** Los lenguajes que HOY tienen un runtime dentro del navegador. */
-export type BrowserRuntimeLanguage = 'r' | 'python';
+/**
+ * Los lenguajes que HOY tienen un runtime dentro del navegador.
+ *
+ * Java está en la lista desde J1 porque el runtime EXISTE —CheerpJ 4.3 y ECJ,
+ * ver `code-engines/java-engine.ts`—, y a la vez sigue sin ser ofrecible: su
+ * `browserExecution` del catálogo es `false` y `isBrowserExecutableLanguage`
+ * exige las dos cosas. Esa separación es deliberada: este tipo dice para qué hay
+ * código, el catálogo dice qué promete la interfaz, y en J1 no coinciden a
+ * propósito.
+ */
+export type BrowserRuntimeLanguage = 'r' | 'python' | 'java';
 
 export interface BrowserExecutionOptions {
   maxOutputChars: number;

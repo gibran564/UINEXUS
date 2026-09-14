@@ -6,6 +6,8 @@
   "scripts": {
     "runtimes": "node scripts/copy-code-runtimes.mjs",
     "runtimes:python": "node scripts/vendor-python-packages.mjs && node scripts/copy-code-runtimes.mjs",
+    "runtimes:java": "node scripts/fetch-java-toolchain.mjs",
+    "test:java": "node scripts/run-java-browser-tests.mjs",
     "predev": "npm run runtimes",
     "dev": "next dev",
     "dev:local": "node scripts/dev-local.mjs",

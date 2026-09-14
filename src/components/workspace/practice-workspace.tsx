@@ -1,8 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { CodeEditor, sourceFilenameFor } from '@/components/aula/code-editor';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  CodeEditor,
+  sourceFilenameFor,
+  type CodeEditorSessionHandle,
+} from '@/components/aula/code-editor';
 import { Notice } from '@/components/aula/aula-ui';
 import { WorkspacePreview } from '@/components/workspace/workspace-preview';
 import { WorkspacePublish } from '@/components/workspace/workspace-publish';
@@ -13,6 +17,7 @@ import {
   createWorkspaceFile,
   deleteWorkspaceFile,
   detectLanguageFromPath,
+  normalizeWorkspacePath,
   pickWebPreviewEntry,
   renameWorkspaceFile,
   type WorkspaceFileState,
@@ -55,8 +60,19 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
   const inFlightRef = useRef<Promise<void> | null>(null);
   const retryCountRef = useRef(0);
   const flushRef = useRef<() => Promise<void>>(async () => undefined);
+  const editorSessionRef = useRef<CodeEditorSessionHandle | null>(null);
 
   const previewEntry = pickWebPreviewEntry(files, entryFile);
+  const workspaceLanguages = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.keys(files).map((path) => [
+          path,
+          detectLanguageFromPath(path, data?.workspace.language ?? 'python'),
+        ])
+      ),
+    [data?.workspace.language, files]
+  );
 
   useEffect(() => {
     if (workspaceMode !== 'preview') return;
@@ -190,6 +206,10 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
 
   function edit(nextSource: string): void {
     const path = activeFileRef.current;
+    editFile(path, nextSource);
+  }
+
+  function editFile(path: string, nextSource: string): void {
     if (!path) return;
     const nextFiles = { ...filesRef.current, [path]: nextSource };
     filesRef.current = nextFiles;
@@ -199,6 +219,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
 
   function selectFile(path: string): void {
     if (!Object.prototype.hasOwnProperty.call(filesRef.current, path)) return;
+    editorSessionRef.current?.openFile(path);
     activeFileRef.current = path;
     setActiveFile(path);
     setExplorerOpen(false);
@@ -228,6 +249,14 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
       const previous = currentProject();
       const wasMultiFile = multiFileRef.current;
       const next = renameWorkspaceFile(previous, oldPath, newPath);
+      const normalizedNewPath = normalizeWorkspacePath(newPath.trim());
+      if (normalizedNewPath && normalizedNewPath !== oldPath) {
+        editorSessionRef.current?.renameFile(
+          oldPath,
+          normalizedNewPath,
+          detectLanguageFromPath(normalizedNewPath, data?.workspace.language ?? 'python')
+        );
+      }
       replaceProject(next, true);
       setFileError(null);
       if (next !== previous || !wasMultiFile) markDirty();
@@ -241,6 +270,7 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
   function deleteFile(path: string): boolean {
     try {
       const next = deleteWorkspaceFile(currentProject(), path);
+      editorSessionRef.current?.deleteFile(path);
       replaceProject(next, true);
       setFileError(null);
       markDirty();
@@ -393,6 +423,12 @@ export function PracticeWorkspace({ workspaceId }: { workspaceId: string }) {
                   executionLanguage={entryLanguage}
                   value={files[activeFile] ?? ''}
                   onChange={edit}
+                  filePath={activeFile}
+                  workspaceFiles={files}
+                  workspaceLanguages={workspaceLanguages}
+                  onFileChange={editFile}
+                  onSelectFile={selectFile}
+                  editorSessionRef={editorSessionRef}
                   executionEnabled
                   executionSource={files[entryFile] ?? ''}
                   // El workspace legacy usa una clave virtual; enviarla cambiaría

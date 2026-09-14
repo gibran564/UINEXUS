@@ -1,0 +1,697 @@
+{
+  "meta": {
+    "date": "2026-09-13T22:02:52.006Z",
+    "cheerpj": "4.3",
+    "ecj": "3.13.102",
+    "isolation": "spikes/j0-cheerpj only; Java remains browserExecution:false"
+  },
+  "experiments": [
+    {
+      "name": "G1-boot",
+      "ok": true,
+      "evidence": {
+        "requestId": 1,
+        "kind": "ok",
+        "step": "boot",
+        "booted": true,
+        "bootMs": 946,
+        "api": {
+          "cheerpjInit": "function",
+          "cheerpjRunMain": "function",
+          "cheerpjRunJar": "function",
+          "cheerpjRunLibrary": "function",
+          "cjFileBlob": "function",
+          "cjGetRuntimeResources": "function"
+        },
+        "events": [],
+        "stdout": [],
+        "stderr": []
+      }
+    },
+    {
+      "name": "G2a-javac-probe",
+      "ok": true,
+      "evidence": {
+        "requestId": 2,
+        "kind": "ok",
+        "step": "probeJavac",
+        "javacPresent": false,
+        "exitCode": 1,
+        "thrown": null,
+        "events": [
+          {
+            "seq": 1,
+            "channel": "stdout",
+            "text": "CheerpJ runtime ready"
+          },
+          {
+            "seq": 2,
+            "channel": "stdout",
+            "text": "Error: Could not find or load main class com.sun.tools.javac.Main"
+          },
+          {
+            "seq": 3,
+            "channel": "stdout",
+            "text": "\n"
+          }
+        ],
+        "stdout": [
+          "CheerpJ runtime ready",
+          "Error: Could not find or load main class com.sun.tools.javac.Main",
+          "\n"
+        ],
+        "stderr": []
+      }
+    },
+    {
+      "name": "G2-compile",
+      "ok": true,
+      "evidence": {
+        "requestId": 3,
+        "kind": "ok",
+        "step": "compile",
+        "id": "hello",
+        "className": "Hello",
+        "sourcePath": "/app/assets/gen/hello/Hello.java",
+        "outputDir": "/files/j0/hello/classes",
+        "compilerCp": "/app/assets/ecj.jar",
+        "compilerArgs": [
+          "-proc:none",
+          "-nowarn",
+          "-source",
+          "8",
+          "-target",
+          "8",
+          "-encoding",
+          "UTF-8",
+          "-bootclasspath",
+          "/lt/8/jre/lib/rt.jar",
+          "-d",
+          "/files/j0/hello/classes",
+          "/app/assets/gen/hello/Hello.java"
+        ],
+        "exitCode": 0,
+        "thrown": null,
+        "compileMs": 7334,
+        "events": [
+          {
+            "seq": 1,
+            "channel": "stdout",
+            "text": "CheerpJ runtime ready"
+          },
+          {
+            "seq": 2,
+            "channel": "stdout",
+            "text": "Class is loaded, main is starting"
+          },
+          {
+            "seq": 3,
+            "channel": "stdout",
+            "text": "JIT failure - please report a bug: Class (0x861568): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+          },
+          {
+            "seq": 4,
+            "channel": "stdout",
+            "text": "JIT failure - please report a bug: Class (0x861568): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+          }
+        ],
+        "stdout": [
+          "CheerpJ runtime ready",
+          "Class is loaded, main is starting",
+          "JIT failure - please report a bug: Class (0x861568): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+          "JIT failure - please report a bug: Class (0x861568): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+        ],
+        "stderr": []
+      }
+    },
+    {
+      "name": "G3-run-and-capture",
+      "ok": false,
+      "evidence": {
+        "rawRun": {
+          "requestId": 4,
+          "kind": "ok",
+          "step": "run",
+          "id": "hello",
+          "className": "Hello",
+          "classPath": "/files/j0/hello/classes",
+          "exitCode": 0,
+          "thrown": null,
+          "runMs": 1002,
+          "events": [
+            {
+              "seq": 5,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 6,
+              "channel": "stdout",
+              "text": "Class is loaded, main is starting"
+            },
+            {
+              "seq": 7,
+              "channel": "stdout",
+              "text": "hello-from-j0"
+            },
+            {
+              "seq": 8,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 9,
+              "channel": "stdout",
+              "text": "j0-warn-on-stderr"
+            },
+            {
+              "seq": 10,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 11,
+              "channel": "stdout",
+              "text": "argv=[a1, b2]"
+            },
+            {
+              "seq": 12,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 13,
+              "channel": "stdout",
+              "text": "j0-error-two"
+            },
+            {
+              "seq": 14,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 15,
+              "channel": "stdout",
+              "text": "j0-done"
+            },
+            {
+              "seq": 16,
+              "channel": "stdout",
+              "text": "\n"
+            }
+          ],
+          "stdout": [
+            "CheerpJ runtime ready",
+            "Class is loaded, main is starting",
+            "hello-from-j0",
+            "\n",
+            "j0-warn-on-stderr",
+            "\n",
+            "argv=[a1, b2]",
+            "\n",
+            "j0-error-two",
+            "\n",
+            "j0-done",
+            "\n"
+          ],
+          "stderr": []
+        },
+        "rawOrderPreserved": true,
+        "rawInterleaving": [
+          7,
+          9,
+          11,
+          13,
+          15
+        ],
+        "rawStreamCollapse": {
+          "observed": true,
+          "note": "CheerpJ routes both Java streams through console.log"
+        },
+        "redirected": {
+          "requestId": 5,
+          "kind": "ok",
+          "step": "runWithJavaRedirect",
+          "className": "Hello",
+          "classPath": "/app/assets/gen/host-hello/hello.jar",
+          "exitCode": 0,
+          "thrown": null,
+          "redirectedStdout": "",
+          "redirectedStderr": "",
+          "runMs": 1278,
+          "events": [
+            {
+              "seq": 1,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 2,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 3,
+              "channel": "stdout",
+              "text": "Class is loaded, main is starting"
+            },
+            {
+              "seq": 4,
+              "channel": "stdout",
+              "text": "hello-from-j0"
+            },
+            {
+              "seq": 5,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 6,
+              "channel": "stdout",
+              "text": "j0-warn-on-stderr"
+            },
+            {
+              "seq": 7,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 8,
+              "channel": "stdout",
+              "text": "argv=[a1, b2]"
+            },
+            {
+              "seq": 9,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 10,
+              "channel": "stdout",
+              "text": "j0-error-two"
+            },
+            {
+              "seq": 11,
+              "channel": "stdout",
+              "text": "\n"
+            },
+            {
+              "seq": 12,
+              "channel": "stdout",
+              "text": "j0-done"
+            },
+            {
+              "seq": 13,
+              "channel": "stdout",
+              "text": "\n"
+            }
+          ],
+          "stdout": [
+            "CheerpJ runtime ready",
+            "CheerpJ runtime ready",
+            "Class is loaded, main is starting",
+            "hello-from-j0",
+            "\n",
+            "j0-warn-on-stderr",
+            "\n",
+            "argv=[a1, b2]",
+            "\n",
+            "j0-error-two",
+            "\n",
+            "j0-done",
+            "\n"
+          ],
+          "stderr": []
+        },
+        "channelsCorrect": false,
+        "stdoutOrdered": false,
+        "stderrOrdered": false,
+        "limitation": "separate PrintStreams preserve order per channel; exact cross-stream interleaving is only observable on the collapsed console channel"
+      }
+    },
+    {
+      "name": "G5-firewall",
+      "ok": true,
+      "evidence": {
+        "before": {
+          "privateHits": 0
+        },
+        "bareCompile": {
+          "requestId": 6,
+          "kind": "ok",
+          "step": "compile",
+          "id": "net-bare",
+          "className": "NetProbe",
+          "sourcePath": "/app/assets/gen/net-bare/NetProbe.java",
+          "outputDir": "/files/j0/net-bare/classes",
+          "compilerCp": "/app/assets/ecj.jar",
+          "compilerArgs": [
+            "-proc:none",
+            "-nowarn",
+            "-source",
+            "8",
+            "-target",
+            "8",
+            "-encoding",
+            "UTF-8",
+            "-bootclasspath",
+            "/lt/8/jre/lib/rt.jar",
+            "-d",
+            "/files/j0/net-bare/classes",
+            "/app/assets/gen/net-bare/NetProbe.java"
+          ],
+          "exitCode": 0,
+          "thrown": null,
+          "compileMs": 7153,
+          "events": [
+            {
+              "seq": 1,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 2,
+              "channel": "stdout",
+              "text": "Class is loaded, main is starting"
+            },
+            {
+              "seq": 3,
+              "channel": "stdout",
+              "text": "JIT failure - please report a bug: Class (0x861548): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+            },
+            {
+              "seq": 4,
+              "channel": "stdout",
+              "text": "JIT failure - please report a bug: Class (0x861548): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+            }
+          ],
+          "stdout": [
+            "CheerpJ runtime ready",
+            "Class is loaded, main is starting",
+            "JIT failure - please report a bug: Class (0x861548): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+            "JIT failure - please report a bug: Class (0x861548): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+          ],
+          "stderr": []
+        },
+        "bare": {
+          "requestId": 7,
+          "kind": "ok",
+          "step": "firewall",
+          "id": "net-bare",
+          "mode": "bare",
+          "exitCode": 0,
+          "thrown": null,
+          "events": [
+            {
+              "seq": 5,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 6,
+              "channel": "stdout",
+              "text": "Class is loaded, main is starting"
+            },
+            {
+              "seq": 7,
+              "channel": "stdout",
+              "text": "NET_GOT_HTTP_200"
+            },
+            {
+              "seq": 8,
+              "channel": "stdout",
+              "text": "\n"
+            }
+          ],
+          "stdout": [
+            "CheerpJ runtime ready",
+            "Class is loaded, main is starting",
+            "NET_GOT_HTTP_200",
+            "\n"
+          ],
+          "stderr": []
+        },
+        "afterBare": {
+          "privateHits": 1
+        },
+        "bareHits": 1,
+        "baselineCanReach": true,
+        "patchedCompile": {
+          "requestId": 8,
+          "kind": "ok",
+          "step": "compile",
+          "id": "net-patched",
+          "className": "NetProbe",
+          "sourcePath": "/app/assets/gen/net-patched/NetProbe.java",
+          "outputDir": "/files/j0/net-patched/classes",
+          "compilerCp": "/app/assets/ecj.jar",
+          "compilerArgs": [
+            "-proc:none",
+            "-nowarn",
+            "-source",
+            "8",
+            "-target",
+            "8",
+            "-encoding",
+            "UTF-8",
+            "-bootclasspath",
+            "/lt/8/jre/lib/rt.jar",
+            "-d",
+            "/files/j0/net-patched/classes",
+            "/app/assets/gen/net-patched/NetProbe.java"
+          ],
+          "exitCode": 0,
+          "thrown": null,
+          "compileMs": 6264,
+          "events": [
+            {
+              "seq": 1,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 2,
+              "channel": "stdout",
+              "text": "Class is loaded, main is starting"
+            },
+            {
+              "seq": 3,
+              "channel": "stdout",
+              "text": "JIT failure - please report a bug: Class (0x8615a8): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+            },
+            {
+              "seq": 4,
+              "channel": "stdout",
+              "text": "JIT failure - please report a bug: Class (0x8615a8): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+            }
+          ],
+          "stdout": [
+            "CheerpJ runtime ready",
+            "Class is loaded, main is starting",
+            "JIT failure - please report a bug: Class (0x8615a8): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+            "JIT failure - please report a bug: Class (0x8615a8): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V"
+          ],
+          "stderr": []
+        },
+        "patched": {
+          "requestId": 9,
+          "kind": "ok",
+          "step": "firewall",
+          "id": "net-patched",
+          "mode": "patched",
+          "exitCode": 0,
+          "thrown": null,
+          "events": [
+            {
+              "seq": 5,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 6,
+              "channel": "stderr",
+              "text": "Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/etc/localtime"
+            },
+            {
+              "seq": 7,
+              "channel": "stderr",
+              "text": "Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/8/lib/ext/index.list"
+            },
+            {
+              "seq": 8,
+              "channel": "stderr",
+              "text": "Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/8/jre/lib/rt.jar"
+            },
+            {
+              "seq": 9,
+              "channel": "stdout",
+              "text": "Class is loaded, main is starting"
+            },
+            {
+              "seq": 10,
+              "channel": "stdout",
+              "text": "NET_BLOCKED java.io.IOException: Network Error"
+            },
+            {
+              "seq": 11,
+              "channel": "stdout",
+              "text": "\n"
+            }
+          ],
+          "stdout": [
+            "CheerpJ runtime ready",
+            "Class is loaded, main is starting",
+            "NET_BLOCKED java.io.IOException: Network Error",
+            "\n"
+          ],
+          "stderr": [
+            "Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/etc/localtime",
+            "Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/8/lib/ext/index.list",
+            "Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/8/jre/lib/rt.jar"
+          ]
+        },
+        "afterPatched": {
+          "privateHits": 1
+        },
+        "patchedHits": 0,
+        "patchedCannotReach": true
+      }
+    },
+    {
+      "name": "G4-timeout",
+      "ok": true,
+      "evidence": {
+        "compile": {
+          "requestId": 10,
+          "kind": "ok",
+          "step": "compile",
+          "id": "endless",
+          "className": "Endless",
+          "sourcePath": "/app/assets/gen/endless/Endless.java",
+          "outputDir": "/files/j0/endless/classes",
+          "compilerCp": "/app/assets/ecj.jar",
+          "compilerArgs": [
+            "-proc:none",
+            "-nowarn",
+            "-source",
+            "8",
+            "-target",
+            "8",
+            "-encoding",
+            "UTF-8",
+            "-bootclasspath",
+            "/lt/8/jre/lib/rt.jar",
+            "-d",
+            "/files/j0/endless/classes",
+            "/app/assets/gen/endless/Endless.java"
+          ],
+          "exitCode": 0,
+          "thrown": null,
+          "compileMs": 5994,
+          "events": [
+            {
+              "seq": 1,
+              "channel": "stdout",
+              "text": "CheerpJ runtime ready"
+            },
+            {
+              "seq": 2,
+              "channel": "stdout",
+              "text": "Class is loaded, main is starting"
+            }
+          ],
+          "stdout": [
+            "CheerpJ runtime ready",
+            "Class is loaded, main is starting"
+          ],
+          "stderr": []
+        },
+        "terminatedAfterMs": 15006,
+        "replied": false,
+        "reply": null,
+        "rebootBoot": {
+          "requestId": 12,
+          "kind": "ok",
+          "step": "boot",
+          "booted": true,
+          "bootMs": 80,
+          "api": {
+            "cheerpjInit": "function",
+            "cheerpjRunMain": "function",
+            "cheerpjRunJar": "function",
+            "cheerpjRunLibrary": "function",
+            "cjFileBlob": "function",
+            "cjGetRuntimeResources": "function"
+          },
+          "events": [],
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ],
+  "server": {
+    "privateHits": 1
+  },
+  "browser": {
+    "consoleLines": [
+      "[log] CheerpJ runtime ready",
+      "[log] Error: Could not find or load main class com.sun.tools.javac.Main",
+      "[log] \n",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting",
+      "[log] JIT failure - please report a bug: Class (0x861568): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+      "[log] JIT failure - please report a bug: Class (0x861568): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting",
+      "[log] hello-from-j0",
+      "[log] \n",
+      "[log] j0-warn-on-stderr",
+      "[log] \n",
+      "[log] argv=[a1, b2]",
+      "[log] \n",
+      "[log] j0-error-two",
+      "[log] \n",
+      "[log] j0-done",
+      "[log] \n",
+      "[log] CheerpJ runtime ready",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting",
+      "[log] hello-from-j0",
+      "[log] \n",
+      "[log] j0-warn-on-stderr",
+      "[log] \n",
+      "[log] argv=[a1, b2]",
+      "[log] \n",
+      "[log] j0-error-two",
+      "[log] \n",
+      "[log] j0-done",
+      "[log] \n",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting",
+      "[log] JIT failure - please report a bug: Class (0x861548): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+      "[log] JIT failure - please report a bug: Class (0x861548): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting",
+      "[log] NET_GOT_HTTP_200",
+      "[log] \n",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting",
+      "[log] JIT failure - please report a bug: Class (0x8615a8): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+      "[log] JIT failure - please report a bug: Class (0x8615a8): org/eclipse/jdt/internal/compiler/parser/Parser, method: consumeRule(I)V",
+      "[log] CheerpJ runtime ready",
+      "[error] Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/etc/localtime",
+      "[error] Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/8/lib/ext/index.list",
+      "[error] Network error for null: Error: [j0-firewall] fetch bloqueado: https://cjrtnc.leaningtech.com/4.3/8/jre/lib/rt.jar",
+      "[log] Class is loaded, main is starting",
+      "[log] NET_BLOCKED java.io.IOException: Network Error",
+      "[log] \n",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting",
+      "[log] CheerpJ runtime ready",
+      "[log] Class is loaded, main is starting"
+    ],
+    "pageErrors": []
+  }
+}
+J0 FAIL — missing=none; failed=G3-run-and-capture

@@ -35,4 +35,33 @@ export const WEBR_BASE_URL = `${RUNTIME_BASE_PATH}/webr/`;
 export const CODE_WORKER_URLS = {
   python: `${RUNTIME_BASE_PATH}/workers/python-runner.worker.js`,
   r: `${RUNTIME_BASE_PATH}/workers/r-runner.worker.js`,
+  java: `${RUNTIME_BASE_PATH}/workers/java-runner.worker.js`,
 } as const;
+
+/**
+ * Con qué clase de Worker se carga cada runtime.
+ *
+ * Aquí hay una EXCEPCIÓN y conviene que se vea en una tabla en vez de descubrirla
+ * depurando:
+ *
+ * ```text
+ *   python   module    Pyodide carga su WebAssembly con import() dinámico
+ *   r        module    webR, igual
+ *   java     classic   CheerpJ 4.3 se carga con importScripts(loader.js)
+ * ```
+ *
+ * No es que Java sea especial por gusto: `loader.js` de CheerpJ es un script
+ * CLÁSICO, y Chromium prohíbe `importScripts()` dentro de un Worker
+ * `{ type: 'module' }`. La alternativa era convertir los tres a clásicos, y eso
+ * rompería Pyodide y webR, que necesitan `import()` dinámico y no lo tienen en un
+ * Worker clásico.
+ *
+ * Así que el sistema no finge que todos los runtimes arrancan igual: dice cuál
+ * arranca cómo. El precio es una línea de configuración; el precio de lo
+ * contrario era la ejecución de Python y R.
+ */
+export const CODE_WORKER_TYPES = {
+  python: 'module',
+  r: 'module',
+  java: 'classic',
+} as const satisfies Record<keyof typeof CODE_WORKER_URLS, WorkerType>;

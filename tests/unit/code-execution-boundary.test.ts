@@ -143,15 +143,85 @@ describe('los runtimes se sirven desde el propio origen', () => {
     expect(text).not.toMatch(/new Worker\(\s*['"`]https?:/);
   });
 
-  it('los Workers se piden como módulos: en uno clásico Pyodide no arranca', async () => {
+  it('Python y R se piden como módulos: en uno clásico Pyodide no arranca', async () => {
     // Un Worker clásico no tiene `import()` dinámico, que es como Pyodide y
     // webR cargan su WebAssembly. Pyodide lo detecta y falla en el arranque, así
     // que perder este `type` rompe la ejecución entera.
+    const { CODE_WORKER_TYPES } = await import('../../src/lib/code-engines/runtime-assets');
+
+    expect(CODE_WORKER_TYPES.python).toBe('module');
+    expect(CODE_WORKER_TYPES.r).toBe('module');
+  });
+
+  it('Java es el único clásico, y el tipo sale de la tabla', async () => {
+    /**
+     * La excepción de J1, comprobada por los dos lados.
+     *
+     * CheerpJ 4.3 se carga con `importScripts(loader.js)`, que Chromium prohíbe
+     * dentro de un Worker de módulo. Que Java sea clásico NO es opcional; que sea
+     * el único, tampoco: convertir Python o R a clásico rompería su arranque.
+     *
+     * Y el ejecutor tiene que LEER la tabla en vez de escribir un tipo fijo, o los
+     * dos lados se separarían sin que nadie lo notara.
+     */
+    const { CODE_WORKER_TYPES } = await import('../../src/lib/code-engines/runtime-assets');
+    expect(CODE_WORKER_TYPES.java).toBe('classic');
+
+    const classic = Object.entries(CODE_WORKER_TYPES).filter(([, type]) => type === 'classic');
+    expect(classic.map(([language]) => language)).toEqual(['java']);
+
     const text = stripComments(
       await readFile(new URL('../../src/lib/browser-code-runner.ts', import.meta.url), 'utf8')
     );
+    expect(text).toMatch(/type:\s*CODE_WORKER_TYPES\[language\]/);
+    expect(text).not.toMatch(/type:\s*'module'/);
+  });
+});
 
-    expect(text).toMatch(/type:\s*'module'/);
+describe('el runtime interno de Java no se ofrece desde ninguna interfaz', () => {
+  it('sólo lo usan las pruebas: ni un componente ni una ruta lo llaman', async () => {
+    /**
+     * `getInternalBrowserCodeRunner` salta la puerta del catálogo a propósito.
+     *
+     * Existe porque el runtime de Java de la fase J1 funciona y todavía no debe
+     * poder ofrecerse: `getBrowserCodeRunner` respeta `browserExecution` y por eso
+     * devuelve `null` para Java, lo que también lo hace imposible de probar. La
+     * puerta se abre en un solo sitio, con el nombre diciéndolo, y esta prueba es
+     * lo que impide que alguien la use para «activar Java rápido».
+     *
+     * Activar Java es cambiar el catálogo, no llamar a esto.
+     */
+    const sources = await readAllSources();
+    const offenders = sources
+      .filter(({ file, text }) => {
+        if (!text.includes('getInternalBrowserCodeRunner')) return false;
+        // Su propia definición es el único sitio legítimo dentro de `src/`.
+        return file !== 'lib/browser-code-runner.ts';
+      })
+      .map(({ file }) => file);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('Java sigue en browserExecution: false', async () => {
+    const { PROGRAMMING_LANGUAGES } = await import('../../src/lib/constants');
+    const { isBrowserExecutableLanguage } = await import('../../src/lib/code-runner-contract');
+
+    const java = PROGRAMMING_LANGUAGES.find((language) => language.value === 'java');
+    expect(java?.capabilities.browserExecution).toBe(false);
+    expect(isBrowserExecutableLanguage('java')).toBe(false);
+  });
+
+  it('el resolver no tiene una excepción temporal para Java', async () => {
+    // Un `if (language === 'java')` en el resolver sería exactamente la deuda que
+    // esta fase se comprometió a no contraer.
+    const sources = await readAllSources();
+    const offenders = sources
+      .filter(({ file }) => file.startsWith('lib/execution/'))
+      .filter(({ text }) => /['"]java['"]/.test(text))
+      .map(({ file }) => file);
+
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -163,6 +233,9 @@ describe('los Workers no reciben nada de la sesión', () => {
       '../../src/lib/code-engines/worker-bridge.ts',
       '../../src/workers/python-runner.worker.ts',
       '../../src/workers/r-runner.worker.ts',
+      '../../src/workers/java-runner.worker.ts',
+      '../../src/lib/code-engines/java-engine.ts',
+      '../../src/lib/code-engines/java-harness.ts',
     ];
 
     // La garantía real es el tipo cerrado de `CodeWorkerRequest` y

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Notice } from '@/components/aula/aula-ui';
 import { emptyAIWorklog } from '@/lib/ai-worklog';
 import { resolveLabDataset } from '@/lib/lab/data-bridge';
@@ -12,7 +12,7 @@ import {
   languageCapabilities,
   programmingLanguageLabel,
 } from '@/lib/constants';
-import { documentBytes, withoutResult, withoutResults } from '@/lib/nexbook-document';
+import { documentBytes, insertBlocksAt, withoutResult, withoutResults } from '@/lib/nexbook-document';
 import { createNotebookKernel, type KernelStatus, type NotebookKernel } from '@/lib/notebook-kernel';
 import { emptySheet } from '@/lib/spreadsheet/cells';
 import type {
@@ -25,6 +25,7 @@ import type {
   ProgrammingLanguage,
 } from '@/lib/types';
 import { NexBookBlockCard } from './nexbook-block-card';
+import { NexBookBlockInserter } from './nexbook-block-inserter';
 
 /**
  * NexLab: el editor de un NexBook.
@@ -120,7 +121,6 @@ export function NexBookStudio({
   const [runningBlockId, setRunningBlockId] = useState<string | null>(null);
   const [runningAll, setRunningAll] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
   /** Imágenes recién generadas, por bloque y por `seq`, mientras se suben. */
   const [pending, setPending] = useState<Record<string, Record<number, string>>>({});
   const containerRef = useRef<HTMLDivElement>(null);
@@ -155,17 +155,24 @@ export function NexBookStudio({
     []
   );
 
-  // Tras insertar un bloque el foco va a su primer campo. Sin esto, quien
-  // navega con teclado tiene que volver a tabular desde el botón «+ Bloque»
-  // hasta el final del documento.
+  /**
+   * Tras insertar un bloque el foco va a su primer campo.
+   *
+   * Sin esto, quien navega con teclado tiene que volver a tabular desde el
+   * insertador hasta el bloque que acaba de crear. Con el insertador entre
+   * bloques importa más todavía: el bloque nuevo puede haber aparecido en
+   * mitad de un documento de treinta.
+   *
+   * `[data-block-focus]` es la salida para el bloque de texto, que nace en modo
+   * lectura —lo decide la tarjeta, y es deliberado— y por tanto no tiene ningún
+   * campo al que llevar el foco. Se lleva a su botón «Editar», que es el primer
+   * control editable que tiene. Sigue habiendo UN mecanismo de foco, no dos.
+   */
   useEffect(() => {
     const target = focusBlockId.current;
     if (!target) return;
     focusBlockId.current = null;
-    const node = containerRef.current?.querySelector<HTMLElement>(
-      `[data-block="${target}"] textarea, [data-block="${target}"] input, [data-block="${target}"] .monaco-editor textarea`
-    );
-    node?.focus();
+    focusNexBookBlock(containerRef.current, target);
   }, [doc.blocks.length]);
 
   const languagesInUse = useMemo(
@@ -185,6 +192,7 @@ export function NexBookStudio({
 
   const size = useMemo(() => documentBytes(doc), [doc]);
   const tooBig = size > NEXBOOK_LIMITS.documentBytes * SIZE_WARNING_RATIO;
+  const atBlockLimit = doc.blocks.length >= NEXBOOK_LIMITS.maxBlocks;
 
   function patchDocument(next: Partial<NexBookDocument>): void {
     onChange({ ...docRef.current, ...next });
@@ -196,9 +204,17 @@ export function NexBookStudio({
     });
   }
 
-  function addBlock(type: NexBookBlockType): void {
-    setAdding(false);
-    if (doc.blocks.length >= NEXBOOK_LIMITS.maxBlocks) {
+  /**
+   * Crea un bloque EN UNA POSICIÓN.
+   *
+   * `at` no tiene valor por defecto a propósito: un bloque aparece donde se
+   * pidió, y quien lo pide siempre sabe dónde —el final, en los accesos
+   * rápidos; el hueco concreto, en el insertador—. Un `at` opcional habría
+   * dejado que un camino nuevo añadiera al final sin darse cuenta, que es
+   * exactamente el problema que este insertador viene a resolver.
+   */
+  function addBlock(type: NexBookBlockType, at: number): void {
+    if (docRef.current.blocks.length >= NEXBOOK_LIMITS.maxBlocks) {
       setNotice(`Un NexBook admite hasta ${NEXBOOK_LIMITS.maxBlocks} bloques.`);
       return;
     }
@@ -206,7 +222,7 @@ export function NexBookStudio({
 
     const id = newBlockId();
     focusBlockId.current = id;
-    patchDocument({ blocks: [...doc.blocks, blankBlock(id, type, defaultLanguage)] });
+    onChange(insertBlocksAt(docRef.current, at, [blankBlock(id, type, defaultLanguage)]));
   }
 
   function duplicateBlock(index: number): void {
@@ -227,10 +243,7 @@ export function NexBookStudio({
      */
     const copy = { ...original, id: newBlockId() } as NexBookBlock;
     focusBlockId.current = copy.id;
-
-    const blocks = [...doc.blocks];
-    blocks.splice(index + 1, 0, copy);
-    patchDocument({ blocks });
+    onChange(insertBlocksAt(docRef.current, index + 1, [copy]));
   }
 
   /**
@@ -258,9 +271,7 @@ export function NexBookStudio({
       sheet: entry.sheet,
     }));
 
-    const blocks = [...docRef.current.blocks];
-    blocks.splice(index + 1, 0, ...added);
-    patchDocument({ blocks });
+    onChange(insertBlocksAt(docRef.current, index + 1, added));
 
     setNotice(
       added.length < sheets.length
@@ -471,50 +482,19 @@ export function NexBookStudio({
     <div className="space-y-4" ref={containerRef}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line pb-3">
         {editable && (
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setAdding((value) => !value)}
-              className="btn btn-secondary btn-sm"
-              aria-expanded={adding}
-              aria-haspopup="menu"
-            >
-              + Bloque
-            </button>
-            {adding && (
-              /*
-                Sólo los tipos que existen de verdad. No hay «IA» ni «Gráfica» en
-                este menú porque no hay nada detrás: un menú que promete lo que no
-                puede hacer enseña a desconfiar del resto.
-              */
-              <div
-                role="menu"
-                className="absolute left-0 top-full z-30 mt-1 w-60 rounded-sm border border-line bg-surface py-1 shadow-lg"
-              >
-                <MenuItem onSelect={() => addBlock('markdown')} label="Texto" hint="Markdown" />
-                <MenuItem onSelect={() => addBlock('code')} label="Código" hint="Python, R…" />
-                {uploadAsset && (
-                  <MenuItem onSelect={() => addBlock('image')} label="Imagen" hint="PNG, JPEG, WebP" />
-                )}
-                <MenuItem
-                  onSelect={() => addBlock('spreadsheet')}
-                  label="Hoja de cálculo"
-                  hint="Datos y fórmulas"
-                />
-                {/*
-                  «Registrar uso de IA», no «IA». El menú sigue sin prometer lo
-                  que no hay: esto abre un formulario para documentar lo que
-                  pasó en otra herramienta, no un sitio donde pedirle algo a
-                  Nextudio.
-                */}
-                <MenuItem
-                  onSelect={() => addBlock('ai_worklog')}
-                  label="Registrar uso de IA"
-                  hint="NexIA"
-                />
-              </div>
-            )}
-          </div>
+          /*
+            El menú de la barra añade AL FINAL. Es el que se usa cuando todavía
+            no hay un hueco concreto en mente; para elegir el sitio está el
+            insertador de entre bloques, que ofrece exactamente lo mismo porque
+            los dos leen el catálogo.
+          */
+          <NexBookBlockInserter
+            variant="toolbar"
+            label="+ Bloque"
+            canUploadAssets={Boolean(uploadAsset)}
+            disabled={atBlockLimit}
+            onInsert={(type) => addBlock(type, doc.blocks.length)}
+          />
         )}
 
         {runnable.length > 0 && (
@@ -579,38 +559,87 @@ export function NexBookStudio({
         </p>
       )}
 
+      {/*
+        Entre cada dos bloques hay un sitio donde escribir.
+
+        Antes no lo había: se añadía al final y luego se subía el bloque a
+        golpe de «↑» hasta donde tenía que estar. El separador vale también
+        para el principio del documento, que es el otro hueco que no tenía
+        forma de alcanzarse.
+
+        Sólo con `editable`. Un control que parece permitir insertar y no lo
+        hace es peor que no pintarlo.
+      */}
       <div className="space-y-3">
+        {editable && doc.blocks.length > 0 && (
+          <NexBookBlockInserter
+            variant="between"
+            label="Añadir un bloque al principio"
+            canUploadAssets={Boolean(uploadAsset)}
+            disabled={atBlockLimit}
+            onInsert={(type) => addBlock(type, 0)}
+          />
+        )}
+
         {doc.blocks.map((block, index) => (
-          <div key={block.id} data-block={block.id}>
-            <NexBookBlockCard
-              block={block}
-              index={index}
-              total={doc.blocks.length}
-              result={doc.results[block.id]}
-              editable={editable}
-              running={runningBlockId === block.id}
-              onChange={(next) => updateBlock(block.id, next)}
-              onRemove={() => removeBlock(block.id)}
-              onDuplicate={() => duplicateBlock(index)}
-              onMove={(direction) => moveBlock(index, direction)}
-              onRun={() => void runOne(block)}
-              onClearResult={() => onChange(withoutResult(docRef.current, block.id))}
-              uploadAsset={uploadAsset}
-              assetUrl={assetUrl}
-              pendingImages={pending[block.id]}
-              templateMode={templateMode}
-              onAddSheets={(sheets) => addSheetsAfter(index, sheets)}
-            />
-          </div>
+          <Fragment key={block.id}>
+            <div data-block={block.id}>
+              <NexBookBlockCard
+                block={block}
+                index={index}
+                total={doc.blocks.length}
+                result={doc.results[block.id]}
+                editable={editable}
+                running={runningBlockId === block.id}
+                onChange={(next) => updateBlock(block.id, next)}
+                onRemove={() => removeBlock(block.id)}
+                onDuplicate={() => duplicateBlock(index)}
+                onMove={(direction) => moveBlock(index, direction)}
+                onRun={() => void runOne(block)}
+                onClearResult={() => onChange(withoutResult(docRef.current, block.id))}
+                uploadAsset={uploadAsset}
+                assetUrl={assetUrl}
+                pendingImages={pending[block.id]}
+                templateMode={templateMode}
+                onAddSheets={(sheets) => addSheetsAfter(index, sheets)}
+              />
+            </div>
+
+            {editable && (
+              <NexBookBlockInserter
+                variant="between"
+                label={`Añadir un bloque después del bloque ${index + 1}`}
+                canUploadAssets={Boolean(uploadAsset)}
+                disabled={atBlockLimit}
+                onInsert={(type) => addBlock(type, index + 1)}
+              />
+            )}
+          </Fragment>
         ))}
       </div>
 
       {editable && (
         <div className="flex flex-wrap gap-2 border-t border-line pt-3">
-          <button type="button" onClick={() => addBlock('markdown')} className="btn btn-ghost btn-sm">
+          {/*
+            Los accesos rápidos se quedan: son los dos tipos que más se
+            escriben y llegar a ellos por un menú costaría dos pulsaciones más.
+            Añaden al final, que es lo que significa estar al pie del
+            documento.
+          */}
+          <button
+            type="button"
+            onClick={() => addBlock('markdown', doc.blocks.length)}
+            disabled={atBlockLimit}
+            className="btn btn-ghost btn-sm"
+          >
             + Texto
           </button>
-          <button type="button" onClick={() => addBlock('code')} className="btn btn-ghost btn-sm">
+          <button
+            type="button"
+            onClick={() => addBlock('code', doc.blocks.length)}
+            disabled={atBlockLimit}
+            className="btn btn-ghost btn-sm"
+          >
             + Código
           </button>
           <span className="ml-auto self-center text-label text-subtle tabular-nums">
@@ -622,26 +651,21 @@ export function NexBookStudio({
   );
 }
 
-function MenuItem({
-  onSelect,
-  label,
-  hint,
-}: {
-  onSelect: () => void;
-  label: string;
-  hint: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onSelect}
-      className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left hover:bg-sunken"
-    >
-      <span className="text-sm">{label}</span>
-      <span className="ml-auto text-label text-subtle">{hint}</span>
-    </button>
+/** Lleva el foco al primer control editable de un bloque recién insertado. */
+export function focusNexBookBlock(container: HTMLElement | null, blockId: string): void {
+  if (!container) return;
+
+  // Se compara el atributo como dato en vez de interpolarlo en un selector.
+  // Así también funcionan documentos antiguos con ids que contengan comillas,
+  // corchetes u otros caracteres con significado para CSS.
+  const block = [...container.querySelectorAll<HTMLElement>('[data-block]')].find(
+    (candidate) => candidate.dataset.block === blockId
   );
+  block
+    ?.querySelector<HTMLElement>(
+      'textarea, input, select, .monaco-editor textarea, [data-block-focus]'
+    )
+    ?.focus();
 }
 
 /** Un bloque recién creado de cada tipo. */
